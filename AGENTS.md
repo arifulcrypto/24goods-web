@@ -17,33 +17,52 @@ Any change that violates one of these must be rejected in review.
 7. **No mainland-China hosting of data, keys or payment logic** (see `docs/research/infra.md` §0).
 8. **No runtime third-party CDN / Google assets** on the frontend (China reachability + supply chain).
 9. **Pin every GitHub Action to a full commit SHA** with a `# vX.Y.Z` comment.
+10. **Least privilege per process.** Each container gets only its own env file (`deploy/env/<service>.env`); only `delivery` holds vault private keys and it has no internet egress; DB roles `app_api`/`app_delivery` and Redis ACL users are scoped per role.
+11. **Scans are not an audit.** No real money before an independent security review/pentest (M1 exit gate).
 
 ## 2. Repository layout
 
 ```
-backend/            FastAPI service (Python ≥3.10, CI on 3.12)
-  app/core/         config, cardvault (envelope encryption)
-  app/payments/     one adapter per payment channel
-  tests/            pytest; every security invariant has a test
-docs/               architecture, progress, analysis, research/
-.github/workflows/  ci.yml (lint/test/Bandit/pip-audit/Semgrep/gitleaks/Trivy), codeql.yml
-.claude/agents/     project sub-agents (security-reviewer, payment-auditor, i18n-mobile-reviewer)
+backend/            FastAPI modular monolith (Python ≥3.10 dev, 3.12 CI/prod)
+  app/core/         config, db (RLS tenant pinning), security, middleware, cardvault
+  app/modules/      auth, catalog, chat (quotes), orders, payments (notify), inventory, uploads, realtime (SSE), admin
+  app/payments/     epay.py (protocol), zpay.py (adapter)
+  app/delivery/     SEPARATE process: outbox consumer + internal reveal API (only holder of private keys)
+  app/devtools/     mock_zpay (dev/test only), seed, keygen
+  migrations/       Alembic: tables, FORCE RLS, roles, column grants, ledger trigger
+  tests/            pytest (needs PG + Redis; see tests/conftest.py)
+frontend/           pnpm workspace — static Vite SPAs, no Node at runtime
+  apps/web          buyer app, mobile-first (Vue 3 + Vant 4)
+  apps/admin        staff/CS console, PC (Vue 3 + Element Plus)
+  packages/shared   API client, types, SSE, i18n, voice recorder
+deploy/             docker-compose.yml, Caddyfile, bootstrap.sh, web.Dockerfile, postgres-init/
+e2e/smoke.py        full-stack smoke test (CI job `e2e`)
+docs/               analysis, review-v2 (current decisions), architecture, api-contract, progress, research/
+.github/workflows/  ci.yml, codeql.yml (opt-in)
+.claude/agents/     security-reviewer, payment-auditor, i18n-mobile-reviewer
 ```
-
-`frontend/` (Nuxt 4 + @nuxtjs/i18n + Vant 4) is added in milestone M1 — see progress.md.
 
 ## 3. Validation commands (run before every commit)
 
 ```bash
-cd backend
-pip install -e '.[dev]'
-ruff check . && ruff format --check .
-pytest -q
+# backend — needs PG + Redis (throwaway containers are fine)
+cd backend && pip install -e '.[dev]'
+export TEST_DATABASE_URL=postgresql+asyncpg://postgres:test@127.0.0.1:55432/test \
+       TEST_REDIS_URL=redis://127.0.0.1:56379/15 TEST_REQUIRE_SERVICES=1
+ruff check . && ruff format --check . && pytest -q
 bandit -c pyproject.toml -r app -ll
-pip-audit --strict .            # runtime dependency closure
+pip-audit --strict .            # runtime dependency closure (run on Python 3.12)
+
+# frontend
+cd frontend && pnpm install --frozen-lockfile && pnpm lint && pnpm typecheck && pnpm test && pnpm build
+
+# full stack (mock data)
+PUBLIC_BASE_URL=http://127.0.0.1:8080 PUBLISH_HTTP=8080 ./deploy/bootstrap.sh
+docker compose -f deploy/docker-compose.yml --env-file deploy/.env --profile demo up -d --wait
+python e2e/smoke.py --base http://127.0.0.1:8080 --seed-env deploy/env/seed.env
 ```
 
-CI runs the same plus Semgrep, gitleaks, Docker build + Trivy, and (when `ENABLE_CODEQL=true`) CodeQL.
+CI runs all of the above plus Semgrep, gitleaks, Trivy, and (when `ENABLE_CODEQL=true`) CodeQL; images are pushed to GHCR only after the E2E smoke passes.
 
 ## 4. Coding rules
 
