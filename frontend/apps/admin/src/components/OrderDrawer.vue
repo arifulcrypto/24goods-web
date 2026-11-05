@@ -115,7 +115,7 @@ const money = (a: string | null | undefined) => formatMoney(a, order.value?.curr
 
 /** Merge an action result (Order) into the loaded detail, keeping buyer + events, then refetch events. */
 function applyUpdate(o: Order) {
-  if (order.value) order.value = { ...order.value, ...o }
+  if (order.value) order.value = { ...order.value, ...(o as Partial<typeof order.value>) }
   emit('updated', o)
   if (props.orderId) void load(props.orderId)
 }
