@@ -73,6 +73,10 @@ Update this file in every PR. Phases are defined in [review-v2.md §8](review-v2
 8. [ ] Stock reservation at order creation, so the last card can't be sold twice into `manual_review`.
 9. [ ] Independent pentest. **No real money before it passes.**
 
+### Scheduled
+- [ ] **2026-11-12:** raise `minimumReleaseAge` in `frontend/pnpm-workspace.yaml` to 10080 (7 days) and drop its `nosemgrep`.
+- [ ] When an upstream `caddy:2.11-alpine` ships go-jose ≥ v4.1.6: remove the xcaddy stage in `deploy/web.Dockerfile`.
+
 ## Open questions for the owner
 - [ ] Legal review of payments for mainland users (aggregator + later USDT).
 - [ ] Which hostname of your domain to use for production. For HTTPS on the demo, point `demo.<domain>` at the demo host's IP.
