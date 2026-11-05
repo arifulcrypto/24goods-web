@@ -13,7 +13,13 @@ git fetch -q origin main && git merge -q --ff-only origin/main || echo "warn: gi
 
 img_id() { docker image inspect --format '{{.Id}}' "$1" 2>/dev/null || echo none; }
 before="$(img_id "$API_IMAGE")$(img_id "$WEB_IMAGE")"
+# Private GHCR: log in only for the pull, never leave the (broad-scope) gh token in
+# ~/.docker/config.json. Prefer a dedicated read:packages token via GHCR_TOKEN.
+gh_token="${GHCR_TOKEN:-$(gh auth token)}"
+printf '%s' "$gh_token" | docker login ghcr.io -u "${GHCR_USER:-arifulcrypto}" --password-stdin >/dev/null 2>&1
+trap 'docker logout ghcr.io >/dev/null 2>&1 || true' EXIT
 "${COMPOSE[@]}" pull -q api web
+docker logout ghcr.io >/dev/null 2>&1 || true
 after="$(img_id "$API_IMAGE")$(img_id "$WEB_IMAGE")"
 running=$("${COMPOSE[@]}" ps --status running -q | wc -l)
 if [[ "$before" == "$after" && "$running" -ge 6 ]]; then
