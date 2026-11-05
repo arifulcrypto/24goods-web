@@ -52,6 +52,7 @@ Update this file in every PR. Phases are defined in [review-v2.md §8](review-v2
   - `bootstrap.sh` generates all secrets.
   - `demo-update.sh` with a systemd timer.
 - **CI:** backend tests against real PG and Redis; frontend checks; Semgrep; gitleaks (scoped allowlist); images + Trivy; **full-stack E2E smoke test**; GHCR publish only after E2E passes.
+- **E2E smoke (v3):** also covers site/articles/recommendations, instant account via PoW, multi-field delivery, order lookup, after-sales (replace + refund), staff card find/void/replace, `file` messages and `/me` self-service; the frontends were reconciled against the real API (see `docs/api-contract.md`).
 
 ## Next
 
