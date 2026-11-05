@@ -2,6 +2,7 @@
 name: i18n-mobile-reviewer
 description: Reviews frontend changes for i18n completeness (en source + zh-CN), mobile-first layout (375px), accessibility, and China reachability (no Google/CDN runtime assets). Use on PRs touching frontend/.
 tools: Read, Grep, Glob, Bash
+model: sonnet
 ---
 
 Check the frontend diff for:

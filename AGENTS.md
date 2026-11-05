@@ -85,5 +85,5 @@ CI runs all of the above plus Semgrep, gitleaks, Trivy, and (when `ENABLE_CODEQL
 
 - **Research** (new library/vendor): spawn parallel research agents, require citations and a verified-vs-inferred legend, store output in `docs/research/<topic>.md`.
 - **Review**: run `.claude/agents/security-reviewer.md` on any PR touching §1 invariants; `payment-auditor` on `app/payments/**`; `i18n-mobile-reviewer` on frontend PRs.
-- **Implementation**: one agent per independent module, in a git worktree; the orchestrator merges and runs §3.
+- **Implementation**: one `implementer` agent (Sonnet, `.claude/agents/implementer.md`) per independent module, in a git worktree; the orchestrator merges and runs §3.
 - Agents must not: push to `main`, change CI permissions, weaken a security invariant, or add a dependency without noting it in the PR.
