@@ -6,7 +6,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./chat": "./src/chat/index.ts",
-    "./i18n": "./src/i18n/index.ts"
+    "./i18n": "./src/i18n/index.ts",
+    "./ui": "./src/ui/index.ts"
   },
   "scripts": {
     "typecheck": "vue-tsc --noEmit -p tsconfig.json",
