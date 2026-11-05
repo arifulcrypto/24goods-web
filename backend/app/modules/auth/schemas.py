@@ -52,12 +52,6 @@ class LoginIn(BaseModel):
 
 
 class InstantIn(BaseModel):
+    # No email here: an unverified address on a throw-away account would let anyone squat
+    # someone else's address. Instant accounts add one later via /me/credentials.
     pow: PowIn | None = None
-    email: str | None = Field(None, max_length=254)
-
-    @field_validator("email")
-    @classmethod
-    def _email(cls, v: str | None) -> str | None:
-        if v is None or not v.strip():
-            return None
-        return normalize_email(v)

@@ -61,7 +61,7 @@ def test_sanitizer_allows_the_allowlist():
         assert tag in html, tag
     assert 'rel="noopener noreferrer nofollow"' in html and 'target="_blank"' in html
     assert 'href="https://ok.test/p"' in html and 'href="mailto:a@b.co"' in html
-    assert 'src="https://cdn.test/a.png"' in html
+    assert "cdn.test" not in html  # external images are dropped (beacon / IP leak)
     assert 'src="/api/v1/files/12345678-1234-1234-1234-123456789012"' in html
 
 

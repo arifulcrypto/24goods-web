@@ -8,6 +8,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, Query, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.audit import audit
 from app.core.deps import Page, client_ip, get_db, get_page, get_res, require_admin
 from app.core.ratelimit import enforce
 from app.core.resources import Resources
@@ -105,12 +106,30 @@ async def list_batches(
 @router.post("/cards/find")
 async def find_cards(
     body: CardsFindIn,
+    request: Request,
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
     res: Resources = Depends(get_res),
 ) -> dict:
-    await enforce(res.redis, "cards:find", str(admin.id), 120, 3600)
-    return await inventory.find_cards(db, res.sealer, admin.tenant_id, body.lines, body.by)
+    # 30/h per admin: a "does this exact code exist here?" oracle must stay slow
+    await enforce(res.redis, "cards:find", str(admin.id), 30, 3600)
+    out = await inventory.find_cards(db, res.sealer, admin.tenant_id, body.lines, body.by)
+    await audit(  # counts only: the pasted values are never logged
+        db,
+        tenant_id=admin.tenant_id,
+        action="cards.find",
+        actor_id=admin.id,
+        actor_role=admin.role,
+        ip=client_ip(request),
+        detail={
+            "lines": len([ln for ln in body.lines if ln and ln.strip()]),
+            "found": len(out["items"]),
+            "missing": out["missing"],
+            "mode": body.by,
+        },
+    )
+    await db.commit()
+    return out
 
 
 @router.post("/cards/void")

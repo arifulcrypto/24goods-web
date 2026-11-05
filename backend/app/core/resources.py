@@ -66,6 +66,7 @@ def build_resources(
         max_overflow=settings.db_max_overflow,
     )
     settings.pow_secret()  # fail fast: APP_POW_KEY is mandatory in prod
+    settings.lookup_secret()  # fail fast: APP_LOOKUP_KEY is mandatory in prod
     settings.lookup_secret()
     maker = make_sessionmaker(engine)
     redis = redis or make_redis(settings.redis_url)

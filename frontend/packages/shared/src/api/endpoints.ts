@@ -80,7 +80,7 @@ export function createBuyerApi(c: ApiClient) {
       logout: () => c.post<void>('/auth/logout', undefined, { skipAuthHandler: true }),
       me: () => c.get<User>('/auth/me', undefined, { skipAuthHandler: true }),
       /** v3: one-tap instant account; the credentials are returned once. */
-      instant: (b: { pow: PowSolution; email?: string }) =>
+      instant: (b: { pow: PowSolution }) =>
         c.post<InstantResult>('/auth/instant', b, { skipAuthHandler: true }),
     },
     /** v3: brand, announcement, defaults, fixed pages. */

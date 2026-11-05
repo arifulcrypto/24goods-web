@@ -238,7 +238,6 @@ export default {
   },
   buy: {
     guestNote: 'No account needed: we create a one-tap account for you.',
-    emailOptional: 'Optional, for order updates',
     continueGuest: 'Continue without registering',
   },
   lookup: {

@@ -238,7 +238,6 @@ const zhCN: WebMessages = {
   },
   buy: {
     guestNote: '无需注册：我们会为您创建一键账号。',
-    emailOptional: '选填，用于订单通知',
     continueGuest: '无需注册，继续购买',
   },
   lookup: {

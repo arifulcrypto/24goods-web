@@ -69,7 +69,9 @@ class Settings(BaseSettings):
     vault_fingerprint_key: str = ""  # base64, >= 32 bytes
     quote_hmac_key: str = ""  # base64, >= 32 bytes
     pow_key: str = ""  # base64, >= 32 bytes: signs proof-of-work challenges
-    lookup_key: str = ""  # base64, >= 32 bytes: HMAC for order access codes (derived if empty)
+    lookup_key: str = (
+        ""  # base64, >= 32 bytes: HMAC for order access codes (dev: derived; required in prod)
+    )
 
     # --- internal services ---
     internal_token: str = ""  # shared secret API -> delivery, >= 32 chars
@@ -90,10 +92,14 @@ class Settings(BaseSettings):
     pow_ttl_s: int = 120
     instant_per_ip_hour: int = 3
     instant_per_ip_day: int = 10
-    instant_per_net_day: int = 30  # per /24 (IPv4) or /48 (IPv6)
+    instant_per_net_day: int = 200  # hard cap per /24 (IPv4) or /48 (IPv6)
+    # soft ramp: busy networks (CGNAT, offices) are slowed by harder PoW before the cap bites
+    instant_ramp_1: int = 30  # > this many instant accounts today on the net: +4 bits
+    instant_ramp_2: int = 100  # > this many: +6 bits
     instant_purge_days: int = 7
     lookup_per_ip_hour: int = 10
-    lookup_failures_per_order_hour: int = 5
+    lookup_failures_per_order_hour: int = 5  # per (order, ip)
+    lookup_failures_global_order_hour: int = 50  # per order, all IPs
     card_expiry_interval_s: int = 3600
 
     # --- payments (ZPay / EPay) ---
@@ -170,6 +176,8 @@ class Settings(BaseSettings):
     def lookup_secret(self) -> bytes:
         if self.lookup_key.strip():
             return decode_key(self.lookup_key)
+        if self.is_prod:
+            raise ValueError("APP_LOOKUP_KEY is required in prod")
         return hmac.new(self.pow_secret(), b"order-access-code/v1", hashlib.sha256).digest()
 
     def fingerprint_key(self) -> bytes:

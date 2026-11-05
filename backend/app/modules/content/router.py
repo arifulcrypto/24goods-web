@@ -12,8 +12,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import pow as powmod
 from app.core.deps import Page, client_ip, get_db, get_lang, get_page, get_res, get_tenant_id
-from app.core.ratelimit import enforce
+from app.core.ratelimit import count, enforce
 from app.core.resources import Resources
+from app.modules.auth.service import net_of
 from app.modules.content import service
 
 router = APIRouter(tags=["content"])
@@ -36,7 +37,14 @@ async def pow_challenge(
     res: Resources = Depends(get_res),
 ) -> JSONResponse:
     await enforce(res.redis, "pow:challenge", client_ip(request) or "-", 60, 60)
-    return JSONResponse(powmod.issue(res.settings, scope), headers={"Cache-Control": "no-store"})
+    extra = 0
+    if scope == "instant":
+        s = res.settings
+        today, _ = await count(res.redis, "instant:net:d", net_of(client_ip(request)), 86400)
+        extra = 6 if today > s.instant_ramp_2 else 4 if today > s.instant_ramp_1 else 0
+    return JSONResponse(
+        powmod.issue(res.settings, scope, extra_bits=extra), headers={"Cache-Control": "no-store"}
+    )
 
 
 @router.get("/articles")

@@ -27,11 +27,9 @@ const auth = useAuthStore()
 const pow = usePow()
 
 const qty = ref(1)
-const email = ref('')
 const submitting = ref(false)
 const creds = ref<InstantCredentials | null>(null)
 const showCreds = ref(false)
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 const p = computed(() => props.product)
 const price = computed(() => (p.value ? moneyParts(p.value.price, p.value.currency, locale.value) : null))
@@ -44,7 +42,6 @@ const maxQty = computed(() => {
 const total = computed(() =>
   p.value ? formatMoney(multiplyAmount(p.value.price, qty.value) ?? p.value.price, p.value.currency, locale.value) : '',
 )
-const emailOk = computed(() => !email.value.trim() || EMAIL_RE.test(email.value.trim()))
 
 watch(
   () => props.show,
@@ -83,11 +80,11 @@ async function placeOrder() {
 }
 
 async function continueAsGuest() {
-  if (submitting.value || pow.solving.value || !emailOk.value) return
+  if (submitting.value || pow.solving.value) return
   submitting.value = true
   try {
     const solution = await pow.run('instant')
-    const r = await api.auth.instant({ pow: solution, ...(email.value.trim() ? { email: email.value.trim() } : {}) })
+    const r = await api.auth.instant({ pow: solution })
     auth.setUser(r.user)
     creds.value = r.credentials
     showCreds.value = true
@@ -142,15 +139,6 @@ async function credsDone() {
       </template>
       <template v-else>
         <p class="muted small guest-note">{{ t('buy.guestNote') }}</p>
-        <van-field
-          v-model="email"
-          type="email"
-          inputmode="email"
-          autocomplete="email"
-          :label="t('auth.email')"
-          :placeholder="t('buy.emailOptional')"
-          :error-message="emailOk ? '' : t('auth.invalidEmail')"
-        />
         <PowStatus :solving="pow.solving.value" :progress="pow.progress.value" />
         <van-button
           block
@@ -158,7 +146,6 @@ async function credsDone() {
           type="primary"
           size="large"
           :loading="submitting"
-          :disabled="!emailOk"
           @click="continueAsGuest"
         >
           {{ t('buy.continueGuest') }}

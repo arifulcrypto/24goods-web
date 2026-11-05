@@ -77,7 +77,7 @@ async def change_credentials(
         if email != user.email:
             taken = await db.scalar(select(User.id).where(User.email == email, User.id != user.id))
             if taken is not None:
-                raise Conflict("Email already registered")
+                raise Conflict("This email can't be used")
             user.email = email
             user.email_verified = False
             fields.append("email")
@@ -101,7 +101,7 @@ async def change_credentials(
         await db.commit()
     except IntegrityError:
         await db.rollback()
-        raise Conflict("Email already registered") from None
+        raise Conflict("This email can't be used") from None
     if "password" in fields:
         await res.sessions.revoke_user_sessions(user.id, keep=current_token)
     return user

@@ -36,12 +36,15 @@ ALLOWED_TAGS = {
     "th",
     "td",
 }
-_FILE_SRC = re.compile(r"^/api/v1/files/[0-9a-f-]{36}$")
+_FILE_SRC = re.compile(
+    r"^/api/v1/files/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+)
 _MD = MarkdownIt("commonmark", {"html": False, "linkify": False}).enable("table")
 
 
 def _img_src_ok(src: str) -> bool:
-    return src.startswith("https://") or bool(_FILE_SRC.match(src))
+    """Only our own uploads: an external image URL would leak the reader's IP / act as a beacon."""
+    return bool(_FILE_SRC.match(src))
 
 
 def _attribute_filter(tag: str, attr: str, value: str) -> str | None:

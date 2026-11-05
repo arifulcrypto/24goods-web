@@ -80,8 +80,11 @@ async def test_wrong_code_is_generic_and_rate_limited_per_order(env):
     for _ in range(5):
         r = await lookup(anon, order["order_no"], "AAAAAAAAAA")
         assert r.status_code == 404 and r.json()["error"]["code"] == "not_found"
-    r = await lookup(anon, order["order_no"], order["access_code"])  # blocked after 5 failures
+    r = await lookup(anon, order["order_no"], "AAAAAAAAAA")  # 6th wrong code: blocked
     assert r.status_code == 429 and "retry-after" in r.headers
+    # ... but the CORRECT code is never blocked by the per-order counters
+    r = await lookup(anon, order["order_no"], order["access_code"])
+    assert r.status_code == 200
     # unknown order numbers behave identically (and are counted too)
     r = await lookup(anon, "GAAAAAAAAAAAA", "AAAAAAAAAA")
     assert r.status_code == 404
@@ -150,3 +153,43 @@ async def test_lookup_reveal_ip_limit(env):
         )
         codes.append(r.status_code)
     assert codes == [404] * 30 + [429]
+
+
+async def test_correct_code_not_locked_out_and_global_order_cap(env):
+    p = await env.product(mode="manual")
+    c, _ = await env.login("buyer")
+    order = await buy(c, p)
+    env.res.settings.lookup_per_ip_hour = 1000
+    env.res.settings.lookup_failures_global_order_hour = 7
+    # an attacker on one IP burns the pair counter, then is blocked; another IP has its own
+    attacker = {"X-Forwarded-For": "203.0.113.5"}
+    for _ in range(5):
+        r = await env.client().post(
+            "/api/v1/lookup",
+            json={
+                "order_no": order["order_no"],
+                "access_code": "AAAAAAAAAA",
+                "pow": await solve_pow(env.client(), "lookup"),
+            },
+            headers=attacker,
+        )
+        assert r.status_code == 404
+    victim = env.client()
+    assert (await lookup(victim, order["order_no"], order["access_code"])).status_code == 200
+    # other IPs add failures until the global per-order cap (7) is reached
+    codes = []
+    for last in (6, 7, 8, 9):
+        c2 = env.client()
+        r = await c2.post(
+            "/api/v1/lookup",
+            json={
+                "order_no": order["order_no"],
+                "access_code": "AAAAAAAAAA",
+                "pow": await solve_pow(c2, "lookup"),
+            },
+            headers={"X-Forwarded-For": f"198.51.100.{last}"},
+        )
+        codes.append(r.status_code)
+    assert codes == [404, 404, 429, 429]
+    # the real buyer still gets in, from any IP
+    assert (await lookup(env.client(), order["order_no"], order["access_code"])).status_code == 200

@@ -413,3 +413,23 @@ def test_first_field_helper():
     assert first_field("a|b|c", "|") == "a"
     assert first_field("whole code", "----") == "whole code"
     assert first_field("  x  ", ",") == "x"
+
+
+async def test_find_is_audited_without_values_and_limited_to_30_per_hour(env):
+    admin, _ = await env.login("admin")
+    p = await multi_product(env)
+    await do_import(admin, p, ACCTS)
+    r = await admin.post(
+        "/api/v1/admin/cards/find", json={"lines": [ACCTS[1], "nope----nope"], "by": "content"}
+    )
+    assert r.status_code == 200
+    detail = await env.scalar("SELECT detail::text FROM audit_log WHERE action='cards.find'")
+    assert '"lines": 2' in detail and '"found": 1' in detail and '"missing": 1' in detail
+    assert '"mode": "content"' in detail and "nope" not in detail and ACCTS[1] not in detail
+    codes = [
+        (
+            await admin.post("/api/v1/admin/cards/find", json={"lines": ["x"], "by": "content"})
+        ).status_code
+        for _ in range(30)
+    ]
+    assert codes[-1] == 429 and codes.count(200) == 29  # 1 earlier call + 29 = 30/h

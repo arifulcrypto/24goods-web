@@ -54,12 +54,17 @@ def _mac(key: bytes, body: str) -> str:
     return hmac.new(key, body.encode(), hashlib.sha256).hexdigest()[:32]
 
 
-def issue(settings: Settings, scope: str, *, now: float | None = None) -> dict[str, Any]:
+def issue(
+    settings: Settings, scope: str, *, now: float | None = None, extra_bits: int = 0
+) -> dict[str, Any]:
+    """``extra_bits`` raises the difficulty (signed into the challenge); verify accepts any
+    signed value >= the base."""
     exp = int((now if now is not None else time.time()) + settings.pow_ttl_s)
-    body = f"v1.{scope}.{settings.pow_bits}.{exp}.{secrets.token_hex(8)}"
+    bits = min(settings.pow_bits + max(0, extra_bits), 40)
+    body = f"v1.{scope}.{bits}.{exp}.{secrets.token_hex(8)}"
     return {
         "challenge": f"{body}.{_mac(settings.pow_secret(), body)}",
-        "bits": settings.pow_bits,
+        "bits": bits,
         "expires_at": exp,
     }
 

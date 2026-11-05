@@ -39,18 +39,40 @@ async def test_instant_account_shape_and_session(env):
     assert pw_hash.startswith("$argon2id$") and body["credentials"]["password"] not in pw_hash
 
 
-async def test_instant_with_email_stores_it(env):
+async def test_instant_ignores_email_and_credentials_email_conflict_is_generic(env):
     c = env.client()
-    r = await instant(c, email="Real@Example.com")
+    r = await instant(c, email="victim@example.com")  # field no longer exists: ignored
     assert r.status_code == 200, r.text
-    assert r.json()["user"]["email"] == "real@example.com"
-    assert r.json()["user"]["is_instant"] is False
-    r = await instant(env.client(), email="real@example.com")
-    assert r.status_code == 409
-    r = await instant(env.client(), email="x@instant.invalid")
-    assert r.status_code == 422
-    r = await instant(env.client(), email="not-an-email")
-    assert r.status_code == 422
+    assert r.json()["user"]["email"] == "" and r.json()["user"]["is_instant"] is True
+    assert await env.scalar("SELECT count(*) FROM users WHERE email='victim@example.com'") == 0
+    reg, _ = await env.login("buyer")
+    taken = (await reg.get("/api/v1/auth/me")).json()["email"]
+    r = await c.post("/api/v1/me/credentials", json={"email": taken})
+    assert r.status_code == 409 and r.json()["error"]["message"] == "This email can't be used"
+
+
+async def test_instant_net_cap_default_and_soft_pow_ramp(env):
+    assert env.res.settings.instant_per_net_day == 200
+    env.res.settings.instant_per_ip_hour = 1000
+    env.res.settings.instant_per_ip_day = 1000
+    base = env.res.settings.pow_bits
+    c = env.client()
+
+    async def bits() -> int:
+        return (await c.get("/api/v1/pow/challenge", params={"scope": "instant"})).json()["bits"]
+
+    assert await bits() == base
+    env.res.settings.instant_ramp_1, env.res.settings.instant_ramp_2 = 2, 4
+    for _ in range(3):
+        assert (await instant(c)).status_code == 200
+    assert await bits() == base + 4  # > 2 today
+    # a harder, signed challenge verifies; other scopes are unaffected
+    assert (await instant(c)).status_code == 200
+    assert (await instant(c)).status_code == 200
+    assert await bits() == base + 6  # > 4 today
+    assert (await instant(c)).status_code == 200
+    r = await c.get("/api/v1/pow/challenge", params={"scope": "lookup"})
+    assert r.json()["bits"] == base
 
 
 async def test_login_by_handle_and_by_email(env):

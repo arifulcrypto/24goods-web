@@ -79,7 +79,7 @@ async def register(
         await db.flush()
     except IntegrityError:
         await db.rollback()
-        raise Conflict("Email already registered") from None
+        raise Conflict("This email can't be used") from None
     await audit(
         db,
         tenant_id=tenant_id,
@@ -114,12 +114,12 @@ async def instant(
         handle = new_handle()
         user = User(
             tenant_id=tenant_id,
-            email=body.email or f"{handle}@{INSTANT_DOMAIN}",
+            email=f"{handle}@{INSTANT_DOMAIN}",
             pw_hash=pw_hash,
             role="buyer",
             display_name=handle,
             locale=locale,
-            is_instant=body.email is None,
+            is_instant=True,
             handle=handle,
         )
         db.add(user)
@@ -128,10 +128,6 @@ async def instant(
             break
         except IntegrityError:
             await db.rollback()
-            if body.email:
-                taken = await db.scalar(select(User.id).where(User.email == body.email))
-                if taken is not None:
-                    raise Conflict("Email already registered") from None
     else:  # pragma: no cover - 35 bits of handle space; five collisions in a row
         raise Conflict("Could not allocate an account, try again")
     await audit(
@@ -142,7 +138,6 @@ async def instant(
         actor_role="buyer",
         target=f"user:{user.id}",
         ip=ip,
-        detail={"with_email": body.email is not None},
     )
     await db.commit()
     return user, password
