@@ -1,0 +1,10 @@
+[Unit]
+Description=24goods demo: pull :main from GHCR and redeploy if changed
+After=docker.service network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/24goods-demo
+ExecStart=/opt/24goods-demo/deploy/demo-update.sh
+TimeoutStartSec=600

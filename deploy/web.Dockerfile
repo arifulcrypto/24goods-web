@@ -7,7 +7,7 @@ WORKDIR /src
 RUN corepack enable
 COPY frontend/ ./frontend/
 WORKDIR /src/frontend
-RUN corepack install && pnpm install --frozen-lockfile && pnpm -r build
+RUN corepack install && pnpm install --frozen-lockfile && pnpm build
 
 FROM caddy:2.11-alpine
 RUN apk upgrade --no-cache

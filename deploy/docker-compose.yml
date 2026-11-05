@@ -1,11 +1,15 @@
 # 24goods demo / single-host stack.
 #
-#   ./deploy/bootstrap.sh     # once: generates deploy/.env + deploy/secrets/*
-#   docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d
+#   PUBLIC_BASE_URL=http://<ip> ./deploy/bootstrap.sh       # once: deploy/.env, deploy/env/*, deploy/secrets/*
+#   docker compose -f deploy/docker-compose.yml --env-file deploy/.env --profile demo up -d --wait
 #
-# Network design:
-#   edge     – Caddy <-> api/mockpay. The ONLY published port is Caddy's.
-#   backend  – internal:true (no internet egress): postgres, redis, api, delivery, mockpay.
+# Least privilege (security review H1/M2):
+#   * each container gets ONLY its own env file (deploy/env/<service>.env)
+#   * Redis ACL users per role; the default user is disabled
+#   * Postgres: superuser only for initdb; app_owner is NOSUPERUSER (bound by FORCE RLS)
+# Networks:
+#   edge     10.89.10.0/24 – Caddy (fixed .10 = the only trusted proxy) <-> api / mockpay
+#   backend  10.89.11.0/24 – internal:true (no internet egress): postgres, redis, api, delivery, mockpay
 # NOTE: Docker-published ports bypass UFW. Never add `ports:` to anything but `web`.
 
 name: goods24
@@ -17,7 +21,6 @@ x-app: &app
   tmpfs: [/tmp]
   cap_drop: [ALL]
   security_opt: [no-new-privileges:true]
-  env_file: [.env]
   logging:
     driver: json-file
     options: { max-size: "10m", max-file: "3" }
@@ -27,21 +30,24 @@ services:
     image: postgres:17-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER: app_owner
-      POSTGRES_PASSWORD: ${PG_OWNER_PASSWORD:?run bootstrap.sh}
-      POSTGRES_DB: goods24
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${PG_SUPERUSER_PASSWORD:?run deploy/bootstrap.sh}
+      POSTGRES_DB: postgres
+      APP_OWNER_PASSWORD: ${APP_OWNER_PASSWORD:?run deploy/bootstrap.sh}
     command: >
       postgres -c shared_buffers=24MB -c work_mem=2MB -c maintenance_work_mem=16MB
       -c max_connections=40 -c effective_cache_size=64MB -c wal_buffers=1MB
       -c password_encryption=scram-sha-256 -c log_min_duration_statement=500
-    volumes: [pgdata:/var/lib/postgresql/data]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
     networks: [backend]
     mem_limit: 160m
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U app_owner -d goods24"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d goods24"]
       interval: 5s
       timeout: 3s
-      retries: 20
+      retries: 30
 
   redis:
     image: redis:7-alpine
@@ -49,24 +55,24 @@ services:
     command: >
       redis-server --appendonly yes --appendfsync everysec
       --maxmemory 24mb --maxmemory-policy noeviction
-      --requirepass ${REDIS_PASSWORD:?run bootstrap.sh}
+      --aclfile /run/secrets/redis_acl
+    environment:
+      REDIS_HEALTH_PASSWORD: ${REDIS_HEALTH_PASSWORD:?run deploy/bootstrap.sh}
+    secrets: [redis_acl]
     volumes: [redisdata:/data]
     networks: [backend]
     mem_limit: 48m
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD}\" --no-auth-warning ping | grep PONG"]
+      test: ["CMD-SHELL", "redis-cli --user health --pass \"$${REDIS_HEALTH_PASSWORD}\" --no-auth-warning ping | grep PONG"]
       interval: 5s
       timeout: 3s
       retries: 20
-    environment:
-      REDIS_PASSWORD: ${REDIS_PASSWORD}
 
   migrate:
     <<: *app
     restart: "no"
     command: ["alembic", "upgrade", "head"]
-    environment:
-      APP_DATABASE_URL: ${APP_OWNER_DATABASE_URL}
+    env_file: [env/migrate.env]
     networks: [backend]
     depends_on:
       postgres: { condition: service_healthy }
@@ -75,6 +81,7 @@ services:
     <<: *app
     restart: "no"
     command: ["python", "-m", "app.devtools.seed"]
+    env_file: [env/seed.env]
     volumes: [uploads:/data/uploads]
     secrets: [vault_public_keys]
     networks: [backend]
@@ -85,9 +92,12 @@ services:
   api:
     <<: *app
     command: ["python", "-m", "app.serve"]
+    env_file: [env/api.env]
     volumes: [uploads:/data/uploads]
     secrets: [vault_public_keys]          # public key only: can seal, cannot open
-    networks: [edge, backend]
+    networks:
+      edge: {}
+      backend: {}
     mem_limit: 192m
     depends_on:
       seed: { condition: service_completed_successfully }
@@ -95,16 +105,21 @@ services:
   delivery:
     <<: *app
     command: ["python", "-m", "app.delivery"]
+    env_file: [env/delivery.env]
     secrets: [vault_private_keys]         # the ONLY container holding private keys
     networks: [backend]                   # internal network only: no internet egress
     mem_limit: 112m
     depends_on:
       seed: { condition: service_completed_successfully }
 
-  mockpay:                                # demo only — ZPay simulator
+  mockpay:                                # ZPay simulator — demo/CI only (profile "demo")
     <<: *app
+    profiles: [demo]
     command: ["python", "-m", "app.devtools.mock_zpay"]
-    networks: [edge, backend]
+    env_file: [env/mockpay.env]
+    networks:
+      edge: {}
+      backend: {}
     mem_limit: 96m
     depends_on:
       redis: { condition: service_healthy }
@@ -120,17 +135,28 @@ services:
     ports:
       - "${PUBLISH_HTTP:-80}:80"
     volumes: [caddy_data:/data, caddy_config:/config]
-    networks: [edge]
+    networks:
+      edge:
+        ipv4_address: 10.89.10.10         # == APP_TRUSTED_PROXIES in env/api.env
     mem_limit: 64m
     depends_on: [api]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:80/ || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
     logging:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
 
 networks:
-  edge: {}
+  edge:
+    ipam:
+      config: [{ subnet: 10.89.10.0/24 }]
   backend:
     internal: true
+    ipam:
+      config: [{ subnet: 10.89.11.0/24 }]
 
 volumes:
   pgdata: {}
@@ -144,3 +170,5 @@ secrets:
     file: ./secrets/vault_public_keys.json
   vault_private_keys:
     file: ./secrets/vault_private_keys.json
+  redis_acl:
+    file: ./secrets/users.acl

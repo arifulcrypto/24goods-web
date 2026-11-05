@@ -1,0 +1,10 @@
+[Unit]
+Description=24goods demo: poll GHCR every 2 minutes
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=2min
+Unit=goods24-demo-update.service
+
+[Install]
+WantedBy=timers.target

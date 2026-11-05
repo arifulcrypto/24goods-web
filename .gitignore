@@ -34,3 +34,4 @@ node_modules/
 # deploy runtime
 deploy/.env
 deploy/secrets/
+deploy/env/
