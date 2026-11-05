@@ -70,6 +70,21 @@ function onScroll() {
   }
 }
 
+// In-app plain-text viewer for `file` bubbles (rendered as text in a <pre>, never as HTML).
+const viewer = ref<{ name: string; url: string; text: string; state: 'loading' | 'ready' | 'error' } | null>(null)
+async function openFile(f: { url: string; name: string }) {
+  const cur = { name: f.name, url: f.url, text: '', state: 'loading' as 'loading' | 'ready' | 'error' }
+  viewer.value = cur
+  try {
+    const r = await fetch(f.url, { credentials: 'same-origin' })
+    if (!r.ok) throw new Error(String(r.status))
+    const text = (await r.text()).slice(0, 300_000)
+    if (viewer.value === cur) viewer.value = { ...cur, text, state: 'ready' }
+  } catch {
+    if (viewer.value === cur) viewer.value = { ...cur, state: 'error' }
+  }
+}
+
 defineExpose({ scrollToBottom, isNearBottom, preserveScroll, el: scroller })
 </script>
 
@@ -92,6 +107,7 @@ defineExpose({ scrollToBottom, isNearBottom, preserveScroll, el: scroller })
         :mode="mode"
         :busy-quote-id="busyQuoteId"
         @preview="emit('preview', $event)"
+        @open-file="openFile"
         @open-product="emit('openProduct', $event)"
         @open-order="emit('openOrder', $event)"
         @accept-quote="emit('acceptQuote', $event)"
@@ -99,7 +115,22 @@ defineExpose({ scrollToBottom, isNearBottom, preserveScroll, el: scroller })
         @retry="emit('retry', $event)"
         @discard="emit('discard', $event)"
       />
+      <slot name="item-extra" :item="it" />
     </template>
     <slot name="bottom" />
+    <Teleport to="body">
+      <div v-if="viewer" class="gc-viewer" role="dialog" aria-modal="true" :aria-label="viewer.name" @click.self="viewer = null">
+        <div class="gc-viewer-box">
+          <div class="gc-viewer-head">
+            <strong>{{ viewer.name }}</strong>
+            <a v-if="viewer.state === 'ready'" class="gc-btn" :href="viewer.url" :download="viewer.name" rel="noopener">{{ t('chat.file.download') }}</a>
+            <button type="button" class="gc-btn" @click="viewer = null">{{ t('chat.file.close') }}</button>
+          </div>
+          <pre v-if="viewer.state === 'ready'" class="gc-viewer-text">{{ viewer.text }}</pre>
+          <p v-else-if="viewer.state === 'error'" class="gc-viewer-text">{{ t('chat.file.loadFailed') }}</p>
+          <p v-else class="gc-viewer-text">{{ t('common.loading') }}</p>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>

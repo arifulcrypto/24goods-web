@@ -2,17 +2,27 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import { DeliveryView } from '@24goods/shared/ui'
 import {
+  BRAND,
+  canRequestAfterSales,
   copyText,
+  revealedCodes,
+  downloadText,
+  goBack,
   formatCountdown,
   formatDateTime,
   formatMoney,
   isApiError,
   safeAssetUrl,
   safePayUrl,
+  type AfterSales,
   type Order,
 } from '@24goods/shared'
 import { api } from '../api'
+import AfterSalesSheet from '../components/AfterSalesSheet.vue'
+import AfterSalesStatus from '../components/AfterSalesStatus.vue'
+import { dropAccessCode, readAccessCode } from '../lib/attribution'
 import { useRealtimeStore } from '../stores/realtime'
 import { closeToast, confirm, showImagePreview, showLoadingToast, showSuccessToast, showToast, toastError } from '../ui'
 
@@ -30,6 +40,8 @@ const revealing = ref(false)
 const confirming = ref(false)
 /** Revealed codes live only in memory for this view; never persisted. */
 const secrets = ref<string[]>([])
+const accessCode = ref<string | null>(null)
+const asSheet = ref(false)
 const now = ref(Date.now())
 const timer = setInterval(() => (now.value = Date.now()), 1000)
 
@@ -52,6 +64,7 @@ watch(
   id,
   () => {
     secrets.value = []
+    accessCode.value = readAccessCode(id.value)
     void fetchOrder()
   },
   { immediate: true },
@@ -136,11 +149,11 @@ async function pay() {
 async function reveal() {
   const o = order.value
   if (!o || revealing.value) return
-  if (!(await confirm(t('order.revealTitle'), t('order.revealWarn')))) return
+  if (!(await confirm(t('delivery.revealTitle'), t('delivery.revealWarn')))) return
   revealing.value = true
   try {
     const r = await api.orders.reveal(o.id)
-    secrets.value = r.secrets
+    secrets.value = revealedCodes(r)
   } catch (e) {
     toastError(e)
   } finally {
@@ -170,8 +183,26 @@ function previewAttachment(url: string) {
   showImagePreview({ images: [url], closeable: true })
 }
 function back() {
-  if (window.history.length > 1) router.back()
-  else void router.push('/orders')
+  goBack(router, '/orders')
+}
+const canAfterSales = computed(() => !!order.value && canRequestAfterSales(order.value))
+const asExpired = computed(
+  () => !!order.value && ['delivered', 'completed'].includes(order.value.status) && !canAfterSales.value && !order.value.after_sales,
+)
+function ticketCreated(tk: AfterSales) {
+  if (order.value) order.value = { ...order.value, after_sales: tk }
+}
+function saveAccessCode() {
+  const o = order.value
+  if (!o || !accessCode.value) return
+  downloadText(
+    `${o.order_no}.txt`,
+    `${BRAND.name}\n${t('order.orderNo')}: ${o.order_no}\n${t('lookup.accessCode')}: ${accessCode.value}\n${t('lookup.saveNote', { url: `${BRAND.domain}/lookup` })}\n`,
+  )
+}
+function gotCode() {
+  dropAccessCode(id.value)
+  accessCode.value = null
 }
 </script>
 
@@ -219,35 +250,36 @@ function back() {
         </div>
       </section>
 
-      <!-- auto delivery: reveal codes -->
-      <section v-if="order.can_reveal" class="section card pad codes">
-        <div class="codes-head">
-          <h2>{{ t('order.codes') }}</h2>
-          <van-button v-if="secrets.length" size="small" round plain @click="secrets = []">{{ t('order.hide') }}</van-button>
+      <section v-if="accessCode" class="section card pad access">
+        <h2 class="h2">{{ t('lookup.yourCode') }}</h2>
+        <p class="muted small">{{ t('lookup.codeNote') }}</p>
+        <div class="ac-row">
+          <code class="ac">{{ accessCode }}</code>
+          <van-button size="small" round type="primary" class="tap" @click="copy(accessCode)">{{ t('common.copy') }}</van-button>
         </div>
-        <van-notice-bar wrapable :scrollable="false" left-icon="warning-o" class="warn">
-          {{ t('order.revealWarn') }}
-        </van-notice-bar>
-        <template v-if="secrets.length">
-          <p class="muted small">{{ t('order.codesHint') }}</p>
-          <ul class="code-list">
-            <li v-for="(s, i) in secrets" :key="i" class="code-row">
-              <code class="code">{{ s }}</code>
-              <van-button size="small" round type="primary" class="tap" @click="copy(s)">{{ t('common.copy') }}</van-button>
-            </li>
-          </ul>
-          <van-button v-if="secrets.length > 1" block round plain @click="copy(secrets.join('\n'))">{{ t('order.copyAll') }}</van-button>
-        </template>
-        <van-button v-else block round type="primary" :loading="revealing" icon="eye-o" @click="reveal">
-          {{ t('order.reveal') }}
-        </van-button>
+        <div class="ac-actions">
+          <van-button size="small" round plain class="tap" @click="saveAccessCode">{{ t('cred.save') }}</van-button>
+          <van-button size="small" round plain class="tap" @click="gotCode">{{ t('lookup.gotIt') }}</van-button>
+        </div>
       </section>
 
-      <!-- manual delivery -->
-      <section v-if="order.manual_delivery" class="section card pad">
-        <h2 class="h2">{{ t('order.manualDelivery') }}</h2>
-        <p v-if="order.manual_delivery.text" class="manual-text">{{ order.manual_delivery.text }}</p>
-        <template v-if="order.manual_delivery.attachment && attachmentUrl">
+      <section v-if="order.can_reveal || secrets.length || order.manual_delivery || ['delivered', 'completed'].includes(order.status)" class="section card pad">
+        <DeliveryView
+          :info="order.delivery_info"
+          :codes="secrets"
+          :can-reveal="order.can_reveal"
+          :revealing="revealing"
+          :manual-text="order.manual_delivery?.text ?? null"
+          :order-no="order.order_no"
+          :after-sales-until="order.after_sales_until"
+          :auto-confirm-at="order.status === 'delivered' ? order.auto_confirm_at : null"
+          :can-confirm="order.status === 'delivered'"
+          :confirming="confirming"
+          @reveal="reveal"
+          @hide="secrets = []"
+          @confirm="confirmReceived"
+        />
+        <template v-if="order.manual_delivery?.attachment && attachmentUrl">
           <button
             v-if="order.manual_delivery.attachment.kind === 'image'"
             type="button"
@@ -259,6 +291,12 @@ function back() {
           </button>
           <a v-else :href="attachmentUrl" target="_blank" rel="noopener noreferrer">{{ t('order.openAttachment') }}</a>
         </template>
+      </section>
+
+      <section v-if="order.after_sales || canAfterSales || asExpired" class="section card pad">
+        <AfterSalesStatus v-if="order.after_sales" :ticket="order.after_sales" />
+        <van-button v-if="canAfterSales" block round plain class="as-btn" @click="asSheet = true">{{ t('afterSales.request') }}</van-button>
+        <p v-else-if="asExpired" class="muted small">{{ t('afterSales.expired') }}</p>
       </section>
 
       <section class="section card clip">
@@ -280,12 +318,14 @@ function back() {
       <div class="contact">
         <van-button round plain icon="chat-o" to="/chat">{{ t('order.contact') }}</van-button>
       </div>
-      <div v-if="order.status === 'pending_payment' || order.status === 'delivered'" class="bar-spacer" />
+      <div class="contact">
+        <RouterLink to="/lookup" class="lk">{{ t('lookup.title') }}</RouterLink>
+      </div>
+      <div v-if="order.status === 'pending_payment'" class="bar-spacer" />
 
-      <div v-if="order.status === 'pending_payment' || order.status === 'delivered'" class="dock action-dock">
+      <div v-if="order.status === 'pending_payment'" class="dock action-dock">
         <span class="price">{{ formatMoney(order.amount, order.currency, locale) }}</span>
         <van-button
-          v-if="order.status === 'pending_payment'"
           round
           type="primary"
           class="action-btn"
@@ -295,10 +335,8 @@ function back() {
         >
           {{ t('order.pay') }}
         </van-button>
-        <van-button v-else round type="primary" class="action-btn" :loading="confirming" @click="confirmReceived">
-          {{ t('order.confirm') }}
-        </van-button>
       </div>
+      <AfterSalesSheet v-model:show="asSheet" :order-id="order.id" @created="ticketCreated" />
     </template>
   </div>
 </template>
@@ -465,5 +503,36 @@ function back() {
 .action-btn {
   min-width: 140px;
   font-weight: 700;
+}
+.ac-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 8px 8px 12px;
+  border-radius: 10px;
+  background: #faf8f2;
+  border: 1px dashed #e7d9a8;
+}
+.ac {
+  flex: 1;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 18px;
+  letter-spacing: 0.08em;
+  user-select: all;
+}
+.ac-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.as-btn {
+  margin-top: 8px;
+}
+.lk {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  color: var(--c-text-2);
+  font-size: 13px;
 }
 </style>

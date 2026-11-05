@@ -1,3 +1,5 @@
 export { default as ProductThumb } from './ProductThumb.vue'
 export { default as LogoMark } from './LogoMark.vue'
 export { coverColors, coverInitials, hash32 } from './cover'
+export { default as DeliveryView } from './DeliveryView.vue'
+export { default as SafeHtml } from './SafeHtml.vue'

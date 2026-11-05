@@ -2,7 +2,9 @@
 import { ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import ProductGrid from '../components/ProductGrid.vue'
+import { goBack, type ProductSummary } from '@24goods/shared'
+import BuySheet from '../components/BuySheet.vue'
+import ProductList from '../components/ProductList.vue'
 import { useProductFeed } from '../composables/useProductFeed'
 
 const { t } = useI18n()
@@ -11,6 +13,8 @@ const router = useRouter()
 const q = ref('')
 const input = ref('')
 const feed = useProductFeed(() => ({ q: q.value }))
+const buying = ref<ProductSummary | null>(null)
+const buySheet = ref(false)
 
 // Only react while this (kept-alive) page is the active route.
 watch(
@@ -31,8 +35,11 @@ function submit() {
   void router.replace({ path: '/search', query: v ? { q: v } : {} })
 }
 function back() {
-  if (window.history.length > 1) router.back()
-  else void router.push('/')
+  goBack(router, '/')
+}
+function buy(p: ProductSummary) {
+  buying.value = p
+  buySheet.value = true
 }
 </script>
 
@@ -70,12 +77,13 @@ function back() {
       :offset="400"
       @load="feed.load"
     >
-      <ProductGrid :items="feed.items.value" :skeleton="feed.loading.value && !feed.items.value.length ? 4 : 0" />
+      <ProductList :items="feed.items.value" view="list" :skeleton="feed.loading.value && !feed.items.value.length ? 4 : 0" @buy="buy" />
       <van-empty v-if="feed.finished.value && !feed.items.value.length" image="search" :description="t('search.noResults', { q })">
         <p class="muted">{{ t('search.hint') }}</p>
       </van-empty>
     </van-list>
     <van-empty v-else image="search" :description="t('search.typeToSearch')" />
+    <BuySheet v-model:show="buySheet" :product="buying" />
   </div>
 </template>
 
@@ -121,8 +129,5 @@ function back() {
   .result-note {
     margin-left: 16px;
   }
-}
-:deep(.pgrid) {
-  padding-top: 12px;
 }
 </style>

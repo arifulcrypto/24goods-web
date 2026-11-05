@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { nowTick } from './tick'
 import { useI18n } from 'vue-i18n'
-import type { OrderCardPayload, ProductCardPayload, QuoteCardPayload, SystemPayload } from '../../types'
-import { formatMoney } from '../../format'
+import type { FilePayload, OrderCardPayload, ProductCardPayload, QuoteCardPayload, SystemPayload } from '../../types'
+import { formatBytes, formatChatTime, formatMoney, formatRelative } from '../../format'
 import { safeAssetUrl } from '../../api/endpoints'
 import type { ChatItem } from '../useConversation'
 import VoiceBubble from './VoiceBubble.vue'
@@ -13,6 +14,7 @@ import ProductCardView from './ProductCardView.vue'
 const props = defineProps<{ item: ChatItem; mode: 'buyer' | 'staff'; busyQuoteId?: string | null }>()
 const emit = defineEmits<{
   preview: [url: string]
+  openFile: [f: { url: string; name: string }]
   openProduct: [id: string]
   openOrder: [id: string]
   acceptQuote: [q: QuoteCardPayload]
@@ -37,7 +39,9 @@ const view = computed(() => {
       durationMs: p.durationMs ?? 0,
       width: p.width,
       height: p.height,
-      payload: null,
+      payload: p.type === 'file' ? ({ name: p.filename ?? 'message.txt', bytes: p.blob?.size ?? 0, preview: p.text ?? '' } as FilePayload) : null,
+      fileUrl: null as string | null,
+      createdAt: p.created_at,
       state: p.state,
       clientMsgId: p.client_msg_id,
     }
@@ -54,6 +58,8 @@ const view = computed(() => {
     width: m.attachment?.width,
     height: m.attachment?.height,
     payload: m.payload,
+    createdAt: m.created_at,
+    fileUrl: m.type === 'file' ? safeAssetUrl(m.attachment?.url) : null,
     state: 'sent' as const,
     clientMsgId: m.client_msg_id,
   }
@@ -63,6 +69,7 @@ const self = computed(() =>
   props.mode === 'buyer' ? view.value.senderRole === 'buyer' : view.value.senderRole === 'agent',
 )
 const centered = computed(() => view.value.type === 'system')
+const file = computed(() => (view.value.type === 'file' ? (view.value.payload as FilePayload | null) : null))
 const isCard = computed(() => ['product_card', 'quote_card', 'order_card'].includes(view.value.type))
 
 const initial = computed(() => (view.value.senderName || '?').trim().charAt(0).toUpperCase() || '?')
@@ -84,6 +91,16 @@ const systemText = computed(() => {
     const params: Record<string, unknown> = { ...p }
     if (typeof p?.amount === 'string') {
       params.amount = formatMoney(p.amount, typeof p.currency === 'string' ? p.currency : 'CNY', locale.value)
+    }
+    if (event === 'delivered' && view.value.createdAt) {
+      const at = typeof p?.delivered_at === 'string' ? p.delivered_at : view.value.createdAt
+      const note = typeof p?.note === 'string' && p.note.trim() ? ` — ${p.note.trim()}` : ''
+      return (
+        t('chat.system.deliveredAt', {
+          time: formatChatTime(at, locale.value),
+          ago: formatRelative(at, locale.value, nowTick.value),
+        }) + note
+      )
     }
     if (typeof params.name !== 'string') params.name = typeof p?.display_name === 'string' ? p.display_name : ''
     return t(`chat.system.${event}`, params)
@@ -132,6 +149,15 @@ const systemText = computed(() => {
           :self="self"
           :disabled="view.state === 'sending'"
         />
+
+        <div v-else-if="view.type === 'file' && file" class="gc-bubble gc-file" :class="{ self }">
+          <div class="gc-file-name">{{ file.name }} <span class="gc-file-size">{{ formatBytes(file.bytes, locale) }}</span></div>
+          <div class="gc-file-preview">{{ file.preview }}</div>
+          <div v-if="view.fileUrl" class="gc-file-actions">
+            <button type="button" class="gc-btn" @click="emit('openFile', { url: view.fileUrl!, name: file.name })">{{ t('chat.file.open') }}</button>
+            <a class="gc-btn" :href="view.fileUrl" :download="file.name" rel="noopener">{{ t('chat.file.download') }}</a>
+          </div>
+        </div>
 
         <ProductCardView
           v-else-if="view.type === 'product_card' && view.payload"

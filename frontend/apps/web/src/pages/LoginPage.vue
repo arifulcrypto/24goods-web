@@ -4,6 +4,8 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { isApiError, safeRedirect } from '@24goods/shared'
 import AuthShell from '../components/AuthShell.vue'
+import PowStatus from '../components/PowStatus.vue'
+import { isPowAbort, usePow } from '../composables/usePow'
 import { useAuthStore } from '../stores/auth'
 import { showFailToast, showSuccessToast, toastError } from '../ui'
 
@@ -11,6 +13,7 @@ const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
+const pow = usePow()
 const email = ref('')
 const password = ref('')
 const show = ref(false)
@@ -21,10 +24,17 @@ async function submit() {
   if (busy.value) return
   busy.value = true
   try {
-    await auth.login(email.value.trim(), password.value)
+    try {
+      await auth.login(email.value.trim(), password.value)
+    } catch (e) {
+      // after repeated failures the server asks for a proof-of-work (review-v3 §3)
+      if (!(isApiError(e) && e.code === 'pow_required')) throw e
+      await auth.login(email.value.trim(), password.value, await pow.run('login'))
+    }
     showSuccessToast(t('auth.loggedIn'))
     await router.replace(safeRedirect(route.query.redirect, '/'))
   } catch (e) {
+    if (isPowAbort(e)) return
     if (isApiError(e) && e.code === 'unauthorized') showFailToast(t('auth.loginFailed'))
     else toastError(e)
   } finally {
@@ -59,6 +69,7 @@ async function submit() {
         @click-right-icon="show = !show"
       />
       <div class="submit">
+        <PowStatus :solving="pow.solving.value" :progress="pow.progress.value" />
         <van-button round block type="primary" native-type="submit" :loading="busy">{{ t('me.login') }}</van-button>
       </div>
     </van-form>

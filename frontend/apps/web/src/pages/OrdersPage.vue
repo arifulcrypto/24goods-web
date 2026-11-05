@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { onBeforeUnmount, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { formatDateTime, formatMoney, type Order } from '@24goods/shared'
+import { canRequestAfterSales, formatDateTime, formatMoney, type AfterSales, type Order } from '@24goods/shared'
+import AfterSalesSheet from '../components/AfterSalesSheet.vue'
 import { api } from '../api'
 import { useRealtimeStore } from '../stores/realtime'
 
 const { t, locale } = useI18n()
+const router = useRouter()
 const rt = useRealtimeStore()
 const items = ref<Order[]>([])
 const loading = ref(false)
@@ -13,6 +16,16 @@ const finished = ref(false)
 const error = ref(false)
 const refreshing = ref(false)
 let page = 0
+const asFor = ref<string | null>(null)
+const asSheet = ref(false)
+function openAfterSales(id: string) {
+  asFor.value = id
+  asSheet.value = true
+}
+function ticketCreated(tk: AfterSales) {
+  const i = items.value.findIndex((x) => x.id === tk.order_id)
+  if (i >= 0) items.value.splice(i, 1, { ...items.value[i]!, after_sales: tk })
+}
 
 async function load() {
   loading.value = true
@@ -50,7 +63,7 @@ const tone = (s: Order['status']) =>
 
 <template>
   <div class="page with-tabbar">
-    <van-nav-bar :title="t('orders.title')" class="dock-top" fixed placeholder safe-area-inset-top />
+    <van-nav-bar :title="t('orders.title')" class="dock-top" fixed placeholder safe-area-inset-top :right-text="t('lookup.title')" @click-right="router.push('/lookup')" />
     <van-pull-refresh v-model="refreshing" @refresh="refresh">
       <van-list
         v-model:loading="loading"
@@ -61,7 +74,8 @@ const tone = (s: Order['status']) =>
         @load="load"
       >
         <div class="orders">
-          <RouterLink v-for="o in items" :key="o.id" :to="`/orders/${encodeURIComponent(o.id)}`" class="card ocard">
+          <div v-for="o in items" :key="o.id" class="card ocard">
+            <RouterLink :to="`/orders/${encodeURIComponent(o.id)}`" class="olink">
             <div class="ocard-top">
               <span class="muted small">{{ t('orders.orderNo', { no: o.order_no }) }}</span>
               <span class="status" :class="tone(o.status)">{{ t(`orderStatus.${o.status}`) }}</span>
@@ -72,6 +86,12 @@ const tone = (s: Order['status']) =>
               <span class="price">{{ formatMoney(o.amount, o.currency, locale) }}</span>
             </div>
           </RouterLink>
+            <div v-if="['delivered', 'completed'].includes(o.status)" class="oas">
+              <button v-if="canRequestAfterSales(o)" type="button" class="oas-btn" @click="openAfterSales(o.id)">{{ t('afterSales.request') }}</button>
+              <span v-else-if="o.after_sales" class="muted small">{{ t('afterSales.ticket') }}: {{ t(`afterSales.status.${o.after_sales.status}`) }}</span>
+              <span v-else class="muted small">{{ t('afterSales.expiredShort') }}</span>
+            </div>
+          </div>
           <template v-if="loading && !items.length">
             <div v-for="i in 3" :key="`s${i}`" class="card ocard">
               <div class="skeleton" style="height: 14px; width: 50%" />
@@ -85,6 +105,7 @@ const tone = (s: Order['status']) =>
         </van-empty>
       </van-list>
     </van-pull-refresh>
+    <AfterSalesSheet v-if="asFor" v-model:show="asSheet" :order-id="asFor" @created="ticketCreated" />
   </div>
 </template>
 
@@ -99,10 +120,31 @@ const tone = (s: Order['status']) =>
   padding: 12px;
 }
 .ocard {
-  display: block;
   padding: 12px 14px;
+}
+.olink {
+  display: block;
   text-decoration: none;
   color: inherit;
+}
+.oas {
+  border-top: 1px solid var(--c-line);
+  margin-top: 8px;
+  padding-top: 4px;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  min-height: 44px;
+}
+.oas-btn {
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--c-line);
+  border-radius: 999px;
+  background: var(--c-surface);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
 }
 .ocard-top,
 .ocard-bottom {

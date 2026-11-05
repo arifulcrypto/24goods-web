@@ -163,3 +163,11 @@ a {
     animation: none;
   }
 }
+
+/* bottom sheets are teleported to <body> — keep them inside the app column */
+.buy-sheet.van-popup--bottom {
+  left: 0;
+  right: 0;
+  margin: 0 auto;
+  max-width: var(--shell-w);
+}

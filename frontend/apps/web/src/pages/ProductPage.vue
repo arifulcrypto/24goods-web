@@ -2,12 +2,26 @@
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { formatNumber, moneyParts, multiplyAmount, formatMoney, isApiError, type Product } from '@24goods/shared'
+import { ProductThumb, SafeHtml } from '@24goods/shared/ui'
+import {
+  addRecent,
+  afterSalesBadge,
+  formatLabels,
+  formatNumber,
+  goBack,
+  isApiError,
+  moneyParts,
+  safeLinkUrl,
+  type Product,
+  type ProductSummary,
+} from '@24goods/shared'
 import { api } from '../api'
+import BuySheet from '../components/BuySheet.vue'
+import MiniStrip from '../components/MiniStrip.vue'
+import { cleanSrc, rememberSrc } from '../lib/attribution'
 import { useAuthStore } from '../stores/auth'
 import { showImagePreview, toastError } from '../ui'
 
-const MAX_QTY = 10
 const { t, locale } = useI18n()
 const route = useRoute()
 const router = useRouter()
@@ -17,20 +31,32 @@ const product = ref<Product | null>(null)
 const loading = ref(true)
 const notFound = ref(false)
 const sheet = ref(false)
-const qty = ref(1)
-const submitting = ref(false)
 const chatting = ref(false)
 const slide = ref(0)
+const related = ref<ProductSummary[]>([])
 
 const id = computed(() => String(route.params.id ?? ''))
+const src = computed(() => cleanSrc(route.query.src))
+const buyQty = computed(() => {
+  const n = Number.parseInt(String(route.query.qty ?? '1'), 10)
+  return Number.isFinite(n) ? Math.min(10, Math.max(1, n)) : 1
+})
 watch(
   id,
   async (v) => {
     if (!v) return
     loading.value = true
     notFound.value = false
+    related.value = []
+    rememberSrc(src.value)
     try {
       product.value = await api.product(v)
+      addRecent(product.value.id)
+      if (route.name === 'buy' && !soldOut.value) sheet.value = true
+      void api
+        .recommended({ for: v, limit: 8 })
+        .then((r) => (related.value = r.items.filter((x) => x.id !== v)))
+        .catch(() => undefined)
     } catch (e) {
       if (isApiError(e) && e.code === 'not_found') notFound.value = true
       else toastError(e)
@@ -50,17 +76,9 @@ const images = computed(() => {
 const price = computed(() => (product.value ? moneyParts(product.value.price, product.value.currency, locale.value) : null))
 const isAuto = computed(() => product.value?.delivery_mode === 'auto_card')
 const soldOut = computed(() => isAuto.value && (product.value?.stock ?? 0) <= 0)
-const maxQty = computed(() => {
-  const p = product.value
-  if (!p) return 1
-  if (p.delivery_mode === 'auto_card' && p.stock !== null) return Math.max(1, Math.min(MAX_QTY, p.stock))
-  return MAX_QTY
-})
-const total = computed(() => {
-  const p = product.value
-  if (!p) return ''
-  return formatMoney(multiplyAmount(p.price, qty.value) ?? p.price, p.currency, locale.value)
-})
+const as = computed(() => afterSalesBadge(product.value?.after_sales_hours))
+const labels = computed(() => formatLabels(product.value?.delivery_format, product.value?.delivery_separator))
+const redeem = computed(() => safeLinkUrl(product.value?.redeem_url))
 
 function requireLogin(): boolean {
   if (auth.loggedIn) return true
@@ -80,26 +98,14 @@ async function chat() {
     chatting.value = false
   }
 }
-
-function openBuy() {
-  if (!product.value || soldOut.value || !requireLogin()) return
-  qty.value = 1
-  sheet.value = true
+async function report() {
+  if (!requireLogin()) return
+  await router.push('/chat')
 }
 
-async function placeOrder() {
-  if (!product.value || submitting.value) return
-  submitting.value = true
-  try {
-    // Price is decided by the server; only product id + qty are sent.
-    const order = await api.orders.create(product.value.id, qty.value)
-    sheet.value = false
-    await router.push(`/orders/${encodeURIComponent(order.id)}`)
-  } catch (e) {
-    toastError(e)
-  } finally {
-    submitting.value = false
-  }
+function openBuy() {
+  if (!product.value || soldOut.value) return
+  sheet.value = true
 }
 
 function preview(i: number) {
@@ -107,8 +113,7 @@ function preview(i: number) {
   showImagePreview({ images: images.value, startPosition: i, closeable: true })
 }
 function back() {
-  if (window.history.length > 1) router.back()
-  else void router.push('/')
+  goBack(router, '/')
 }
 </script>
 
@@ -146,7 +151,7 @@ function back() {
             </button>
           </van-swipe-item>
         </van-swipe>
-        <div v-else class="gallery-ph" aria-hidden="true">24</div>
+        <ProductThumb v-else :src="null" :title="product.title" size="100%" :radius="0" />
         <span v-if="images.length > 1" class="gallery-count">{{ slide + 1 }}/{{ images.length }}</span>
       </div>
 
@@ -162,19 +167,32 @@ function back() {
             {{ soldOut ? t('product.outOfStock') : t('product.stock', { n: product.stock }) }}
           </span>
         </div>
+        <div v-if="as" class="facts"><span class="badge-as">{{ t(as.unit === 'h' ? 'product.afterSalesH' : 'product.afterSalesD', { n: as.n }) }}</span></div>
+        <div v-else-if="product.after_sales_hours === 0" class="facts muted small">{{ t('delivery.noAfterSales') }}</div>
+        <p v-if="labels.length" class="fmt">
+          <strong>{{ t('product.deliveryFormat') }}</strong> {{ labels.join(' · ') }}
+        </p>
         <p class="hint muted">{{ isAuto ? t('product.instantHint') : t('product.manualHint') }}</p>
       </section>
 
-      <button type="button" class="section card nego" @click="chat">
-        <van-icon name="chat-o" size="18" />
-        <span>{{ t('product.negotiate') }}</span>
-        <van-icon name="arrow" class="muted" />
-      </button>
+      <section class="section card ask">
+        <span class="ask-q">{{ t('product.questions') }}</span>
+        <div class="ask-btns">
+          <button type="button" class="ask-btn" :disabled="chatting" @click="chat"><van-icon name="chat-o" aria-hidden="true" /> {{ t('product.chatUs') }}</button>
+          <button type="button" class="ask-btn" @click="report"><van-icon name="warning-o" aria-hidden="true" /> {{ t('product.report') }}</button>
+        </div>
+      </section>
 
       <section class="section card desc">
         <h2>{{ t('product.description') }}</h2>
         <p class="desc-text">{{ product.description || t('product.noDescription') }}</p>
       </section>
+      <section v-if="redeem || product.usage_html" class="section card desc">
+        <h2>{{ t('delivery.howToUse') }}</h2>
+        <a v-if="redeem" :href="redeem" target="_blank" rel="noopener noreferrer" class="redeem">{{ t('delivery.redeem') }} ↗</a>
+        <SafeHtml v-if="product.usage_html" class="usage" :html="product.usage_html" />
+      </section>
+      <MiniStrip :title="t('product.related')" :items="related" />
       <div class="bar-spacer" />
 
       <van-action-bar class="dock-bar" safe-area-inset-bottom>
@@ -188,31 +206,7 @@ function back() {
         />
       </van-action-bar>
 
-      <van-popup v-model:show="sheet" position="bottom" round closeable safe-area-inset-bottom class="buy-sheet" teleport="body">
-        <div class="sheet">
-          <div class="sheet-head">
-            <img v-if="product.cover" :src="product.cover" alt="" class="sheet-cover" />
-            <div>
-              <div v-if="price" class="price big"><small>{{ price.symbol }}</small>{{ price.value }}</div>
-              <div class="muted sheet-title">{{ product.title }}</div>
-            </div>
-          </div>
-          <div class="sheet-row">
-            <div>
-              <div>{{ t('product.quantity') }}</div>
-              <div class="muted small">{{ t('product.maxPerOrder', { n: maxQty }) }}</div>
-            </div>
-            <van-stepper v-model="qty" :min="1" :max="maxQty" integer :input-width="48" :button-size="36" />
-          </div>
-          <div class="sheet-row">
-            <span>{{ t('common.total') }}</span>
-            <span class="price">{{ total }}</span>
-          </div>
-          <van-button block round type="primary" size="large" :loading="submitting" @click="placeOrder">
-            {{ t('product.placeOrder') }}
-          </van-button>
-        </div>
-      </van-popup>
+      <BuySheet v-model:show="sheet" :product="product" :qty="buyQty" :src="src" />
     </template>
   </div>
 </template>
@@ -224,7 +218,9 @@ function back() {
 .gallery {
   position: relative;
   background: #f0eee8;
-  aspect-ratio: 1 / 1;
+  aspect-ratio: 4 / 3;
+  max-height: 280px;
+  width: 100%;
   overflow: hidden;
 }
 .gallery :deep(.van-swipe),
@@ -265,7 +261,8 @@ function back() {
   border-radius: 999px;
 }
 .gallery-skel {
-  aspect-ratio: 1 / 1;
+  aspect-ratio: 4 / 3;
+  max-height: 280px;
   border-radius: 0;
 }
 .body-skel {
@@ -304,21 +301,54 @@ function back() {
   font-size: 12px;
   margin: 8px 0 0;
 }
-.nego {
+.ask {
+  padding: 12px 16px;
+}
+.ask-q {
+  font-size: 14px;
+  font-weight: 600;
+}
+.ask-btns {
   display: flex;
-  align-items: center;
   gap: 8px;
-  width: calc(100% - 24px);
-  min-height: 48px;
-  padding: 0 16px;
-  border: 0;
+  margin-top: 8px;
+}
+.ask-btn {
+  flex: 1;
+  min-height: 44px;
+  border: 1px solid var(--c-line);
+  border-radius: 999px;
+  background: var(--c-surface);
   font: inherit;
+  font-size: 14px;
   color: var(--c-text);
   cursor: pointer;
-  text-align: start;
 }
-.nego span {
-  flex: 1;
+.badge-as {
+  font-size: 11px;
+  line-height: 18px;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: #e8f6ee;
+  color: #17744a;
+  font-weight: 600;
+}
+.fmt {
+  margin: 8px 0 0;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.redeem {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  color: var(--c-price);
+  font-weight: 600;
+}
+.usage {
+  line-height: 1.6;
+  color: var(--c-text-2);
+  overflow-wrap: anywhere;
 }
 .desc {
   padding: 14px 16px;
@@ -343,51 +373,7 @@ function back() {
 .dock-bar :deep(.buy-btn) {
   font-weight: 700;
 }
-.sheet {
-  padding: 20px 16px 16px;
-}
-.sheet-head {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  padding-right: 32px;
-}
-.sheet-cover {
-  width: 72px;
-  height: 72px;
-  border-radius: 8px;
-  object-fit: cover;
-  flex: none;
-}
-.sheet-title {
-  font-size: 13px;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-.sheet-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  min-height: 56px;
-  border-bottom: 1px solid var(--c-line);
-  margin-bottom: 4px;
-}
-.sheet-row:last-of-type {
-  border-bottom: 0;
-  margin-bottom: 16px;
-}
 .small {
   font-size: 12px;
-}
-</style>
-<style>
-/* the popup is teleported to body — keep it inside the app column */
-.buy-sheet.van-popup--bottom {
-  left: 0;
-  right: 0;
-  margin: 0 auto;
-  max-width: var(--shell-w);
 }
 </style>

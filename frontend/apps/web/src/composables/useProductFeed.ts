@@ -3,7 +3,7 @@ import type { ProductSummary } from '@24goods/shared'
 import { api } from '../api'
 
 /** Paginated product feed for van-list infinite scroll. */
-export function useProductFeed(params: () => { q?: string; category?: string }) {
+export function useProductFeed(params: () => { q?: string; category?: string }, pageSize = 20) {
   const items = ref<ProductSummary[]>([])
   const loading = ref(false)
   const finished = ref(false)
@@ -17,7 +17,7 @@ export function useProductFeed(params: () => { q?: string; category?: string }) 
     loading.value = true
     error.value = false
     try {
-      const r = await api.products({ ...params(), page: page + 1, page_size: 20 })
+      const r = await api.products({ ...params(), page: page + 1, page_size: pageSize })
       if (myGen !== gen) return
       page = r.page || page + 1
       const seen = new Set(items.value.map((x) => x.id))

@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import type { Locale, User } from '@24goods/shared'
+import type { Locale, PowSolution, User } from '@24goods/shared'
 import { isApiError } from '@24goods/shared'
 import { api } from '../api'
 
@@ -33,15 +33,19 @@ export const useAuthStore = defineStore('auth', () => {
     return loading
   }
 
-  async function login(email: string, password: string) {
-    user.value = await api.auth.login({ email, password })
+  async function login(email: string, password: string, pow?: PowSolution) {
+    user.value = await api.auth.login(pow ? { email, password, pow } : { email, password })
     ready.value = true
     return user.value
   }
-  async function register(b: { email: string; password: string; display_name: string; locale: Locale }) {
+  async function register(b: { email: string; password: string; display_name: string; locale: Locale; pow?: PowSolution }) {
     user.value = await api.auth.register(b)
     ready.value = true
     return user.value
+  }
+  function setUser(u: User) {
+    user.value = u
+    ready.value = true
   }
   async function logout() {
     try {
@@ -55,5 +59,5 @@ export const useAuthStore = defineStore('auth', () => {
     user.value = null
   }
 
-  return { user, ready, loggedIn, isStaff, init, login, register, logout, clear }
+  return { user, ready, loggedIn, isStaff, init, login, register, logout, clear, setUser }
 })
