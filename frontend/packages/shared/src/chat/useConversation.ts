@@ -7,7 +7,7 @@ import { mergeMessages } from './merge'
 export interface ChatAdapter {
   list(conversationId: string, q: MessageQuery): Promise<Message[]>
   send(conversationId: string, body: SendMessageBody): Promise<Message>
-  upload(file: Blob, o: { kind: 'image' | 'voice'; durationMs?: number; filename?: string }): Promise<Attachment>
+  upload(file: Blob, o: { kind: 'image' | 'voice' | 'file'; durationMs?: number; filename?: string }): Promise<Attachment>
   markRead?(conversationId: string, messageId: number): Promise<void>
 }
 
@@ -15,7 +15,8 @@ export type PendingState = 'sending' | 'failed'
 /** A locally-composed message not yet acknowledged by the server. */
 export interface PendingMessage {
   client_msg_id: string
-  type: 'text' | 'image' | 'voice'
+  type: 'text' | 'image' | 'voice' | 'file'
+  /** text body, or (file) the first ~160 chars shown as preview */
   text: string | null
   /** Local blob for image/voice until the upload succeeds. */
   blob: Blob | null
@@ -167,7 +168,7 @@ export function useConversation(opts: UseConversationOptions) {
     p.state = 'sending'
     p.error = null
     try {
-      if ((p.type === 'image' || p.type === 'voice') && !p.attachment) {
+      if ((p.type === 'image' || p.type === 'voice' || p.type === 'file') && !p.attachment) {
         if (!p.blob) throw new ApiError('validation', 'missing file', 0)
         p.attachment = await opts.adapter.upload(p.blob, {
           kind: p.type,
@@ -238,6 +239,18 @@ export function useConversation(opts: UseConversationOptions) {
       durationMs,
     })
   }
+  /** Send long text as a text/plain file (kind=file). */
+  function sendFile(text: string, filename: string) {
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' })
+    return enqueue({
+      type: 'file',
+      text: [...text].slice(0, 160).join(''),
+      blob,
+      filename,
+      objectUrl: null,
+      durationMs: null,
+    })
+  }
   function retry(clientMsgId: string) {
     const p = pending.value.find((x) => x.client_msg_id === clientMsgId)
     if (p && p.state === 'failed') void deliver(p)
@@ -291,6 +304,7 @@ export function useConversation(opts: UseConversationOptions) {
     sendText,
     sendImage,
     sendVoice,
+    sendFile,
     retry,
     discard,
     patchQuote,

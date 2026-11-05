@@ -11,6 +11,10 @@ export const API_ERROR_CODES = [
   'invalid_state',
   'quote_expired',
   'upload_rejected',
+  // v3
+  'pow_required',
+  'pow_invalid',
+  'has_open_orders',
 ] as const
 export const CLIENT_ERROR_CODES = ['network', 'server_error', 'timeout', 'unknown'] as const
 export type ContractErrorCode = (typeof API_ERROR_CODES)[number]
