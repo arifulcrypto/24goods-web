@@ -2,6 +2,7 @@
 import { reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import { LogoMark } from '@24goods/shared/ui'
 import { isApiError, safeRedirect } from '@24goods/shared'
 import { useAuthStore } from '../stores/auth'
 import { setLocale } from '../locale'
@@ -36,7 +37,7 @@ async function submit() {
 <template>
   <div class="login">
     <div class="login-card">
-      <div class="brand"><span class="mark">24</span>{{ t('app.title') }}</div>
+      <div class="brand"><LogoMark :size="36" />{{ t('app.title') }}</div>
       <h1>{{ t('login.title') }}</h1>
       <p class="muted">{{ t('login.subtitle') }}</p>
       <el-alert v-if="error" :title="error" type="error" show-icon :closable="false" class="err" />
@@ -81,16 +82,6 @@ async function submit() {
   gap: 10px;
   font-weight: 700;
   margin-bottom: 18px;
-}
-.mark {
-  width: 32px;
-  height: 32px;
-  border-radius: 9px;
-  background: #111827;
-  color: var(--a-accent);
-  display: grid;
-  place-items: center;
-  font-weight: 800;
 }
 h1 {
   font-size: 22px;

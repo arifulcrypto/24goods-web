@@ -5,21 +5,51 @@ import {
   createEmitter,
   type AgentStatus,
   type Conversation,
+  type EventSourceFactory,
+  type EventSourceLike,
   type Order,
   type RealtimeState,
   type StreamMessageEvent,
 } from '@24goods/shared'
 import { api } from '../api'
+import type { AfterSalesTicket } from '../api-v3'
 
 type Events = {
   message: StreamMessageEvent
   conversation: Conversation
   order: Order
   agent_status: AgentStatus
+  after_sales: AfterSalesTicket
   sync: void
 }
 
-/** Staff SSE (/admin/stream: all conversation, message and order events of the tenant). */
+/**
+ * EventSource factory that also listens for the v3 `after_sales` staff event (review-v3 §12).
+ * The shared RealtimeClient only subscribes to the MVP-0 event names; this adds one more
+ * listener on the same connection without changing shared code. Stale connections are closed
+ * by the client, so they cannot fire.
+ */
+function factoryWithExtras(onAfterSales: (t: AfterSalesTicket) => void): EventSourceFactory | null {
+  const ES = (globalThis as { EventSource?: typeof EventSource }).EventSource
+  if (!ES) return null
+  return (url) => {
+    const es = new ES(url, { withCredentials: false })
+    es.addEventListener('after_sales', (ev: MessageEvent) => {
+      if (typeof ev.data !== 'string') return
+      try {
+        const data = JSON.parse(ev.data) as unknown
+        if (data && typeof data === 'object' && typeof (data as { id?: unknown }).id === 'string') {
+          onAfterSales(data as AfterSalesTicket)
+        }
+      } catch {
+        /* ignore malformed */
+      }
+    })
+    return es as unknown as EventSourceLike
+  }
+}
+
+/** Staff SSE (/admin/stream: all conversation, message, order and after-sales events of the tenant). */
 export const useRealtimeStore = defineStore('realtime', () => {
   const state = ref<RealtimeState>('idle')
   const bus = createEmitter<Events>()
@@ -29,6 +59,7 @@ export const useRealtimeStore = defineStore('realtime', () => {
     if (client) return
     client = new RealtimeClient({
       url: api.streamUrl(),
+      eventSourceFactory: factoryWithExtras((t) => bus.emit('after_sales', t)),
       handlers: {
         message: (e) => bus.emit('message', e),
         conversation: (c) => bus.emit('conversation', c),

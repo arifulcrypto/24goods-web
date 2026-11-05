@@ -1,22 +1,26 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { UploadRequestOptions } from 'element-plus'
 import {
   compareAmount,
   compressImage,
+  copyText,
+  formatCountdown,
   formatDateTime,
+  formatRelative,
   formatMoney,
   imageExtension,
   isValidAmount,
   multiplyAmount,
   normalizeAmount,
   safeAssetUrl,
-  type AdminOrderDetail,
   type Attachment,
   type Order,
 } from '@24goods/shared'
-import { api } from '../api'
+import { api, apiV3 } from '../api'
+import type { AdminOrderDetailV3 as AdminOrderDetail } from '../api-v3'
+import { buildBuyerTemplate, clockTime, htmlToText } from '../lib/orderText'
 import OrderStatusTag from './OrderStatusTag.vue'
 import { toastError, toastOk } from '../ui'
 
@@ -26,13 +30,56 @@ const { t, locale } = useI18n()
 
 const order = ref<AdminOrderDetail | null>(null)
 const loading = ref(false)
+const now = ref(Date.now())
+let tick: ReturnType<typeof setInterval> | null = null
+onMounted(() => (tick = setInterval(() => (now.value = Date.now()), 15_000)))
+onBeforeUnmount(() => tick && clearInterval(tick))
+const deliveredAgo = computed(() => (order.value?.delivered_at ? `${t('orders.deliveredAt', { time: clockTime(order.value.delivered_at, locale.value) })} · ${formatRelative(order.value.delivered_at, locale.value, now.value)}` : ''))
+const autoConfirm = computed(() => {
+  const o = order.value
+  if (!o?.auto_confirm_at || o.status !== 'delivered') return null
+  if (o.after_sales && (o.after_sales.status === 'open' || o.after_sales.status === 'processing')) return t('orders.autoConfirmPaused')
+  return formatCountdown(o.auto_confirm_at, now.value) ?? t('orders.autoConfirmDue')
+})
+async function copyDelivery() {
+  const text = order.value?.manual_delivery?.text
+  if (text) toastCopy(await copyText(text))
+}
+async function copyBuyerMessage() {
+  const o = order.value
+  if (!o?.manual_delivery) return
+  const di = o.delivery_info
+  const text = buildBuyerTemplate({
+    orderNo: o.order_no,
+    title: o.title,
+    content: o.manual_delivery.text ?? "",
+    usage: htmlToText(di?.usage_html),
+    redeemUrl: di?.redeem_url,
+    afterSalesUntil: o.after_sales_until,
+    labels: {
+      order: t('orders.tpl.order'),
+      item: t('orders.tpl.item'),
+      content: t('orders.tpl.content'),
+      usage: t('orders.tpl.usage'),
+      redeem: t('orders.tpl.redeem'),
+      afterSales: t('orders.tpl.afterSales'),
+      thanks: t('orders.tpl.thanks'),
+    },
+    formatDate: (iso) => formatDateTime(iso, locale.value),
+  })
+  toastCopy(await copyText(text))
+}
+function toastCopy(ok: boolean) {
+  if (ok) toastOk(t('common.copied'))
+  else toastError(new Error('copy'))
+}
 const floorUnit = ref<string | null>(null)
 
 async function load(id: string) {
   loading.value = true
   floorUnit.value = null
   try {
-    order.value = await api.orders.get(id)
+    order.value = await apiV3.orders.get(id)
     void resolveFloor(order.value)
   } catch (e) {
     toastError(e)
@@ -213,9 +260,23 @@ defineExpose({ reload: () => props.orderId && load(props.orderId) })
           <el-descriptions-item :label="t('orders.col.created')">{{ formatDateTime(order.created_at, locale) }}</el-descriptions-item>
           <el-descriptions-item v-if="order.expires_at" :label="t('orders.info.expiresAt')">{{ formatDateTime(order.expires_at, locale) }}</el-descriptions-item>
           <el-descriptions-item v-if="order.paid_at" :label="t('orders.info.paidAt')">{{ formatDateTime(order.paid_at, locale) }}</el-descriptions-item>
-          <el-descriptions-item v-if="order.delivered_at" :label="t('orders.info.deliveredAt')">{{ formatDateTime(order.delivered_at, locale) }}</el-descriptions-item>
+          <el-descriptions-item v-if="order.delivered_at" :label="t('orders.info.deliveredAt')">
+            {{ formatDateTime(order.delivered_at, locale) }}<div class="muted small" aria-live="off">{{ deliveredAgo }}</div>
+          </el-descriptions-item>
+          <el-descriptions-item v-if="autoConfirm" :label="t('orders.info.autoConfirm')">{{ autoConfirm }}</el-descriptions-item>
+          <el-descriptions-item v-if="order.after_sales_until" :label="t('orders.info.afterSalesUntil')">
+            {{ formatDateTime(order.after_sales_until, locale) }}
+            <span class="muted small"> · {{ formatRelative(order.after_sales_until, locale, now) }}</span>
+          </el-descriptions-item>
+          <el-descriptions-item v-if="order.after_sales" :label="t('nav.afterSales')">
+            <RouterLink :to="{ path: '/after-sales', query: { open: order.after_sales.id } }">{{ t(`afterSales.status.${order.after_sales.status}`) }}</RouterLink>
+          </el-descriptions-item>
           <el-descriptions-item v-if="order.manual_delivery" :label="t('orders.info.manualDelivery')">
             <p class="pre">{{ order.manual_delivery.text }}</p>
+            <div class="copy-row">
+              <el-button size="small" @click="copyDelivery">{{ t('orders.copyText') }}</el-button>
+              <el-button size="small" @click="copyBuyerMessage">{{ t('orders.copyBuyer') }}</el-button>
+            </div>
             <el-image
               v-if="order.manual_delivery.attachment?.kind === 'image'"
               :src="safeAssetUrl(order.manual_delivery.attachment.url) ?? undefined"
@@ -326,6 +387,12 @@ defineExpose({ reload: () => props.orderId && load(props.orderId) })
 .hint {
   margin-top: 4px;
   line-height: 1.4;
+}
+.copy-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
 }
 .att {
   width: 96px;

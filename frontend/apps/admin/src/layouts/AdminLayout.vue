@@ -11,16 +11,21 @@ import {
   Fold,
   Goods,
   List,
+  Reading,
+  Service,
+  Setting,
   Tickets,
 } from '@element-plus/icons-vue'
-import { messagePreview } from '@24goods/shared'
+import { LogoMark } from '@24goods/shared/ui'
+import NotifyPopover from '../components/NotifyPopover.vue'
+import { useCsNotifications } from '../composables/useCsNotifications'
+import { useDeskStore } from '../stores/desk'
 import AgentStatusSelect from '../components/AgentStatusSelect.vue'
 import { useAuthStore } from '../stores/auth'
 import { useRealtimeStore } from '../stores/realtime'
 import { usePrefsStore } from '../stores/prefs'
 import { setLocale } from '../locale'
 import type { AppLocale } from '../i18n'
-import { beep, desktopNotify, ensureNotificationPermission } from '../notify'
 
 const { t, locale } = useI18n()
 const route = useRoute()
@@ -28,6 +33,8 @@ const router = useRouter()
 const auth = useAuthStore()
 const rt = useRealtimeStore()
 const prefs = usePrefsStore()
+const desk = useDeskStore()
+useCsNotifications()
 const narrow = ref(false)
 
 const menu = computed(() => {
@@ -35,13 +42,16 @@ const menu = computed(() => {
     { path: '/', key: 'nav.dashboard', icon: DataBoard },
     { path: '/inbox', key: 'nav.inbox', icon: ChatDotRound },
     { path: '/orders', key: 'nav.orders', icon: List },
+    { path: '/after-sales', key: 'nav.afterSales', icon: Service },
     { path: '/products', key: 'nav.products', icon: Goods },
   ]
   if (auth.isAdmin) {
     items.push(
+      { path: '/articles', key: 'nav.articles', icon: Reading },
       { path: '/inventory', key: 'nav.inventory', icon: Tickets },
       { path: '/ledger', key: 'nav.ledger', icon: Coin },
       { path: '/audit', key: 'nav.audit', icon: Document },
+      { path: '/site', key: 'nav.site', icon: Setting },
     )
   }
   return items
@@ -53,20 +63,6 @@ function onResize() {
   narrow.value = window.innerWidth < 1100
 }
 
-// global new-message notifications (not while looking at that conversation)
-const off = rt.on('message', (e) => {
-  if (e.message.sender.role !== 'buyer') return
-  if (route.name === 'inbox' && route.query.c === e.conversation_id && document.hasFocus()) return
-  if (prefs.sound) beep()
-  if (prefs.notify) {
-    desktopNotify(
-      t('inbox.newMessage', { name: e.message.sender.display_name }),
-      messagePreview(e.message, t),
-      () => void router.push({ name: 'inbox', query: { c: e.conversation_id } }),
-    )
-  }
-})
-
 onMounted(() => {
   onResize()
   window.addEventListener('resize', onResize)
@@ -74,14 +70,9 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   window.removeEventListener('resize', onResize)
-  off()
   rt.stop()
 })
 
-async function toggleNotify(v: boolean | string | number) {
-  if (v === true) prefs.notify = await ensureNotificationPermission()
-  else prefs.notify = false
-}
 function switchLang(l: AppLocale) {
   setLocale(l)
 }
@@ -99,13 +90,16 @@ async function logout() {
   <el-container class="layout">
     <el-aside :width="collapsed ? '64px' : '208px'" class="aside">
       <div class="logo">
-        <span class="logo-mark">24</span>
-        <span v-if="!collapsed" class="logo-text">{{ t('app.short') }}</span>
+        <LogoMark :size="32" :title="t('app.title')" />
+        <span v-if="!collapsed" class="logo-text">{{ t('app.title') }}</span>
       </div>
       <el-menu :default-active="active" :collapse="collapsed" router class="menu" :collapse-transition="false">
         <el-menu-item v-for="m in menu" :key="m.path" :index="m.path">
           <el-icon><component :is="m.icon" /></el-icon>
-          <template #title>{{ t(m.key) }}</template>
+          <template #title>
+            {{ t(m.key) }}
+            <el-badge v-if="m.path === '/after-sales' && desk.afterSalesOpen > 0" :value="desk.afterSalesOpen" :max="99" class="nav-badge" />
+          </template>
         </el-menu-item>
       </el-menu>
       <button
@@ -132,6 +126,7 @@ async function logout() {
         </div>
         <div class="top-right">
           <AgentStatusSelect />
+          <NotifyPopover />
           <el-dropdown trigger="click" @command="switchLang">
             <el-button text>{{ locale === 'zh-CN' ? t('lang.zh') : t('lang.en') }}</el-button>
             <template #dropdown>
@@ -151,14 +146,6 @@ async function logout() {
                 <div class="user-meta">
                   <div class="user-email">{{ auth.user?.email }}</div>
                   <el-tag size="small">{{ t(`top.role.${auth.user?.role ?? 'agent'}`) }}</el-tag>
-                </div>
-                <div class="user-pref">
-                  <span>{{ t('top.notifications') }}</span>
-                  <el-switch :model-value="prefs.notify" @update:model-value="toggleNotify" />
-                </div>
-                <div class="user-pref">
-                  <span>{{ t('top.sound') }}</span>
-                  <el-switch v-model="prefs.sound" />
                 </div>
               </div>
               <el-dropdown-menu>
@@ -195,20 +182,12 @@ async function logout() {
   padding: 0 16px;
   color: #fff;
 }
-.logo-mark {
-  width: 32px;
-  height: 32px;
-  border-radius: 9px;
-  background: var(--a-accent);
-  color: #111;
-  display: grid;
-  place-items: center;
-  font-weight: 800;
-  flex: none;
-}
 .logo-text {
   font-weight: 700;
   white-space: nowrap;
+}
+.nav-badge {
+  margin-left: 8px;
 }
 .menu {
   flex: 1;

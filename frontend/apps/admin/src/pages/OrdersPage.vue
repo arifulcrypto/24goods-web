@@ -16,7 +16,7 @@ const route = useRoute()
 const router = useRouter()
 const rt = useRealtimeStore()
 const status = ref<OrderStatus | ''>(STATUSES.includes(route.query.status as OrderStatus) ? (route.query.status as OrderStatus) : '')
-const q = ref('')
+const q = ref(typeof route.query.q === 'string' ? route.query.q : '')
 const openId = ref<string | null>(typeof route.query.open === 'string' ? route.query.open : null)
 
 const table = usePaged<AdminOrder>((page, page_size) =>
@@ -32,6 +32,12 @@ watch(status, (s) => {
   void table.reload()
 })
 onMounted(() => void table.load())
+watch(
+  () => route.query.open,
+  (v) => {
+    if (typeof v === 'string') openId.value = v
+  },
+)
 
 function merge(o: Order) {
   table.patch((x) => x.id === o.id, { ...(table.items.value.find((x) => x.id === o.id) as AdminOrder), ...o })
