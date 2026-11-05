@@ -8,6 +8,7 @@ from fastapi.responses import PlainTextResponse, RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import client_ip, get_db, get_res, get_tenant_id
+from app.core.ratelimit import hit
 from app.core.resources import Resources
 from app.modules.orders.service import broadcast_order
 from app.modules.payments.notify import handle_notify
@@ -38,9 +39,13 @@ async def notify_zpay(
     db: AsyncSession = Depends(get_db),
     res: Resources = Depends(get_res),
 ) -> PlainTextResponse:
+    ip = client_ip(request)
+    allowed, _ = await hit(res.redis, "notify:ip", ip or "-", res.settings.notify_rate_per_min, 60)
+    if not allowed:  # flood: cheap refusal before parsing/verifying; gateways retry later
+        return PlainTextResponse("fail", status_code=200)
     params = await _params(request)
-    outcome = await handle_notify(db, res, tenant_id, params, client_ip(request))
-    if outcome.order is not None and outcome.messages:
+    outcome = await handle_notify(db, res, tenant_id, params, ip)
+    if outcome.order is not None:
         await broadcast_order(res, db, outcome.order, outcome.messages)
     return PlainTextResponse(outcome.reply, status_code=200)
 

@@ -60,7 +60,9 @@ async def get_file(
     headers = {
         "X-Content-Type-Options": "nosniff",
         "Content-Security-Policy": "sandbox",
-        "Content-Disposition": "inline",
+        # Images render inline; anything else (voice) is an attachment: <audio> still
+        # plays it, but direct navigation never renders it as a document.
+        "Content-Disposition": "inline" if att.kind == "image" else "attachment",
         "Cross-Origin-Resource-Policy": "same-origin",
         "Cache-Control": "public, max-age=86400" if att.is_public else "private, max-age=300",
     }

@@ -31,10 +31,9 @@ async def test_price_change_rules(env):
     assert o["buyer"]["id"]
     msgs = (await buyer.get(f"/api/v1/conversations/{conv['id']}/messages")).json()
     sysmsg = [m for m in msgs if m["type"] == "system"][-1]
-    assert sysmsg["payload"]["event"] == "price_changed"
-    assert (
-        sysmsg["payload"]["old_amount"] == "200.00" and sysmsg["payload"]["new_amount"] == "160.00"
-    )
+    assert sysmsg["payload"]["event"] == "price_changed" and sysmsg["payload"]["currency"] == "CNY"
+    assert sysmsg["text"] == "The order price was changed to 160.00 CNY."
+    assert sysmsg["payload"]["old_amount"] == "200.00" and sysmsg["payload"]["amount"] == "160.00"
     order_card = [m for m in msgs if m["type"] == "order_card"][-1]
     assert order_card["payload"]["amount"] == "160.00"
     assert (

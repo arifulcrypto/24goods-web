@@ -18,7 +18,10 @@ dependencies = [
   "alembic>=1.20",
   "redis>=8.1",
   "argon2-cffi>=25.1",
-  "pillow>=12.3",
+  # 13.0.0 fixes GHSA-78g4-xqwv-q3g8 / CVE-2026-96638/96640/96778 (needs Python >= 3.11).
+  # Py3.10 is local-dev only; uploads already restrict decoders to the sniffed format.
+  "pillow>=13.0.0; python_version >= '3.11'",
+  "pillow>=12.3; python_version < '3.11'",
   "python-multipart>=0.0.32",
   "httpx>=0.28.1",
 ]

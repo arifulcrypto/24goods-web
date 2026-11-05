@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+import re
+from decimal import ROUND_HALF_UP, Decimal
 
 MAX_MINOR = 10**12  # 10 billion units: far beyond any MVP order
 
@@ -11,20 +12,25 @@ class MoneyError(ValueError):
     pass
 
 
+_AMOUNT = re.compile(r"^[0-9]{1,10}(?:\.[0-9]{1,2})?$")
+
+
 def parse_amount(value: str | int | Decimal) -> int:
-    """Parse a positive decimal amount with at most two decimals into minor units."""
-    if isinstance(value, float):  # pragma: no cover - defensive, typing forbids it
-        raise MoneyError("float amounts are not accepted")
-    try:
-        d = Decimal(str(value).strip())
-    except (InvalidOperation, ValueError) as exc:
-        raise MoneyError("invalid amount") from exc
-    if not d.is_finite() or d <= 0:
+    """Parse a positive amount with at most two decimals into minor units.
+
+    The syntax is checked BEFORE any Decimal/int conversion: exponents ("1e999999999"),
+    NaN/Infinity, signs, whitespace inside and > 10 integer digits are rejected, so hostile
+    input can never trigger huge-integer work or an overflow (-> 500).
+    """
+    if isinstance(value, bool) or isinstance(value, float):  # pragma: no cover - typing
+        raise MoneyError("invalid amount")
+    raw = str(value).strip()
+    if len(raw) > 16 or not _AMOUNT.match(raw):
+        raise MoneyError("invalid amount (digits with up to two decimals)")
+    whole, _, frac = raw.partition(".")
+    minor = int(whole) * 100 + int((frac + "00")[:2])
+    if minor <= 0:
         raise MoneyError("amount must be positive")
-    exponent = d.as_tuple().exponent
-    if not isinstance(exponent, int) or exponent < -2:
-        raise MoneyError("at most two decimals")
-    minor = int(d * 100)
     if minor > MAX_MINOR:
         raise MoneyError("amount too large")
     return minor

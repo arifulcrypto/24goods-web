@@ -10,6 +10,7 @@ import uvicorn
 
 from app.core.db import make_engine, make_sessionmaker
 from app.core.logging import configure_logging
+from app.core.memtrim import trim
 from app.core.redis import make_redis
 from app.delivery.config import DeliverySettings
 from app.delivery.context import DeliveryContext
@@ -21,7 +22,7 @@ log = logging.getLogger("app.delivery")
 
 
 async def _main() -> None:
-    settings = DeliverySettings()
+    settings = DeliverySettings.from_env()
     configure_logging(settings.log_level)
     if len(settings.internal_token) < 32:
         raise SystemExit("APP_INTERNAL_TOKEN (>= 32 chars) is required")
@@ -41,9 +42,12 @@ async def _main() -> None:
             access_log=False,
             log_config=None,
             lifespan="off",
+            loop="asyncio",  # low-traffic internal service: skip uvloop/httptools (RSS)
+            http="h11",
         )
     )
     log.info("delivery service on %s:%d", settings.delivery_host, settings.delivery_port)
+    trim()
     try:
         await server.serve()
     finally:

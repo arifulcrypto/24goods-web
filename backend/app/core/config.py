@@ -12,7 +12,7 @@ import binascii
 import ipaddress
 from functools import cached_property, lru_cache
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 Network = ipaddress.IPv4Network | ipaddress.IPv6Network
@@ -47,14 +47,10 @@ class Settings(BaseSettings):
 
     # --- storage ---
     database_url: str = "postgresql+asyncpg://app_api:app_api@localhost:5432/app"
-    db_pool_size: int = 5
-    db_max_overflow: int = 5
+    db_pool_size: int = 4
+    db_max_overflow: int = 4
     redis_url: str = "redis://localhost:6379/0"
     upload_dir: str = "/data/uploads"
-
-    # --- i18n ---
-    default_locale: str = "en"
-    supported_locales: tuple[str, ...] = ("en", "zh-CN")
 
     # --- sessions ---
     cookie_secure: bool = False
@@ -77,14 +73,20 @@ class Settings(BaseSettings):
 
     # --- orders ---
     order_ttl_minutes: int = 30
+    max_pending_orders: int = 5  # per buyer
+    reveal_per_buyer_cards: int = 30  # cards revealed per buyer per window (API side)
+    reveal_per_buyer_window_s: int = 600
     expiry_interval_s: int = 60
 
     # --- payments (ZPay / EPay) ---
     zpay_pid: str = ""
     zpay_key: str = ""
-    zpay_gateway: str = "https://zpayz.cn"  # browser-facing base for submit.php
+    # Browser-facing base for submit.php. May be relative in dev/demo ("/mockpay"); the
+    # resulting pay_url is then relative too. Must be https:// in prod.
+    zpay_gateway: str = "https://zpayz.cn"
     zpay_api_base: str = ""  # server-to-server base for api.php (defaults to gateway)
     zpay_fee_permille: int = 16  # 1.6 %
+    notify_rate_per_min: int = 120  # per source IP on /pay/notify/*
 
     # --- dev mock gateway ---
     mockpay_host: str = "127.0.0.1"
@@ -100,6 +102,17 @@ class Settings(BaseSettings):
         if v not in {"dev", "test", "staging", "prod"}:
             raise ValueError("APP_ENV must be dev|test|staging|prod")
         return v
+
+    @model_validator(mode="after")
+    def _prod_guards(self) -> Settings:
+        if self.env == "prod":
+            if not self.zpay_gateway.startswith("https://"):
+                raise ValueError("APP_ZPAY_GATEWAY must be an https:// URL in prod")
+            if self.zpay_api_base and not self.zpay_api_base.startswith("https://"):
+                raise ValueError("APP_ZPAY_API_BASE must be https:// in prod (it carries the key)")
+            if not self.cookie_secure:
+                raise ValueError("APP_COOKIE_SECURE must be true in prod")
+        return self
 
     @cached_property
     def trusted_proxy_networks(self) -> tuple[Network, ...]:

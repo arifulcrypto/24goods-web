@@ -71,7 +71,7 @@ async def test_image_message_and_pagination_and_unread(env):
     )
     assert up.status_code == 200, up.text
     att = up.json()
-    assert att["kind"] == "image" and att["mime"] == "image/webp" and att["width"] == 64
+    assert att["kind"] == "image" and att["mime"] == "image/jpeg" and att["width"] == 64
     url = f"/api/v1/conversations/{conv['id']}/messages"
     m = (
         await buyer.post(

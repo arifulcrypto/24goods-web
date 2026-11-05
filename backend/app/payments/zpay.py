@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -91,6 +92,9 @@ def parse_query_response(data: Any) -> QueryResult:
     )
 
 
+QUERY_TIMEOUT_S = 3.0
+
+
 class ZPayClient:
     def __init__(self, config: ZPayConfig, http: httpx.AsyncClient):
         self.config = config
@@ -125,12 +129,18 @@ class ZPayClient:
         c = self.config
         query = {"act": "order", "pid": c.pid, "key": c.key, "out_trade_no": order_no}
         try:
-            resp = await self._http.get(
-                c.api_base.rstrip("/") + "/api.php", params=query, timeout=8.0
+            # ZPay waits 5 s for our reply: cap the whole re-query at ~3 s.
+            resp = await asyncio.wait_for(
+                self._http.get(
+                    c.api_base.rstrip("/") + "/api.php",
+                    params=query,
+                    timeout=httpx.Timeout(QUERY_TIMEOUT_S, connect=1.5),
+                ),
+                timeout=QUERY_TIMEOUT_S,
             )
             resp.raise_for_status()
             data = resp.json()
-        except (httpx.HTTPError, ValueError) as exc:
+        except (httpx.HTTPError, ValueError, asyncio.TimeoutError) as exc:
             name = type(exc).__name__
             log.warning("zpay re-query failed order=%s error=%s", order_no, name)
             raise ZPayQueryError(f"query failed: {name}") from None

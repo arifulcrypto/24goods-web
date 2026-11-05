@@ -17,10 +17,12 @@ from app.core.config import Settings
 from app.core.errors import Conflict, InvalidState, NotFound, OutOfStock, QuoteExpired, Validation
 from app.core.money import MoneyError, fmt, parse_amount
 from app.models import Conversation, Message, Order, Product, Quote, User
-from app.modules.chat.messages import insert_message
+from app.modules.chat.messages import insert_message, post_system
 from app.modules.chat.schemas import QuoteIn
 from app.modules.common.views import iso
 from app.modules.orders import service as orders
+
+MAX_AUTO_CARD_QTY = 10  # == buy-now qty cap
 
 
 def canonical(q: Quote) -> bytes:
@@ -81,6 +83,9 @@ async def create_quote(
         product = await db.get(Product, body.product_id)
         if product is None:
             raise NotFound("Product not found")
+        if product.delivery_mode == "auto_card" and body.qty > MAX_AUTO_CARD_QTY:
+            # same cap as buy-now: every delivered order must stay revealable in one go
+            raise Validation(f"qty must be at most {MAX_AUTO_CARD_QTY} for auto_card products")
         if amount < product.floor_price_minor * body.qty:
             raise Validation("amount is below the product floor price")
     q = Quote(
@@ -136,7 +141,7 @@ async def _locked_quote(db: AsyncSession, quote_id: uuid.UUID) -> Quote:
 
 async def withdraw_quote(
     db: AsyncSession, settings: Settings, quote_id: uuid.UUID, agent: User, ip: str | None
-) -> Quote:
+) -> tuple[Quote, Message | None]:
     q = await _locked_quote(db, quote_id)
     if q.status != "offered":
         raise InvalidState("Only offered quotes can be withdrawn")
@@ -152,13 +157,20 @@ async def withdraw_quote(
         target=f"quote:{q.id}",
         ip=ip,
     )
+    sysmsg = await post_system(
+        db,
+        tenant_id=q.tenant_id,
+        conversation_id=q.conversation_id,
+        event="quote_withdrawn",
+        quote_id=str(q.id),
+    )
     await db.commit()
-    return q
+    return q, sysmsg
 
 
 async def accept_quote(
     db: AsyncSession, settings: Settings, quote_id: uuid.UUID, buyer: User, ip: str | None
-) -> tuple[Order, Quote, Message | None]:
+) -> tuple[Order, Quote, list[Message]]:
     """One transaction: lock quote -> checks (owner, status, expiry, HMAC) -> order."""
     q = await _locked_quote(db, quote_id)
     conv = await db.get(Conversation, q.conversation_id)
@@ -188,6 +200,8 @@ async def accept_quote(
         raise Conflict("Quote integrity check failed")
     product = await db.get(Product, q.product_id) if q.product_id else None
     delivery_mode = product.delivery_mode if product else "manual"
+    if delivery_mode == "auto_card" and q.qty > MAX_AUTO_CARD_QTY:
+        raise InvalidState("Quote quantity exceeds the auto-delivery limit")
     if (
         product is not None
         and delivery_mode == "auto_card"
@@ -212,6 +226,14 @@ async def accept_quote(
     q.order_id = order.id
     q.version += 1
     q.signature = sign_quote(settings.quote_key(), q)
+    accepted = await post_system(
+        db,
+        tenant_id=q.tenant_id,
+        conversation_id=conv.id,
+        event="quote_accepted",
+        quote_id=str(q.id),
+        order_id=str(order.id),
+    )
     await audit(
         db,
         tenant_id=q.tenant_id,
@@ -223,7 +245,7 @@ async def accept_quote(
         detail={"order_id": str(order.id)},
     )
     await db.commit()
-    return order, q, msg
+    return order, q, [m for m in (msg, accepted) if m is not None]
 
 
 async def quote_message(db: AsyncSession, q: Quote) -> Message | None:

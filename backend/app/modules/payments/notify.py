@@ -10,12 +10,14 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import time
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 
+from redis.asyncio import Redis
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,7 +36,9 @@ log = logging.getLogger("app.payments.notify")
 
 SUCCESS, FAIL = "success", "fail"
 REPLAY_TTL_S = 24 * 3600
-LATE_GRACE = timedelta(hours=24)
+# In-flight lock: if the process dies mid-settle the lock lapses and ZPay's next retry
+# (+15 s/+30 s/+180 s ...) is processed instead of being rejected for 24 h.
+INFLIGHT_TTL_S = 60
 PAID_STATES = frozenset({"paid", "delivered", "completed"})
 SECURITY_REJECTS = frozenset({"bad_signature", "merchant_mismatch", "order_mismatch"})
 
@@ -56,10 +60,31 @@ def safe_params(params: Mapping[str, str]) -> dict[str, str]:
     return {str(k)[:32]: str(v)[:256] for k, v in list(params.items())[:30]}
 
 
+AUDIT_SAMPLE_WINDOW_S = 60
+
+
 async def _security_event(
-    db: AsyncSession, tenant_id: uuid.UUID, action: str, ip: str | None, detail: dict
+    redis: Redis,
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    action: str,
+    ip: str | None,
+    detail: dict,
 ) -> None:
+    """Security audit, sampled: at most one row per (action, IP) per minute so a flood of
+    forged notifies cannot grow audit_log without bound. Every event is still counted in
+    Redis (``sec:count:<action>:<yyyymmdd>``) for monitoring/alerting."""
     await db.rollback()
+    minute = int(time.time() // AUDIT_SAMPLE_WINDOW_S)
+    day = time.strftime("%Y%m%d", time.gmtime())
+    async with redis.pipeline(transaction=False) as pipe:
+        pipe.incr(f"sec:sample:{action}:{ip or '-'}:{minute}")
+        pipe.expire(f"sec:sample:{action}:{ip or '-'}:{minute}", AUDIT_SAMPLE_WINDOW_S * 2)
+        pipe.incr(f"sec:count:{action}:{day}")
+        pipe.expire(f"sec:count:{action}:{day}", 8 * 24 * 3600)
+        in_minute, _, _, _ = await pipe.execute()
+    if int(in_minute) > 1:
+        return
     await audit(
         db,
         tenant_id=tenant_id,
@@ -127,6 +152,7 @@ async def handle_notify(
     zpay = res.zpay
     if not zpay.config.key or not zpay.verify_signature(params):
         await _security_event(
+            res.redis,
             db,
             tenant_id,
             "payment.notify_bad_signature",
@@ -139,7 +165,12 @@ async def handle_notify(
     order = await db.scalar(select(Order).where(Order.order_no == order_no))
     if order is None:
         await _security_event(
-            db, tenant_id, "payment.notify_unknown_order", ip, {"out_trade_no": order_no[:32]}
+            res.redis,
+            db,
+            tenant_id,
+            "payment.notify_unknown_order",
+            ip,
+            {"out_trade_no": order_no[:32]},
         )
         return NotifyOutcome(FAIL)
 
@@ -153,7 +184,7 @@ async def handle_notify(
     except epay.NotifyRejected as rej:
         detail = {"reason": rej.reason, "params": safe_params(params)}
         if rej.reason in SECURITY_REJECTS:
-            await _security_event(db, tenant_id, "payment.notify_rejected", ip, detail)
+            await _security_event(res.redis, db, tenant_id, "payment.notify_rejected", ip, detail)
             return NotifyOutcome(FAIL)
         if rej.reason == "not_paid":
             await audit(
@@ -169,9 +200,10 @@ async def handle_notify(
             return NotifyOutcome(SUCCESS, order)
         return await _to_manual_review(db, order.id, rej.reason, ip, detail)
 
-    # Replay guard: identical notifies within 24 h are processed at most once.
+    # Replay guard: identical notifies are processed at most once. The key starts as a
+    # short in-flight lock and becomes a 24 h "done" marker only after settling.
     rkey = replay_key(params)
-    first = await res.redis.set(rkey, b"1", nx=True, ex=REPLAY_TTL_S)
+    first = await res.redis.set(rkey, b"inflight", nx=True, ex=INFLIGHT_TTL_S)
     if not first:
         order_id = order.id
         await db.rollback()
@@ -180,7 +212,9 @@ async def handle_notify(
         return NotifyOutcome(SUCCESS if current in PAID_STATES | {"manual_review"} else FAIL)
 
     try:
-        return await _settle(db, res, order.id, trade_no, params, ip)
+        outcome = await _settle(db, res, order.id, trade_no, params, ip)
+        await res.redis.set(rkey, b"done", ex=REPLAY_TTL_S)
+        return outcome
     except ZPayQueryError:
         await res.redis.delete(rkey)  # allow the gateway's retry to be processed
         await db.rollback()
@@ -208,7 +242,8 @@ async def _settle(
         not q.found
         or not q.paid
         or q.money != paid_amount
-        or (q.trade_no and q.trade_no != trade_no)
+        or q.trade_no != trade_no
+        or q.out_trade_no != params["out_trade_no"]
     ):
         return await _to_manual_review(
             db,
@@ -221,6 +256,7 @@ async def _settle(
                     "paid": q.paid,
                     "money": str(q.money),
                     "trade_no": q.trade_no[:64],
+                    "out_trade_no": q.out_trade_no[:32],
                 },
                 "params": safe_params(params),
             },
@@ -248,22 +284,9 @@ async def _settle(
             await db.rollback()
         return NotifyOutcome(SUCCESS, order)
 
+    # Late payments (order expired/cancelled, however late) are still RECORDED
+    # (Payment + ledger) and held in manual_review: received money must never vanish.
     late = order.status in ("expired", "cancelled")
-    if late and (
-        order.expires_at is None or datetime.now(timezone.utc) - order.expires_at > LATE_GRACE
-    ):
-        await audit(
-            db,
-            tenant_id=order.tenant_id,
-            action="payment.unmatched_late",
-            actor_role="gateway",
-            target=f"order:{order.id}",
-            ip=ip,
-            detail={"trade_no": trade_no[:64], "status": order.status},
-            severity="critical",
-        )
-        await db.commit()
-        return NotifyOutcome(SUCCESS, order)
     if order.status not in ("pending_payment", "expired", "cancelled"):
         await audit(
             db,
@@ -364,7 +387,13 @@ async def _settle(
                 tenant_id=order.tenant_id,
                 conversation_id=order.conversation_id,
                 event="paid",
+                text=(
+                    "Payment received. An agent will deliver your order shortly."
+                    if order.delivery_mode == "manual"
+                    else None
+                ),
                 order_id=str(order.id),
+                awaiting_delivery=order.delivery_mode == "manual",
             )
         )
     await audit(

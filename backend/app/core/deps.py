@@ -14,7 +14,7 @@ from app.core.db import tenant_session
 from app.core.errors import Forbidden, Unauthorized
 from app.core.i18n import resolve_lang
 from app.core.resources import Resources
-from app.core.security import COOKIE_NAME, STAFF_ROLES, SessionData
+from app.core.security import STAFF_ROLES, SessionData
 from app.models import User
 
 
@@ -52,7 +52,7 @@ async def get_session(
     tenant_id: uuid.UUID = Depends(get_tenant_id),
     res: Resources = Depends(get_res),
 ) -> SessionData | None:
-    sess = await res.sessions.get(request.cookies.get(COOKIE_NAME))
+    sess = await res.sessions.get(res.sessions.token_from(request.cookies))
     if sess is None or sess.tenant_id != tenant_id:
         return None  # sessions are bound to the tenant they were created on
     return sess
@@ -100,7 +100,5 @@ class Page:
         return {"items": items, "total": total, "page": self.page, "page_size": self.page_size}
 
 
-def get_page(
-    page: int = Query(1, ge=1, le=10_000), page_size: int = Query(20, ge=1, le=100)
-) -> Page:
+def get_page(page: int = Query(1, ge=1, le=1000), page_size: int = Query(20, ge=1, le=100)) -> Page:
     return Page(page, page_size)

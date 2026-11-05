@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from fastapi import Request
+from starlette.requests import Request
 
 SUPPORTED = ("en", "zh-CN")
 DEFAULT = "en"

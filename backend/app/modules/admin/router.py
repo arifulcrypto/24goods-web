@@ -25,6 +25,7 @@ from app.models import User
 from app.modules.admin import products as product_svc
 from app.modules.admin import service
 from app.modules.admin.schemas import AgentStatusIn, CardsImportIn, ProductIn, ProductPatch
+from app.modules.catalog.service import support_status
 from app.modules.chat import quotes as quote_svc
 from app.modules.chat import service as chat
 from app.modules.chat.schemas import AssignIn, MessageIn, QuoteIn, ReadIn
@@ -71,6 +72,13 @@ async def list_products(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     return await product_svc.list_products(db, page, q, status)
+
+
+@router.get("/products/{product_id}")
+async def get_product(
+    product_id: uuid.UUID, _: User = Depends(require_staff), db: AsyncSession = Depends(get_db)
+) -> dict:
+    return await product_svc.view(db, await product_svc.get(db, product_id))
 
 
 @router.post("/products")
@@ -189,11 +197,12 @@ async def list_cards(
 async def list_orders(
     status: OrderStatus | None = None,
     q: str | None = Query(None, max_length=100),
+    buyer_id: uuid.UUID | None = None,
     page: Page = Depends(get_page),
     _: User = Depends(require_staff),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    return await order_admin.list_orders(db, page, status, q)
+    return await order_admin.list_orders(db, page, status, q, buyer_id)
 
 
 @router.get("/orders/{order_id}")
@@ -319,11 +328,11 @@ async def mark_read(
 async def _conversation_reply(
     res: Resources,
     db: AsyncSession,
-    conv,
-    msg,
-    lang: str,  # type: ignore[no-untyped-def]
+    conv,  # type: ignore[no-untyped-def]
+    msgs: list,
+    lang: str,
 ) -> dict:
-    await chat.broadcast(res, db, conv, [m for m in [msg] if m is not None])
+    await chat.broadcast(res, db, conv, msgs)
     (view,) = await chat.conversation_views(db, [conv], viewer="staff", lang=lang)
     return view
 
@@ -339,8 +348,8 @@ async def assign(
     res: Resources = Depends(get_res),
 ) -> dict:
     conv = await chat.staff_conversation(db, conv_id)
-    msg = await service.assign(db, conv, body.agent_id, staff, client_ip(request))
-    return await _conversation_reply(res, db, conv, msg, lang)
+    msgs = await service.assign(db, conv, body.agent_id, staff, client_ip(request))
+    return await _conversation_reply(res, db, conv, msgs, lang)
 
 
 @router.post("/conversations/{conv_id}/close")
@@ -353,8 +362,8 @@ async def close(
     res: Resources = Depends(get_res),
 ) -> dict:
     conv = await chat.staff_conversation(db, conv_id)
-    msg = await service.close(db, conv, staff, client_ip(request))
-    return await _conversation_reply(res, db, conv, msg, lang)
+    msgs = await service.close(db, conv, staff, client_ip(request))
+    return await _conversation_reply(res, db, conv, msgs, lang)
 
 
 @router.post("/conversations/{conv_id}/quotes")
@@ -382,11 +391,12 @@ async def withdraw_quote(
     db: AsyncSession = Depends(get_db),
     res: Resources = Depends(get_res),
 ) -> dict:
-    quote = await quote_svc.withdraw_quote(db, res.settings, quote_id, staff, client_ip(request))
-    msg = await quote_svc.quote_message(db, quote)
+    quote, sysmsg = await quote_svc.withdraw_quote(
+        db, res.settings, quote_id, staff, client_ip(request)
+    )
+    msg = await quote_svc.quote_message(db, quote)  # same id, updated status
     conv = await chat.staff_conversation(db, quote.conversation_id)
-    if msg is not None:
-        await chat.broadcast(res, db, conv, [msg])
+    await chat.broadcast(res, db, conv, [m for m in (msg, sysmsg) if m is not None])
     return quote_svc.quote_payload(quote)
 
 
@@ -406,7 +416,10 @@ async def put_agent_status(
     res: Resources = Depends(get_res),
 ) -> dict:
     view = await service.set_agent_status(db, staff, body.status, body.message)
-    await publish_agent_status(res.redis, staff.tenant_id, view)
+    best = await support_status(db)
+    await publish_agent_status(
+        res.redis, staff.tenant_id, best, {**view, "agent_id": str(staff.id)}
+    )
     return view
 
 

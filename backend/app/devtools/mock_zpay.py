@@ -8,7 +8,7 @@
 * ``/api.php?act=order&pid&key&out_trade_no``: ZPay-style order query (JSON).
 
 Routes are served both at ``/`` and under ``/mockpay`` so Caddy may or may not strip the
-prefix. Refuses to start when ``APP_ENV=prod``.
+prefix. Refuses to start unless ``APP_ENV`` is dev or test.
 """
 
 from __future__ import annotations
@@ -272,8 +272,8 @@ async def _main() -> None:
 
     settings = get_settings()
     configure_logging(settings.log_level)
-    if settings.is_prod:
-        raise SystemExit("mock_zpay refuses to run with APP_ENV=prod")
+    if settings.env not in ("dev", "test"):
+        raise SystemExit("mock_zpay only runs with APP_ENV=dev|test")
     if not settings.zpay_pid or not settings.zpay_key:
         raise SystemExit("APP_ZPAY_PID and APP_ZPAY_KEY are required")
     redis = make_redis(settings.redis_url)
@@ -289,6 +289,8 @@ async def _main() -> None:
             server_header=False,
             proxy_headers=False,
             lifespan="off",
+            loop="asyncio",  # low-traffic internal service: skip uvloop/httptools (RSS)
+            http="h11",
         )
     )
     try:

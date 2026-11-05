@@ -10,12 +10,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import audit
 from app.core.errors import Conflict, Unauthorized
-from app.core.ratelimit import enforce, ident_hash
+from app.core.ratelimit import blocked, enforce, hit, ident_hash
 from app.core.security import hash_password, verify_password
 from app.models import User
 from app.modules.auth.schemas import LoginIn, RegisterIn, normalize_email
 
 GENERIC_LOGIN_ERROR = "Invalid email or password"
+# (limit, window_s) on FAILED logins only
+IP_FAILURES = (5, 60)  # contract: 5/min/IP
+PAIR_FAILURES = (10, 3600)  # per (email, ip)
+EMAIL_FAILURES = (50, 3600)  # looser per-email cap across IPs (distributed guessing)
 
 
 async def register(
@@ -52,17 +56,30 @@ async def register(
 async def login(
     db: AsyncSession, redis: Redis, tenant_id: uuid.UUID, body: LoginIn, ip: str | None
 ) -> User:
-    await enforce(redis, "login:ip", ip or "-", 5, 60)
+    # Only FAILED attempts are counted (a successful login never consumes budget), so an
+    # attacker cannot lock a victim out from another IP and the victim's own logins are free.
+    ip_key = ip or "-"
+    await blocked(redis, "loginfail:ip", ip_key, *IP_FAILURES)
     try:
         email = normalize_email(body.email)
     except ValueError:
+        await hit(redis, "loginfail:ip", ip_key, IP_FAILURES[0], IP_FAILURES[1])
         raise Unauthorized(GENERIC_LOGIN_ERROR) from None
-    await enforce(redis, "login:email", ident_hash(f"{tenant_id}:{email}"), 10, 3600)
+    email_key = ident_hash(f"{tenant_id}:{email}")
+    pair_key = ident_hash(f"{tenant_id}:{email}:{ip_key}")
+    await blocked(redis, "loginfail:pair", pair_key, *PAIR_FAILURES)
+    await blocked(redis, "loginfail:email", email_key, *EMAIL_FAILURES)
     user = await db.scalar(select(User).where(User.email == email))
     ok, rehash = await verify_password(
         user.pw_hash if user is not None and user.status == "active" else None, body.password
     )
     if not ok or user is None:
+        for name, ident, (limit, window) in (
+            ("loginfail:ip", ip_key, IP_FAILURES),
+            ("loginfail:pair", pair_key, PAIR_FAILURES),
+            ("loginfail:email", email_key, EMAIL_FAILURES),
+        ):
+            await hit(redis, name, ident, limit, window)
         await audit(
             db,
             tenant_id=tenant_id,

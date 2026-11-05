@@ -345,7 +345,6 @@ async def env(services: Services) -> AsyncIterator[Env]:
 
     settings = make_settings(s)
     dsettings = DeliverySettings(
-        _env_file=None,
         delivery_database_url=s.delivery_url,
         redis_url=s.redis_url,
         internal_token=INTERNAL_TOKEN,

@@ -13,9 +13,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import audit
 from app.core.db import set_tenant, tenant_session
+from app.core.money import fmt
 from app.delivery.context import DeliveryContext
 from app.models import CardStock, Delivery, Message, Order, Outbox
-from app.modules.chat.messages import post_system
+from app.modules.chat.messages import order_card_messages, post_system
 from app.modules.common.views import message_view, order_view
 from app.modules.orders.events import add_event, snapshot
 from app.modules.realtime.publish import publish_message, publish_order
@@ -30,6 +31,7 @@ MAX_ATTEMPTS = 8
 class JobResult:
     order: Order | None = None
     messages: list[Message] = field(default_factory=list)
+    cards: list[Message] = field(default_factory=list)  # order_card messages to re-publish
 
 
 async def handle_order_paid(db: AsyncSession, order_id: uuid.UUID) -> JobResult:
@@ -38,14 +40,8 @@ async def handle_order_paid(db: AsyncSession, order_id: uuid.UUID) -> JobResult:
         return JobResult(order)  # already handled, refunded, or under review: never re-deliver
     result = JobResult(order)
     if order.delivery_mode == "manual":
-        msg = await post_system(
-            db,
-            tenant_id=order.tenant_id,
-            conversation_id=order.conversation_id,
-            event="awaiting_delivery",
-            order_id=str(order.id),
-        )
-        result.messages = [msg] if msg else []
+        # The notify pipeline already posted `paid` {awaiting_delivery: true}; staff deliver.
+        result.order = None  # nothing changed: nothing to publish
         return result
 
     card_ids: list[uuid.UUID] = []
@@ -109,6 +105,7 @@ async def handle_order_paid(db: AsyncSession, order_id: uuid.UUID) -> JobResult:
         order_id=str(order.id),
     )
     result.messages = [msg] if msg else []
+    result.cards = await order_card_messages(db, order.conversation_id, order.id)
     return result
 
 
@@ -179,6 +176,10 @@ async def _publish(ctx: DeliveryContext, result: JobResult) -> None:
         order_view(order, viewer_is_owner=True),
         order_view(order, viewer_is_owner=False),
     )
+    overlay = {"status": order.status, "amount": fmt(order.amount_minor)}
+    for card in result.cards:  # same message id, fresh status (client replaces by id)
+        view = message_view(card, sender_name=None, payload_overlay=overlay)
+        await publish_message(ctx.redis, order.tenant_id, order.buyer_id, view)
     for msg in result.messages:
         await publish_message(
             ctx.redis, order.tenant_id, order.buyer_id, message_view(msg, sender_name=None)

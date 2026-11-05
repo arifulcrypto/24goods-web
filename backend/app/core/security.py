@@ -8,6 +8,7 @@ import json
 import secrets
 import time
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 import anyio.to_thread
@@ -18,11 +19,14 @@ from starlette.responses import Response
 
 from app.core.config import Settings
 
-COOKIE_NAME = "sid"
+COOKIE_NAME = "sid"  # plain-HTTP demo only
+SECURE_COOKIE_NAME = "__Host-sid"  # browsers enforce Secure, Path=/ and no Domain
 STAFF_ROLES = frozenset({"agent", "admin"})
 
-# OWASP 2024 Argon2id profile (m=19 MiB, t=2, p=1): keeps peak RSS low on small hosts.
-_hasher = PasswordHasher(time_cost=2, memory_cost=19456, parallelism=1, hash_len=32, salt_len=16)
+# OWASP Password Storage Cheat Sheet Argon2id profile m=12 MiB, t=3, p=1 (equivalent
+# strength to m=19 MiB/t=2): bounded per-hash memory for small hosts. Existing hashes with
+# other parameters still verify and are transparently upgraded on login (check_needs_rehash).
+_hasher = PasswordHasher(time_cost=3, memory_cost=12288, parallelism=1, hash_len=32, salt_len=16)
 _hash_slots = asyncio.Semaphore(2)
 _dummy_hash: str | None = None
 
@@ -73,6 +77,13 @@ class SessionStore:
         self._redis = redis
         self._settings = settings
 
+    @property
+    def cookie_name(self) -> str:
+        return SECURE_COOKIE_NAME if self._settings.cookie_secure else COOKIE_NAME
+
+    def token_from(self, cookies: Mapping[str, str]) -> str | None:
+        return cookies.get(self.cookie_name)
+
     def ttl_for(self, role: str) -> int:
         s = self._settings
         return s.session_ttl_staff_s if role in STAFF_ROLES else s.session_ttl_buyer_s
@@ -101,7 +112,7 @@ class SessionStore:
 
     def set_cookie(self, response: Response, token: str, role: str) -> None:
         response.set_cookie(
-            COOKIE_NAME,
+            self.cookie_name,
             token,
             max_age=self.ttl_for(role),
             httponly=True,
@@ -112,7 +123,7 @@ class SessionStore:
 
     def clear_cookie(self, response: Response) -> None:
         response.delete_cookie(
-            COOKIE_NAME,
+            self.cookie_name,
             path="/",
             httponly=True,
             samesite="lax",

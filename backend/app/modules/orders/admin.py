@@ -73,8 +73,8 @@ async def change_price(
         conversation_id=order.conversation_id,
         event="price_changed",
         order_id=str(order.id),
+        amount=fmt(new_minor),
         old_amount=fmt(old_minor),
-        new_amount=fmt(new_minor),
         currency=order.currency,
         version=order.version,
     )
@@ -95,10 +95,11 @@ async def deliver_manual(
         raise InvalidState("Only paid manual orders can be delivered")
     if attachment_id is not None:
         att = await db.get(Attachment, attachment_id)
-        if att is None:
+        # Only a file the acting staff member uploaded: never a buyer's private chat upload
+        # (that would hand it to another buyer through the order), not even for admins.
+        if att is None or att.owner_id != agent.id or att.purpose not in ("chat", "delivery"):
             raise NotFound("Attachment not found")
-        if att.owner_id != agent.id and agent.role != "admin":
-            raise NotFound("Attachment not found")
+        att.purpose = "delivery"
     before = snapshot(order)
     order.status = "delivered"
     order.delivered_at = datetime.now(timezone.utc)
@@ -155,7 +156,7 @@ async def cancel(
         db,
         tenant_id=order.tenant_id,
         conversation_id=order.conversation_id,
-        event="cancelled",
+        event="order_cancelled",
         order_id=str(order.id),
         reason=reason,
     )
@@ -182,9 +183,15 @@ async def admin_views(db: AsyncSession, orders: list[Order]) -> list[dict[str, A
 
 
 async def list_orders(
-    db: AsyncSession, page: Page, status: str | None, q: str | None
+    db: AsyncSession,
+    page: Page,
+    status: str | None,
+    q: str | None,
+    buyer_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
     stmt = select(Order)
+    if buyer_id is not None:
+        stmt = stmt.where(Order.buyer_id == buyer_id)
     if status:
         stmt = stmt.where(Order.status == status)
     if q and q.strip():
@@ -212,6 +219,8 @@ async def order_detail(db: AsyncSession, order_id: uuid.UUID) -> dict[str, Any]:
     if order is None:
         raise NotFound("Order not found")
     (view,) = await admin_views(db, [order])
+    product = await db.get(Product, order.product_id) if order.product_id else None
+    view["floor_price"] = fmt(product.floor_price_minor) if product else None  # per unit
     events = list(
         await db.scalars(
             select(OrderEvent).where(OrderEvent.order_id == order.id).order_by(OrderEvent.id)

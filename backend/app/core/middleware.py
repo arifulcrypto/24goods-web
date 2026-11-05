@@ -115,6 +115,9 @@ class CoreMiddleware:
                 for k, v in SECURITY_HEADERS.items():
                     if k.lower().encode() not in present:
                         headers.append((k.lower().encode(), v.encode()))
+                if b"cache-control" not in present and scope.get("path", "").startswith("/api/"):
+                    # API responses are per-user and may carry secrets: never cache by default.
+                    headers.append((b"cache-control", b"no-store"))
                 headers.append((b"x-request-id", rid.encode()))
                 message["headers"] = headers
             await send(message)

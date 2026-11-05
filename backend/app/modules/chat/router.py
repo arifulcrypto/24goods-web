@@ -13,6 +13,7 @@ from app.models import Conversation, User
 from app.modules.chat import quotes as quote_svc
 from app.modules.chat import service
 from app.modules.chat.schemas import ConversationIn, MessageIn, ReadIn
+from app.modules.orders.router import ORDER_ACTIONS
 from app.modules.orders.service import broadcast_order, one_view
 
 router = APIRouter(tags=["chat"])
@@ -109,9 +110,10 @@ async def accept_quote(
     db: AsyncSession = Depends(get_db),
     res: Resources = Depends(get_res),
 ) -> dict:
-    order, quote, msg = await quote_svc.accept_quote(
+    await enforce(res.redis, "order:create", str(user.id), *ORDER_ACTIONS)
+    order, quote, msgs = await quote_svc.accept_quote(
         db, res.settings, quote_id, user, client_ip(request)
     )
-    qmsg = await quote_svc.quote_message(db, quote)
-    await broadcast_order(res, db, order, [qmsg, msg])
+    qmsg = await quote_svc.quote_message(db, quote)  # same id, updated status/order_id
+    await broadcast_order(res, db, order, [qmsg, *msgs])
     return await one_view(db, order, user.id)

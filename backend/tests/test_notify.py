@@ -276,3 +276,118 @@ async def test_price_change_invalidates_old_payment_amount(env, gw):
 def test_signature_helper_matches_epay():
     p = notify_params("GABCDEFGHIJKL", "1.00")
     assert epay.verify_signature(p, ZPAY_KEY)
+
+
+# --- regressions from the payment-auditor review (docs/review-v2.md §5) ------------
+
+
+async def test_replay_marker_is_promoted_to_done_after_settling(env, gw):
+    from app.modules.payments.notify import INFLIGHT_TTL_S, REPLAY_TTL_S, replay_key
+
+    _buyer, order = await _order(env)
+    p = notify_params(order["order_no"], "19.90")
+    assert (await env.client(csrf=False).get(NOTIFY, params=p)).text == "success"
+    key = replay_key(p)
+    assert await env.res.redis.get(key) == b"done"
+    assert await env.res.redis.ttl(key) > INFLIGHT_TTL_S
+    assert await env.res.redis.ttl(key) <= REPLAY_TTL_S
+
+
+async def test_crash_mid_settle_does_not_lose_the_payment(env, gw):
+    """A process killed mid-settle leaves only a short in-flight lock behind."""
+    from app.modules.payments.notify import INFLIGHT_TTL_S, replay_key
+
+    buyer, order = await _order(env)
+    p = notify_params(order["order_no"], "19.90")
+    key = replay_key(p)
+    # what a SIGKILLed worker leaves behind
+    await env.res.redis.set(key, b"inflight", ex=INFLIGHT_TTL_S)
+    c = env.client(csrf=False)
+    assert (await c.get(NOTIFY, params=p)).text == "fail"  # unsettled -> ask ZPay to retry
+    assert await env.res.redis.ttl(key) <= INFLIGHT_TTL_S  # lapses quickly, not after 24 h
+    await env.res.redis.delete(key)  # = the lock expired before ZPay's next retry
+    assert (await c.get(NOTIFY, params=p)).text == "success"
+    assert await _status(buyer, order) == "paid"
+
+
+async def test_requery_trade_no_mismatch_goes_to_manual_review(env, gw):
+    buyer, order = await _order(env)
+    gw.trade_no = "T-SOMETHING-ELSE"
+    r = await env.client(csrf=False).get(NOTIFY, params=notify_params(order["order_no"], "19.90"))
+    assert r.text == "success"
+    assert await _status(buyer, order) == "manual_review"
+    assert (await _counts(env))[2] == 0  # nothing fulfilled
+
+
+async def test_requery_missing_trade_no_is_not_accepted(env, gw):
+    buyer, order = await _order(env)
+    gw.trade_no = ""
+    r = await env.client(csrf=False).get(NOTIFY, params=notify_params(order["order_no"], "19.90"))
+    assert r.text == "success"
+    assert await _status(buyer, order) == "manual_review"
+
+
+async def test_requery_timeout_is_capped_below_zpay_budget(env, gw, monkeypatch):
+    import time
+
+    from app.payments import zpay
+
+    monkeypatch.setattr(zpay, "QUERY_TIMEOUT_S", 0.3)
+
+    async def slow(request: httpx.Request) -> httpx.Response:
+        await asyncio.sleep(5)
+        return httpx.Response(200, text="{}")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(slow))
+    env.res.zpay._http = client
+    buyer, order = await _order(env)
+    t0 = time.monotonic()
+    r = await env.client(csrf=False).get(NOTIFY, params=notify_params(order["order_no"], "19.90"))
+    elapsed = time.monotonic() - t0
+    await client.aclose()
+    assert r.text == "fail"  # ZPay will retry
+    assert elapsed < 2.0
+    assert await _status(buyer, order) == "pending_payment"
+
+
+async def test_very_late_payment_is_still_recorded(env, gw):
+    """Paid > 24 h after expiry: money must still land in payments + ledger (manual_review)."""
+    from sqlalchemy import text
+
+    from app.modules.orders.service import expire_pending
+
+    buyer, order = await _order(env)
+    async with env.owner_session() as db:
+        await db.execute(text("UPDATE orders SET expires_at = now() - interval '5 minutes'"))
+        await db.commit()
+    assert await expire_pending(env.res.maker) == 1
+    async with env.owner_session() as db:
+        await db.execute(text("UPDATE orders SET expires_at = now() - interval '3 days'"))
+        await db.commit()
+    r = await env.client(csrf=False).get(NOTIFY, params=notify_params(order["order_no"], "19.90"))
+    assert r.text == "success"
+    assert await _status(buyer, order) == "manual_review"
+    assert await _counts(env) == (1, 2, 0)
+
+
+async def test_mock_gateway_refuses_outside_dev_and_test(monkeypatch):
+    from app.core.config import Settings
+    from app.devtools import mock_zpay
+
+    for env_name in ("staging", "prod"):
+        s = Settings(env=env_name, zpay_gateway="https://zpayz.cn", cookie_secure=True)
+        monkeypatch.setattr(mock_zpay, "get_settings", lambda s=s: s)
+        with pytest.raises(SystemExit):
+            await mock_zpay._main()
+
+
+def test_prod_requires_https_query_base():
+    from app.core.config import Settings
+
+    with pytest.raises(ValueError, match="APP_ZPAY_API_BASE"):
+        Settings(
+            env="prod",
+            zpay_gateway="https://zpayz.cn",
+            zpay_api_base="http://zpayz.cn",
+            cookie_secure=True,
+        )

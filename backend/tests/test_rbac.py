@@ -102,6 +102,6 @@ async def test_product_image_upload_is_public(env):
     url = r.json()["url"]
     anon = env.client()
     f = await anon.get(url)
-    assert f.status_code == 200 and f.headers["content-type"] == "image/webp"
+    assert f.status_code == 200 and f.headers["content-type"] == "image/jpeg"
     assert "public" in f.headers["cache-control"]
     assert (await anon.get(f"/api/v1/products/{p.id}")).json()["cover"] == url

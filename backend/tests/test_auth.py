@@ -86,18 +86,46 @@ async def test_login_rate_limit_per_ip(env):
     assert r.json()["error"]["code"] == "rate_limited" and "retry-after" in r.headers
 
 
-async def test_login_rate_limit_per_email(env, services):
+async def _fail(env, email: str, ip: str) -> int:
+    r = await env.client().post(
+        "/api/v1/auth/login",
+        json={"email": email, "password": "wrong"},
+        headers={"X-Forwarded-For": ip},
+    )
+    return r.status_code
+
+
+async def _clear_ip_windows(env) -> None:
+    async for key in env.s.redis.scan_iter("rl:loginfail:ip:*"):
+        await env.s.redis.delete(key)
+
+
+async def test_login_failures_per_email_and_ip(env):
     await env.user("buyer", email="target@example.com")
     codes = []
-    for i in range(11):
-        c = env.client()
-        r = await c.post(
-            "/api/v1/auth/login",
-            json={"email": "target@example.com", "password": "wrong"},
-            headers={"X-Forwarded-For": f"203.0.113.{i}"},
-        )
-        codes.append(r.status_code)
-    assert codes[:10] == [401] * 10 and codes[10] == 429
+    for _ in range(11):
+        await _clear_ip_windows(env)  # isolate the (email, ip) 10/h budget from 5/min/IP
+        codes.append(await _fail(env, "target@example.com", "203.0.113.7"))
+    assert codes == [401] * 10 + [429]
+    # same email from another IP is not locked out by that pair budget
+    assert await _fail(env, "target@example.com", "203.0.113.8") == 401
+
+
+async def test_login_failures_per_email_cap_across_ips(env):
+    await env.user("buyer", email="victim@example.com")
+    codes = [await _fail(env, "victim@example.com", f"198.51.100.{i}") for i in range(51)]
+    assert codes[:50] == [401] * 50 and codes[50] == 429
+
+
+async def test_successful_logins_do_not_consume_budget(env):
+    await env.user("buyer", email="happy@example.com")
+    body = {"email": "happy@example.com", "password": PASSWORD}
+    for _ in range(4):
+        assert await _fail(env, "happy@example.com", "127.0.0.1") == 401
+    codes = [
+        (await env.client().post("/api/v1/auth/login", json=body)).status_code for _ in range(12)
+    ]
+    assert codes == [200] * 12  # 12 > every limit: only failures are counted
 
 
 async def test_register_rate_limit(env):

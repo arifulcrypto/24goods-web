@@ -163,3 +163,30 @@ def test_order_numbers_are_random():
     nos = {new_order_no() for _ in range(1000)}
     assert len(nos) == 1000
     assert all(n[0] == "G" and len(n) == 13 and n[1:].isalnum() and n[1:].isupper() for n in nos)
+
+
+def test_delivery_settings_from_env_and_import_footprint():
+    import subprocess
+    import sys
+
+    from app.delivery.config import DeliverySettings
+
+    s = DeliverySettings.from_env(
+        {
+            "APP_DELIVERY_PORT": "9001",
+            "APP_OUTBOX_POLL_S": "0.5",
+            "APP_INTERNAL_TOKEN": "t" * 40,
+            "APP_UNRELATED": "x",
+        }
+    )
+    assert (s.delivery_port, s.outbox_poll_s, s.internal_token) == (9001, 0.5, "t" * 40)
+    with pytest.raises(ValueError, match="APP_DELIVERY_PORT"):
+        DeliverySettings.from_env({"APP_DELIVERY_PORT": "abc"})
+    # The key-holding process must not drag in the web/API stack.
+    code = (
+        "import sys, app.delivery.__main__ as m; "
+        "bad = {'fastapi', 'pydantic', 'PIL', 'httpx', 'argon2', 'app.core.resources'} & "
+        "{k.split('.')[0] if not k.startswith('app.') else k for k in sys.modules}; "
+        "sys.exit(1 if bad else 0)"
+    )
+    assert subprocess.run([sys.executable, "-c", code], check=False).returncode == 0  # noqa: S603

@@ -12,7 +12,8 @@ from contextlib import asynccontextmanager
 from fastapi import APIRouter, FastAPI
 
 from app.core.config import get_settings
-from app.core.errors import install_error_handlers
+from app.core.error_handlers import install_error_handlers
+from app.core.memtrim import trim
 from app.core.middleware import (
     SECURITY_HEADERS,
     BodyLimitMiddleware,
@@ -37,7 +38,7 @@ UPLOAD_PATHS = re.compile(r"^/api/v1/(uploads|admin/products/[^/]+/images)$")
 JSON_BODY_LIMIT = 2 * 1024 * 1024 + 64 * 1024  # card import: 5000 lines fit comfortably
 UPLOAD_BODY_LIMIT = 8 * 1024 * 1024 + 64 * 1024
 
-__all__ = ["SECURITY_HEADERS", "app", "create_app"]
+__all__ = ["SECURITY_HEADERS", "create_app"]
 
 
 async def _expiry_loop(res: Resources) -> None:
@@ -80,6 +81,7 @@ def create_app(res: Resources | None = None, *, background: bool = True) -> Fast
             app.state.res = build_resources(settings)
         r: Resources = app.state.res
         tasks: list[asyncio.Task[None]] = []
+        trim()  # drop import/startup garbage from RSS
         if background:
             r.hub.ensure_started()
             tasks.append(asyncio.create_task(_expiry_loop(r), name="order-expiry"))
@@ -121,4 +123,14 @@ def create_app(res: Resources | None = None, *, background: bool = True) -> Fast
     return app
 
 
-app = create_app()
+_default_app: FastAPI | None = None
+
+
+def __getattr__(name: str) -> FastAPI:
+    """``app.main:app`` is built lazily (PEP 562) so ``app.serve`` doesn't build it twice."""
+    global _default_app
+    if name == "app":
+        if _default_app is None:
+            _default_app = create_app()
+        return _default_app
+    raise AttributeError(name)

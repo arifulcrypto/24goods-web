@@ -66,6 +66,10 @@ async def publish_conversation(
         await publish(redis, staff_channel(tenant_id), "conversation", staff_view)
 
 
-async def publish_agent_status(redis: Redis, tenant_id: uuid.UUID, view: dict[str, Any]) -> None:
-    await publish(redis, public_channel(tenant_id), "agent_status", view)
-    await publish(redis, staff_channel(tenant_id), "agent_status", view)
+async def publish_agent_status(
+    redis: Redis, tenant_id: uuid.UUID, best: dict[str, Any], agent: dict[str, Any]
+) -> None:
+    """Buyers get the aggregated best status (same as GET /support/status); staff get the
+    individual agent's status (``agent_id`` added)."""
+    await publish(redis, public_channel(tenant_id), "agent_status", best)
+    await publish(redis, staff_channel(tenant_id), "agent_status", agent)

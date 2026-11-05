@@ -43,8 +43,10 @@ async def test_quote_to_reveal_auto_card(env, caplog):
     assert r.status_code == 409 and r.json()["error"]["code"] == "invalid_state"
 
     msgs = (await buyer.get(f"/api/v1/conversations/{conv['id']}/messages")).json()
-    assert msgs[-1]["type"] == "order_card"
+    assert [m["type"] for m in msgs[-2:]] == ["order_card", "system"]
+    assert msgs[-1]["payload"]["event"] == "quote_accepted" and msgs[-1]["text"]
     assert msgs[1]["payload"]["status"] == "accepted"  # quote card reflects current status
+    assert msgs[1]["payload"]["order_id"] == order["id"]
 
     r = await buyer.post(f"/api/v1/orders/{order['id']}/pay", json={"channel": "zpay_alipay"})
     assert r.status_code == 200, r.text
@@ -89,7 +91,9 @@ async def test_quote_to_reveal_auto_card(env, caplog):
 
     msgs = (await buyer.get(f"/api/v1/conversations/{conv['id']}/messages")).json()
     events = [m["payload"]["event"] for m in msgs if m["type"] == "system"]
-    assert events == ["paid", "delivered"]
+    assert events == ["quote_accepted", "paid", "delivered"]
+    assert all(m["text"] for m in msgs if m["type"] == "system")  # text fallback
+    assert next(m for m in msgs if m["type"] == "order_card")["payload"]["status"] == "delivered"
 
     # exactly one card sold, ledger balanced, reveal audited
     assert await env.scalar("SELECT count(*) FROM card_stock WHERE status='sold'") == 1
@@ -141,10 +145,9 @@ async def test_buy_now_manual_delivery(env):
     o = (await buyer.get(f"/api/v1/orders/{order['id']}")).json()
     assert o["status"] == "paid" and o["can_reveal"] is False
     msgs = (await buyer.get(f"/api/v1/conversations/{conv['id']}/messages")).json()
-    assert [m["payload"].get("event") for m in msgs if m["type"] == "system"] == [
-        "paid",
-        "awaiting_delivery",
-    ]
+    (paid,) = [m for m in msgs if m["type"] == "system"]
+    assert paid["payload"]["event"] == "paid" and paid["payload"]["awaiting_delivery"] is True
+    assert "agent will deliver" in paid["text"]
 
     # reveal is not available for manual orders
     r = await buyer.post(f"/api/v1/orders/{order['id']}/reveal")

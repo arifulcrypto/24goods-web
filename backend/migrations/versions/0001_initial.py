@@ -348,6 +348,7 @@ GRANTS = [
     "orders TO app_api",
     "GRANT SELECT, INSERT ON attachments, messages, order_events, payments, ledger_entries, "
     "outbox, audit_log TO app_api",
+    "GRANT UPDATE (purpose, is_public) ON attachments TO app_api",
     "GRANT SELECT ON deliveries TO app_api",
     "GRANT INSERT ON card_stock TO app_api",
     "GRANT SELECT (id, tenant_id, product_id, fingerprint, kid, status, order_id, created_by, "

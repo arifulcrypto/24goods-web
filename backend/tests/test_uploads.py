@@ -6,6 +6,7 @@ import struct
 import zlib
 
 from PIL import Image
+from PIL.PngImagePlugin import PngInfo
 
 from tests.test_chat import png_bytes
 
@@ -36,6 +37,11 @@ def png_bomb(width=20000, height=20000) -> bytes:
     return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", idat) + chunk(b"IEND", b"")
 
 
+# Minimal but structurally valid container headers.
+OGG_OPUS = b"OggS\x00\x02" + b"\x00" * 20 + b"\x01\x13" + b"OpusHead\x01\x01"
+WEBM = b"\x1a\x45\xdf\xa3\x9f\x42\x86\x81\x01\x42\xf7\x81\x01\x42\x82\x84webm"
+
+
 async def _up(client, data: bytes, kind: str = "image", name: str = "f.png", **form):
     return await client.post(
         "/api/v1/uploads",
@@ -49,12 +55,12 @@ async def test_image_reencoded_exif_stripped_random_name(env, services):
     r = await _up(buyer, jpeg_with_exif(), name="../../etc/passwd.jpg")
     assert r.status_code == 200, r.text
     att = r.json()
-    assert att["mime"] == "image/webp" and (att["width"], att["height"]) == (300, 200)
+    assert att["mime"] == "image/jpeg" and (att["width"], att["height"]) == (300, 200)
     key = await env.scalar("SELECT storage_key FROM attachments WHERE id=:i", i=att["id"])
     stored = services.upload_dir / key[:2] / key
     assert stored.is_file() and "passwd" not in str(stored)
     data = stored.read_bytes()
-    assert data[:4] == b"RIFF" and b"SpyCam" not in data and b"Exif" not in data
+    assert data[:3] == b"\xff\xd8\xff" and b"SpyCam" not in data and b"Exif" not in data
     assert not Image.open(io.BytesIO(data)).getexif()
     f = await buyer.get(att["url"])
     assert f.status_code == 200 and f.content == data
@@ -100,14 +106,15 @@ async def test_size_limits(env):
 
 async def test_voice_upload(env):
     buyer, _ = await env.login("buyer")
-    ogg = b"OggS" + os.urandom(2000)
+    ogg = OGG_OPUS + os.urandom(2000)
     r = await _up(buyer, ogg, kind="voice", name="v.ogg", duration_ms="4200")
     assert r.status_code == 200, r.text
     assert r.json()["mime"] == "audio/ogg" and r.json()["duration_ms"] == 4200
-    webm = b"\x1a\x45\xdf\xa3" + os.urandom(100)
-    assert (await _up(buyer, webm, kind="voice", duration_ms="60000")).json()[
-        "mime"
-    ] == "audio/webm"
+    webm = WEBM + os.urandom(100)
+    r = await _up(buyer, webm, kind="voice", duration_ms="60000")
+    assert r.json()["mime"] == "audio/webm"
+    mp3 = b"\xff\xfb\x90\x64" + os.urandom(300)
+    assert (await _up(buyer, mp3, kind="voice", duration_ms="900")).json()["mime"] == "audio/mpeg"
     for dur in ("60001", "0"):
         r = await _up(buyer, ogg, kind="voice", duration_ms=dur)
         assert r.status_code == 422
@@ -118,3 +125,27 @@ async def test_voice_upload(env):
 async def test_upload_requires_auth(env):
     r = await _up(env.client(), png_bytes())
     assert r.status_code == 401
+
+
+async def test_decode_budget_and_jpeg_downscale(env):
+    buyer, _ = await env.login("buyer")
+    r = await _up(buyer, png_bytes(size=(3000, 3000)))  # 9 MP PNG: no reduced decode
+    assert r.status_code == 422 and r.json()["error"]["code"] == "upload_rejected"
+    buf = io.BytesIO()
+    Image.new("RGB", (4032, 3024), (9, 9, 9)).save(buf, "JPEG", quality=80)
+    r = await _up(buyer, buf.getvalue(), name="photo.jpg")
+    assert r.status_code == 200, r.text
+    assert (r.json()["width"], r.json()["height"]) == (2016, 1512)
+
+
+async def test_alpha_image_becomes_webp_without_metadata(env):
+    buyer, _ = await env.login("buyer")
+    img = Image.new("RGBA", (40, 40), (255, 0, 0, 128))
+    info = PngInfo()
+    info.add_text("Comment", "secret-location")
+    buf = io.BytesIO()
+    img.save(buf, "PNG", pnginfo=info)
+    r = await _up(buyer, buf.getvalue())
+    assert r.status_code == 200 and r.json()["mime"] == "image/webp"
+    data = (await buyer.get(r.json()["url"])).content
+    assert data[:4] == b"RIFF" and b"secret-location" not in data

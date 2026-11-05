@@ -4,7 +4,7 @@ import uuid
 from collections.abc import Iterable
 from datetime import datetime, timezone
 
-from sqlalchemy import Select, func, or_, select
+from sqlalchemy import Select, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import Page
@@ -44,9 +44,23 @@ def apply_search(stmt: Select, q: str | None) -> Select:
         or_(
             Product.search_tsv.op("@@")(func.plainto_tsquery("simple", q)),
             Product.search_text.ilike(f"%{escape_like(lowered)}%", escape="\\"),
-            func.word_similarity(lowered, Product.search_text) > 0.4,
+            # `search_text %> q` == `q <% search_text`: word-similarity operator served by the
+            # GIN gin_trgm_ops index (a word_similarity() > x comparison cannot use it).
+            Product.search_text.op("%>")(lowered),
         )
     )
+
+
+WORD_SIMILARITY_THRESHOLD = "0.4"
+
+
+async def prepare_search(db: AsyncSession, q: str | None) -> None:
+    """Transaction-local trigram threshold for the ``%>`` operator (default 0.6 is strict)."""
+    if q and q.strip():
+        await db.execute(
+            text("SELECT set_config('pg_trgm.word_similarity_threshold', :t, true)"),
+            {"t": WORD_SIMILARITY_THRESHOLD},
+        )
 
 
 async def list_products(
@@ -56,6 +70,7 @@ async def list_products(
     if category:
         stmt = stmt.where(Product.category == category)
     stmt = apply_search(stmt, q)
+    await prepare_search(db, q)
     total = await db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     order = [Product.sold.desc(), Product.created_at.desc(), Product.id]
     if q and q.strip():

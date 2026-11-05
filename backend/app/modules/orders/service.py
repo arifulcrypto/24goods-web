@@ -16,6 +16,7 @@ from app.core.config import Settings
 from app.core.db import tenant_session
 from app.core.deps import Page
 from app.core.errors import (
+    Conflict,
     InvalidState,
     NotFound,
     OutOfStock,
@@ -24,6 +25,7 @@ from app.core.errors import (
 )
 from app.core.i18n import pick
 from app.core.money import to_decimal
+from app.core.ratelimit import release, reserve
 from app.core.resources import Resources
 from app.models import (
     Attachment,
@@ -37,7 +39,7 @@ from app.models import (
 )
 from app.modules.catalog.service import get_active_product
 from app.modules.chat import service as chat
-from app.modules.chat.messages import insert_message, post_system
+from app.modules.chat.messages import insert_message, order_card_messages, post_system
 from app.modules.common.views import REVEALABLE, order_card_payload, order_view
 from app.modules.orders.events import add_event, snapshot
 from app.modules.realtime.publish import publish_order
@@ -78,6 +80,17 @@ async def create_order(
     conversation_id: uuid.UUID | None,
     ip: str | None,
 ) -> tuple[Order, Message | None]:
+    # Serialize order creation per buyer (row lock), then cap open unpaid orders.
+    await db.execute(select(User.id).where(User.id == buyer.id).with_for_update())
+    pending = await db.scalar(
+        select(func.count(Order.id)).where(
+            Order.buyer_id == buyer.id, Order.status == "pending_payment"
+        )
+    )
+    if int(pending or 0) >= settings.max_pending_orders:
+        raise Conflict(
+            f"At most {settings.max_pending_orders} unpaid orders; pay or wait for one to expire"
+        )
     order = Order(
         tenant_id=buyer.tenant_id,
         order_no=new_order_no(),
@@ -205,11 +218,19 @@ async def broadcast_order(
     bview = await one_view(db, order, order.buyer_id)
     sview = await one_view(db, order, None)
     await publish_order(res.redis, order.tenant_id, order.buyer_id, bview, sview)
-    msgs = [m for m in (msgs or []) if m is not None]
-    if msgs and order.conversation_id:
-        conv = await db.get(Conversation, order.conversation_id)
-        if conv is not None:
-            await chat.broadcast(res, db, conv, msgs)
+    if order.conversation_id is None:
+        return
+    # Re-publish the order_card (same message id, fresh status/amount) + any new messages.
+    cards = await order_card_messages(db, order.conversation_id, order.id)
+    seen: set[int] = set()
+    out: list[Message] = []
+    for m in [*cards, *(msgs or [])]:
+        if m is not None and m.id not in seen:
+            seen.add(m.id)
+            out.append(m)
+    conv = await db.get(Conversation, order.conversation_id)
+    if conv is not None:
+        await chat.broadcast(res, db, conv, out)
 
 
 async def list_own(db: AsyncSession, user: User, page: Page) -> dict[str, Any]:
@@ -282,6 +303,28 @@ async def reveal(res: Resources, order: Order, user: User) -> list[str]:
     token = res.settings.internal_token
     if not token:
         raise Unavailable("Delivery service not configured")
+    s = res.settings
+    ok, reset = await reserve(
+        res.redis,
+        "reveal:buyer:api",
+        str(user.id),
+        order.qty,
+        s.reveal_per_buyer_cards,
+        s.reveal_per_buyer_window_s,
+    )
+    if not ok:
+        raise RateLimited(retry_after=reset, message="Too many codes revealed recently")
+    try:
+        return await _call_reveal(res, order, user, token)
+    except Exception:
+        # nothing was revealed: give the buyer's budget back
+        await release(
+            res.redis, "reveal:buyer:api", str(user.id), order.qty, s.reveal_per_buyer_window_s
+        )
+        raise
+
+
+async def _call_reveal(res: Resources, order: Order, user: User, token: str) -> list[str]:
     try:
         resp = await res.delivery.post(
             "/internal/reveal",
@@ -351,14 +394,23 @@ async def expire_pending(
                     event="expired",
                     order_id=str(order.id),
                 )
-            await db.execute(
-                update(Quote)
-                .where(Quote.status == "offered", Quote.expires_at < now)
-                .values(status="expired", updated_at=func.now())
-            )
+            expired_quotes = (
+                await db.execute(
+                    update(Quote)
+                    .where(Quote.status == "offered", Quote.expires_at < now)
+                    .values(status="expired", updated_at=func.now())
+                    .returning(Quote.conversation_id, Quote.message_id)
+                )
+            ).all()
             await db.commit()
             total += len(rows)
             if res is not None:
                 for order in rows:
                     await broadcast_order(res, db, order, [msgs.get(order.id)])
+                # quote cards: same message id re-published with status "expired"
+                for conv_id, message_id in expired_quotes:
+                    conv = await db.get(Conversation, conv_id)
+                    card = await db.get(Message, message_id) if message_id else None
+                    if conv is not None and card is not None:
+                        await chat.broadcast(res, db, conv, [card])
     return total

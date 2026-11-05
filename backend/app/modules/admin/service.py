@@ -21,6 +21,7 @@ from app.models import (
     CardStock,
     Conversation,
     LedgerEntry,
+    Message,
     Order,
     Product,
     User,
@@ -105,12 +106,33 @@ async def list_conversations(
 
 async def assign(
     db: AsyncSession, conv: Conversation, agent_id: uuid.UUID | None, staff: User, ip: str | None
-):
+) -> list[Message]:
     agent: User | None = None
     if agent_id is not None:
         agent = await db.get(User, agent_id)
         if agent is None or agent.role not in STAFF_ROLES:
             raise Validation("agent_id must be a staff member")
+    previous = await db.get(User, conv.assigned_agent_id) if conv.assigned_agent_id else None
+    msgs: list[Message] = []
+    if (previous.id if previous else None) != (agent.id if agent else None):
+        if previous is not None:
+            m = await post_system(
+                db,
+                tenant_id=conv.tenant_id,
+                conversation_id=conv.id,
+                event="agent_left",
+                name=previous.display_name,
+            )
+            msgs += [m] if m else []
+        if agent is not None:
+            m = await post_system(
+                db,
+                tenant_id=conv.tenant_id,
+                conversation_id=conv.id,
+                event="agent_joined",
+                name=agent.display_name,
+            )
+            msgs += [m] if m else []
     conv.assigned_agent_id = agent.id if agent else None
     conv.updated_at = datetime.now(timezone.utc)
     await audit(
@@ -123,20 +145,13 @@ async def assign(
         ip=ip,
         detail={"agent_id": str(agent_id) if agent_id else None},
     )
-    msg = None
-    if agent is not None:
-        msg = await post_system(
-            db,
-            tenant_id=conv.tenant_id,
-            conversation_id=conv.id,
-            event="agent_joined",
-            agent=agent.display_name,
-        )
     await db.commit()
-    return msg
+    return msgs
 
 
-async def close(db: AsyncSession, conv: Conversation, staff: User, ip: str | None):
+async def close(db: AsyncSession, conv: Conversation, staff: User, ip: str | None) -> list[Message]:
+    if conv.status == "closed":
+        return []
     conv.status = "closed"
     conv.updated_at = datetime.now(timezone.utc)
     await audit(
@@ -148,9 +163,11 @@ async def close(db: AsyncSession, conv: Conversation, staff: User, ip: str | Non
         target=f"conversation:{conv.id}",
         ip=ip,
     )
-    msg = await post_system(db, tenant_id=conv.tenant_id, conversation_id=conv.id, event="closed")
+    msg = await post_system(
+        db, tenant_id=conv.tenant_id, conversation_id=conv.id, event="conversation_closed"
+    )
     await db.commit()
-    return msg
+    return [msg] if msg else []
 
 
 def agent_status_view(row: AgentStatus | None) -> dict[str, Any]:

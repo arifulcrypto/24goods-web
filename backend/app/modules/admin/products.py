@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import audit
@@ -12,7 +12,7 @@ from app.core.errors import NotFound, Validation
 from app.core.money import MoneyError, parse_amount
 from app.models import Attachment, Product, User
 from app.modules.admin.schemas import ProductIn, ProductPatch
-from app.modules.catalog.service import apply_search, stock_counts
+from app.modules.catalog.service import apply_search, prepare_search, stock_counts
 from app.modules.common.views import admin_product_view
 
 
@@ -22,17 +22,28 @@ def _floor(value: str) -> int:
     return parse_amount(value)
 
 
-async def _check_images(db: AsyncSession, urls: list[str]) -> None:
-    ids = [uuid.UUID(u.rsplit("/", 1)[1]) for u in urls]
+async def _check_images(db: AsyncSession, urls: list[str], admin: User) -> None:
+    """Only images uploaded in this tenant (RLS) as product images, or by this admin.
+
+    Accepted images become public product images; other users' chat uploads are never
+    accepted, so a PATCH cannot publish someone's private attachment.
+    """
+    ids = {uuid.UUID(u.rsplit("/", 1)[1]) for u in urls}
     if not ids:
         return
-    n = await db.scalar(
-        select(func.count(Attachment.id)).where(
-            Attachment.id.in_(ids), Attachment.is_public.is_(True), Attachment.kind == "image"
+    rows = list(
+        await db.scalars(
+            select(Attachment).where(
+                Attachment.id.in_(ids),
+                Attachment.kind == "image",
+                or_(Attachment.purpose == "product", Attachment.owner_id == admin.id),
+            )
         )
     )
-    if int(n or 0) != len(set(ids)):
-        raise Validation("images must reference uploaded product images")
+    if len(rows) != len(ids):
+        raise Validation("images must reference images uploaded to this store")
+    for att in rows:
+        att.purpose, att.is_public = "product", True
 
 
 def _summary(p: Product) -> dict[str, Any]:
@@ -54,6 +65,7 @@ async def list_products(db: AsyncSession, page: Page, q: str | None, status: str
     if status:
         stmt = stmt.where(Product.status == status)
     stmt = apply_search(stmt, q)
+    await prepare_search(db, q)
     total = await db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     rows = list(
         await db.scalars(
@@ -74,7 +86,7 @@ async def create(db: AsyncSession, body: ProductIn, admin: User, ip: str | None)
         raise Validation(f"price: {exc}") from None
     if floor > price:
         raise Validation("floor_price must not exceed price")
-    await _check_images(db, body.images)
+    await _check_images(db, body.images, admin)
     p = Product(
         tenant_id=admin.tenant_id,
         title_i18n=body.title_i18n,
@@ -134,7 +146,7 @@ async def patch(
     if floor > price:
         raise Validation("floor_price must not exceed price")
     if data.get("images") is not None:
-        await _check_images(db, data["images"])
+        await _check_images(db, data["images"], admin)
         p.images = data["images"]
     if data.get("title_i18n") is not None:
         p.title_i18n = data["title_i18n"]
