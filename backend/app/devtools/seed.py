@@ -15,6 +15,7 @@ import secrets
 import string
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,10 +23,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import Settings, get_settings
 from app.core.db import make_engine, make_sessionmaker, tenant_session
 from app.core.logging import configure_logging
+from app.core.markdown import render_i18n
 from app.core.security import hash_password, verify_password
 from app.core.vaultkeys import build_sealer
 from app.devtools.covers import cover_png
-from app.models import AgentStatus, CardStock, Conversation, Product, Tenant, User
+from app.devtools.seed_content import (
+    ANNOUNCEMENT,
+    ARTICLES,
+    PAGES,
+    SUPPORT_HOURS,
+)
+from app.models import AgentStatus, Article, CardStock, Conversation, Product, Tenant, User
 from app.modules.admin.service import set_agent_status
 from app.modules.chat import quotes as quote_svc
 from app.modules.chat import service as chat
@@ -53,6 +61,16 @@ class SeedProduct:
     floor: int
     initials: str
     colors: tuple[tuple[int, int, int], tuple[int, int, int]]
+    delivery_format: str | None = None
+    delivery_separator: str = "----"
+    redeem_url: str | None = None
+    usage_en: str = ""
+    usage_zh: str = ""
+    after_sales_hours: int | None = None
+    group_sort: int = 0
+    multi_field: bool = False  # demo cards are `account----password----2fa----country`
+    batch_note: str | None = None
+    batch_days: int | None = None  # expiry of the demo batch
 
 
 PRODUCTS: list[SeedProduct] = [
@@ -67,6 +85,36 @@ PRODUCTS: list[SeedProduct] = [
         4800,
         "ST",
         ((23, 26, 33), (102, 192, 244)),
+        delivery_format="Code",
+        redeem_url="https://store.steampowered.com/account/redeemwalletcode",
+        usage_en="Open Steam, go to **Account details -> Redeem a Steam Wallet code**, "
+        "and paste the code. Each code works once, in the matching region only.",
+        usage_zh="打开 Steam，进入 **账户明细 -> 兑换 Steam 钱包码**，粘贴卡密即可。"
+        "每个卡密仅可使用一次，且仅限对应地区。",
+        group_sort=1,
+    ),
+    SeedProduct(
+        "【Premium】Gmail Account — aged, with 2FA",
+        "【优质】Gmail 老号 — 带 2FA",
+        "Aged Gmail account with recovery 2FA key. Delivered as "
+        "Account----Password----2FA----Notes.",
+        "带 2FA 密钥的 Gmail 老号，发货格式：账号----密码----2FA----备注。",
+        "accounts",
+        "auto_card",
+        800,
+        600,
+        "GM",
+        ((190, 40, 40), (250, 190, 60)),
+        delivery_format="Account----Password----2FA----Notes",
+        redeem_url="https://accounts.google.com/",
+        usage_en="Log in **within 24 hours** of delivery. Change the password and add your own "
+        "recovery email first. Keep the 2FA key private.",
+        usage_zh="请在发货后 **24 小时内** 登录，先修改密码并绑定您自己的辅助邮箱，"
+        "2FA 密钥请勿泄露。",
+        after_sales_hours=24,
+        multi_field=True,
+        batch_note="Demo batch (expires in 90 days)",
+        batch_days=90,
     ),
     SeedProduct(
         "Apple Gift Card ¥100",
@@ -139,6 +187,10 @@ PRODUCTS: list[SeedProduct] = [
         15000,
         "LG",
         ((120, 40, 160), (250, 120, 200)),
+        usage_en="Send your brief in the chat (brand name, style, colours). We deliver 3 "
+        "concepts within 48 hours.",
+        usage_zh="请在对话中发送需求（品牌名、风格、配色），我们将在 48 小时内交付 3 个方案。",
+        after_sales_hours=168,
     ),
     SeedProduct(
         "Resume Polishing (EN / 中文)",
@@ -203,6 +255,14 @@ PRODUCTS: list[SeedProduct] = [
 ]
 
 
+def demo_account() -> str:
+    alphabet = string.ascii_lowercase + string.digits
+    name = "".join(secrets.choice(alphabet) for _ in range(8))
+    pw = "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(12))
+    key = "".join(secrets.choice(string.ascii_lowercase + "234567") for _ in range(16))
+    return f"demo.{name}@gmail.com----{pw}----{key}----US"
+
+
 def demo_code() -> str:
     alphabet = string.ascii_uppercase + string.digits
     groups = ["".join(secrets.choice(alphabet) for _ in range(4)) for _ in range(3)]
@@ -220,10 +280,15 @@ async def _tenant(maker, settings: Settings) -> uuid.UUID:  # type: ignore[no-un
     async with tenant_session(maker, None) as db:
         tid = await db.scalar(select(Tenant.id).where(Tenant.slug == settings.default_tenant_slug))
         if tid is None:
-            t = Tenant(slug=settings.default_tenant_slug, name="24goods", kind="platform")
+            t = Tenant(slug=settings.default_tenant_slug, name=settings.brand_name, kind="platform")
             db.add(t)
             await db.commit()
             tid = t.id
+        else:  # rename the pre-v3 demo tenant
+            tenant = await db.get(Tenant, tid)
+            if tenant is not None and tenant.name != settings.brand_name:
+                tenant.name = settings.brand_name
+                await db.commit()
         return tid
 
 
@@ -282,11 +347,74 @@ async def _products(
                 status="active",
                 sold=0,
                 created_by=admin.id,
+                delivery_format=sp.delivery_format,
+                delivery_separator=sp.delivery_separator,
+                redeem_url=sp.redeem_url,
+                usage_i18n={"en": sp.usage_en, "zh-CN": sp.usage_zh},
+                usage_html_i18n=render_i18n({"en": sp.usage_en, "zh-CN": sp.usage_zh}),
+                after_sales_hours=sp.after_sales_hours,
+                group_sort=sp.group_sort,
             )
             db.add(p)
             await db.commit()
+        elif p.delivery_format is None and (sp.delivery_format or sp.usage_en):
+            # upgrade a pre-v3 demo product in place (idempotent)
+            p.delivery_format = sp.delivery_format
+            p.redeem_url = sp.redeem_url
+            p.usage_i18n = {"en": sp.usage_en, "zh-CN": sp.usage_zh}
+            p.usage_html_i18n = render_i18n(p.usage_i18n)
+            p.after_sales_hours = sp.after_sales_hours
+            p.group_sort = sp.group_sort
+            await db.commit()
         out[sp.en] = p
     return out
+
+
+async def _content(db: AsyncSession, tid: uuid.UUID, admin: User) -> None:
+    """Fixed pages, tutorial articles, announcement v1 (created once, never overwritten)."""
+    for spec in PAGES:
+        if await db.scalar(select(Article.id).where(Article.slug == spec["slug"])) is None:
+            db.add(
+                Article(
+                    tenant_id=tid,
+                    slug=spec["slug"],
+                    kind="page",
+                    category="page",
+                    title_i18n=spec["title"],
+                    body_i18n=spec["body"],
+                    body_html_i18n=render_i18n(spec["body"]),
+                    status="published",
+                    published_at=datetime.now(timezone.utc),
+                    created_by=admin.id,
+                )
+            )
+    for spec in ARTICLES:
+        if await db.scalar(select(Article.id).where(Article.slug == spec["slug"])) is None:
+            db.add(
+                Article(
+                    tenant_id=tid,
+                    slug=spec["slug"],
+                    kind="article",
+                    category=spec["category"],
+                    title_i18n=spec["title"],
+                    body_i18n=spec["body"],
+                    body_html_i18n=render_i18n(spec["body"]),
+                    pinned=spec["pinned"],
+                    status="published",
+                    published_at=datetime.now(timezone.utc),
+                    created_by=admin.id,
+                )
+            )
+    tenant = await db.get(Tenant, tid)
+    if tenant is not None and "announcement" not in (tenant.settings or {}):
+        ann = dict(ANNOUNCEMENT)
+        ann["body_html_i18n"] = render_i18n(ann["body_i18n"])
+        tenant.settings = {
+            **(tenant.settings or {}),
+            "announcement": ann,
+            "support_hours": SUPPORT_HOURS,
+        }
+    await db.commit()
 
 
 async def run(settings: Settings, database_url: str) -> None:
@@ -307,6 +435,7 @@ async def run(settings: Settings, database_url: str) -> None:
             buyer = await _user(db, tid, "buyer@demo.local", "buyer", "Demo Buyer", "en", buyer_pw)
             if await db.get(AgentStatus, agent.id) is None:
                 await set_agent_status(db, agent, "online", "Usually replies in 5 minutes")
+            await _content(db, tid, admin)
             products = await _products(db, tid, admin, store)
             for p in products.values():
                 if p.delivery_mode != "auto_card":
@@ -315,7 +444,14 @@ async def run(settings: Settings, database_url: str) -> None:
                     select(func.count(CardStock.id)).where(CardStock.product_id == p.id)
                 )
                 if not n:
-                    codes = "\n".join(demo_code() for _ in range(CARDS_PER_PRODUCT))
+                    sp = next(s for s in PRODUCTS if s.en == p.title_i18n["en"])
+                    gen = demo_account if sp.multi_field else demo_code
+                    codes = "\n".join(gen() for _ in range(CARDS_PER_PRODUCT))
+                    expiry = (
+                        datetime.now(timezone.utc) + timedelta(days=sp.batch_days)
+                        if sp.batch_days
+                        else None
+                    )
                     await import_cards(
                         db,
                         sealer,
@@ -325,6 +461,8 @@ async def run(settings: Settings, database_url: str) -> None:
                         actor_id=admin.id,
                         actor_role="admin",
                         ip=None,
+                        note=sp.batch_note or "Demo stock",
+                        expires_at=expiry,
                     )
                     del codes
             has_conv = await db.scalar(

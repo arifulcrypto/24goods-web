@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile
 from fastapi.responses import FileResponse
@@ -57,13 +58,18 @@ async def get_file(
     path = store.path_for(att.storage_key)
     if not path.is_file():
         raise NotFound("File not found")
+    media_type = att.mime
+    disposition = "inline" if att.kind == "image" else "attachment"
+    if att.kind == "file":
+        media_type = "text/plain; charset=utf-8"
+        disposition = "attachment; filename*=UTF-8''" + quote(att.name or "message.txt")
     headers = {
         "X-Content-Type-Options": "nosniff",
         "Content-Security-Policy": "sandbox",
         # Images render inline; anything else (voice) is an attachment: <audio> still
         # plays it, but direct navigation never renders it as a document.
-        "Content-Disposition": "inline" if att.kind == "image" else "attachment",
+        "Content-Disposition": disposition,
         "Cross-Origin-Resource-Policy": "same-origin",
         "Cache-Control": "public, max-age=86400" if att.is_public else "private, max-age=300",
     }
-    return FileResponse(path, media_type=att.mime, headers=headers)
+    return FileResponse(path, media_type=media_type, headers=headers)

@@ -16,7 +16,9 @@ from app.core.money import MoneyError, fmt, parse_amount
 from app.models import Attachment, Message, Order, OrderEvent, Product, User
 from app.modules.catalog.service import escape_like
 from app.modules.chat.messages import post_system
+from app.modules.common.sitedefaults import delivery_deadlines
 from app.modules.common.views import iso
+from app.modules.content.site import tenant_settings
 from app.modules.orders.events import add_event, snapshot
 from app.modules.orders.service import order_views
 
@@ -101,8 +103,18 @@ async def deliver_manual(
             raise NotFound("Attachment not found")
         att.purpose = "delivery"
     before = snapshot(order)
+    now = datetime.now(timezone.utc)
+    product = await db.get(Product, order.product_id) if order.product_id else None
+    until, confirm_at = delivery_deadlines(
+        now,
+        mode=order.delivery_mode,
+        product_hours=product.after_sales_hours if product else None,
+        tenant_settings=await tenant_settings(db, order.tenant_id),
+    )
     order.status = "delivered"
-    order.delivered_at = datetime.now(timezone.utc)
+    order.delivered_at = now
+    order.after_sales_until = until
+    order.auto_confirm_at = confirm_at
     order.manual_delivery_text = text.strip()
     order.manual_delivery_attachment_id = attachment_id
     order.version += 1
@@ -125,6 +137,7 @@ async def deliver_manual(
         conversation_id=order.conversation_id,
         event="delivered",
         order_id=str(order.id),
+        delivered_at=iso(order.delivered_at),
     )
     await db.commit()
     return order, msg
@@ -179,6 +192,7 @@ async def admin_views(db: AsyncSession, orders: list[Order]) -> list[dict[str, A
             "email": b.email if b else "",
             "display_name": b.display_name if b else "",
         }
+        v["source"] = o.source
     return views
 
 

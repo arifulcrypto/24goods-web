@@ -12,11 +12,14 @@ from app.core.errors import UploadRejected
 from app.core.security import STAFF_ROLES
 from app.models import Attachment, Conversation, Message, Order, User
 from app.modules.uploads.processing import (
+    MAX_FILE_BYTES,
     MAX_IMAGE_BYTES,
     MAX_VOICE_BYTES,
     Processed,
     process_image,
+    process_text,
     process_voice,
+    sanitize_filename,
 )
 from app.modules.uploads.storage import FileStore
 
@@ -48,6 +51,7 @@ async def store_attachment(
     purpose: str = "chat",
     is_public: bool = False,
     duration_ms: int | None = None,
+    name: str | None = None,
 ) -> Attachment:
     key = await store.write(processed.data)
     att = Attachment(
@@ -62,6 +66,7 @@ async def store_attachment(
         height=processed.height,
         duration_ms=duration_ms,
         storage_key=key,
+        name=name,
     )
     db.add(att)
     await db.flush()
@@ -84,8 +89,11 @@ async def create_upload(
         data = await read_limited(file, MAX_VOICE_BYTES)
         processed = process_voice(data, duration_ms)
         duration = duration_ms
+    elif kind == "file":
+        processed = process_text(await read_limited(file, MAX_FILE_BYTES))
+        duration = None
     else:
-        raise UploadRejected("kind must be image or voice")
+        raise UploadRejected("kind must be image, voice or file")
     att = await store_attachment(
         db,
         store,
@@ -94,9 +102,21 @@ async def create_upload(
         kind=kind,
         processed=processed,
         duration_ms=duration,
+        name=sanitize_filename(file.filename) if kind == "file" else None,
     )
     await db.commit()
     return att
+
+
+PREVIEW_CHARS = 160
+
+
+async def text_preview(store: FileStore, att: Attachment) -> str:
+    def _read() -> str:
+        with store.path_for(att.storage_key).open("rb") as fh:
+            return fh.read(PREVIEW_CHARS * 4).decode("utf-8", errors="ignore")[:PREVIEW_CHARS]
+
+    return await anyio.to_thread.run_sync(_read)
 
 
 async def can_read(db: AsyncSession, att: Attachment, user: User) -> bool:

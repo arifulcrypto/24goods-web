@@ -72,6 +72,10 @@ def _key(token: str) -> str:
     return "sess:" + hashlib.sha256(token.encode()).hexdigest()
 
 
+def _user_key(user_id: uuid.UUID) -> str:
+    return f"sessu:{user_id}"
+
+
 class SessionStore:
     def __init__(self, redis: Redis, settings: Settings):
         self._redis = redis
@@ -91,8 +95,23 @@ class SessionStore:
     async def create(self, user_id: uuid.UUID, tenant_id: uuid.UUID, role: str) -> str:
         token = secrets.token_urlsafe(32)  # 256-bit
         data = {"uid": str(user_id), "tid": str(tenant_id), "role": role, "iat": int(time.time())}
-        await self._redis.set(_key(token), json.dumps(data), ex=self.ttl_for(role))
+        ttl = self.ttl_for(role)
+        async with self._redis.pipeline(transaction=True) as pipe:
+            pipe.set(_key(token), json.dumps(data), ex=ttl)
+            pipe.sadd(_user_key(user_id), _key(token))  # index for "log out other sessions"
+            pipe.expire(_user_key(user_id), ttl + 60)
+            await pipe.execute()
         return token
+
+    async def revoke_user_sessions(self, user_id: uuid.UUID, *, keep: str | None = None) -> int:
+        """Delete every session of a user except the one holding token ``keep``."""
+        keep_key = _key(keep) if keep else None
+        members = await self._redis.smembers(_user_key(user_id))
+        doomed = [m for m in members if (m.decode() if isinstance(m, bytes) else m) != keep_key]
+        if doomed:
+            await self._redis.delete(*doomed)
+            await self._redis.srem(_user_key(user_id), *doomed)
+        return len(doomed)
 
     async def get(self, token: str | None) -> SessionData | None:
         if not token or len(token) > 128:

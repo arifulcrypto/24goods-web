@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import logging
 import re
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -21,10 +22,16 @@ from app.core.middleware import (
     CSRFMiddleware,
 )
 from app.core.resources import Resources, build_resources
+from app.modules import jobs
 from app.modules.admin.router import router as admin_router
+from app.modules.admin.v3 import router as admin_v3_router
+from app.modules.aftersales.router import router as aftersales_router
 from app.modules.auth.router import router as auth_router
 from app.modules.catalog.router import router as catalog_router
 from app.modules.chat.router import router as chat_router
+from app.modules.content.router import router as content_router
+from app.modules.lookup.router import router as lookup_router
+from app.modules.me.router import router as me_router
 from app.modules.orders.router import router as orders_router
 from app.modules.orders.service import expire_pending
 from app.modules.payments.router import NOTIFY_PATH
@@ -41,23 +48,45 @@ UPLOAD_BODY_LIMIT = 8 * 1024 * 1024 + 64 * 1024
 __all__ = ["SECURITY_HEADERS", "create_app"]
 
 
+async def _job(name: str, coro) -> None:  # type: ignore[no-untyped-def]
+    """Run one periodic job; a failure never stops the loop."""
+    try:
+        n = await coro
+        if n:
+            log.info("%s: %d", name, n)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        log.error("%s failed error=%s", name, type(exc).__name__)
+
+
+async def run_jobs_once(res: Resources, *, hourly: bool) -> None:
+    await _job("order expiry", expire_pending(res.maker, res))
+    await _job("auto confirm", jobs.auto_confirm(res.maker, res))
+    if hourly:
+        await _job("card expiry", jobs.void_expired_cards(res.maker))
+        await _job("instant purge", jobs.purge_instant_accounts(res.maker, res.settings))
+
+
 async def _expiry_loop(res: Resources) -> None:
+    last_hourly = 0.0
     while True:
         await asyncio.sleep(res.settings.expiry_interval_s)
-        try:
-            n = await expire_pending(res.maker, res)
-            if n:
-                log.info("expired %d pending orders", n)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            log.error("order expiry run failed error=%s", type(exc).__name__)
+        now = time.monotonic()
+        hourly = now - last_hourly >= res.settings.card_expiry_interval_s
+        if hourly:
+            last_hourly = now
+        await run_jobs_once(res, hourly=hourly)
 
 
 def api_router() -> APIRouter:
     r = APIRouter(prefix="/api/v1")
     for sub in (
         auth_router,
+        me_router,
+        content_router,
+        lookup_router,
+        aftersales_router,
         catalog_router,
         chat_router,
         orders_router,
@@ -65,6 +94,7 @@ def api_router() -> APIRouter:
         uploads_router,
         realtime_router,
         admin_router,
+        admin_v3_router,
     ):
         r.include_router(sub)
     return r

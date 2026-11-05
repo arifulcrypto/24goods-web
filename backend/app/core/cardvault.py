@@ -113,6 +113,20 @@ class CardSealer:
         msg = tenant_id.encode() + b"\x1f" + secret.strip().encode()
         return hmac.new(self._fp_key, msg, hashlib.sha256).hexdigest()
 
+    def lookup_fingerprint(self, tenant_id: str, first_field: str) -> str:
+        """Keyed fingerprint of a card's FIRST field (e.g. the account name), case-folded.
+
+        Lets staff find a multi-field card by its account without any decryption. Same
+        trust model as :meth:`fingerprint` (needs ``fp_key``; separate 0x1e domain).
+        """
+        msg = tenant_id.encode() + b"\x1e" + first_field.strip().casefold().encode()
+        return hmac.new(self._fp_key, msg, hashlib.sha256).hexdigest()
+
+
+def first_field(secret: str, separator: str) -> str:
+    """First field of a card split by the product's delimiter (whole secret if absent)."""
+    return secret.split(separator, 1)[0].strip() if separator else secret.strip()
+
 
 def kid_of(blob: bytes) -> str:
     return blob[2 : 2 + blob[1]].decode()

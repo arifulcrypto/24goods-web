@@ -16,7 +16,7 @@ class Attachment(Base):
     id: Mapped[uuid.UUID] = uuid_pk()
     tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id"))
     owner_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
-    kind: Mapped[str] = mapped_column(String(16))  # image | voice
+    kind: Mapped[str] = mapped_column(String(16))  # image | voice | file
     purpose: Mapped[str] = mapped_column(String(16), default="chat")  # chat | product | delivery
     is_public: Mapped[bool] = mapped_column(default=False)
     mime: Mapped[str] = mapped_column(String(64))
@@ -25,6 +25,7 @@ class Attachment(Base):
     height: Mapped[int | None] = mapped_column(Integer)
     duration_ms: Mapped[int | None] = mapped_column(Integer)
     storage_key: Mapped[str] = mapped_column(String(64), unique=True)
+    name: Mapped[str | None] = mapped_column(String(120))
     created_at: Mapped[datetime] = created_at()
 
 

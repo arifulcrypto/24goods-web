@@ -10,7 +10,7 @@ from sqlalchemy import text
 
 from app.core.money import MoneyError, parse_amount
 from app.modules.uploads.processing import sniff_voice
-from tests.helpers import notify_params, open_conversation, simulate_gateway_payment
+from tests.helpers import notify_params, open_conversation, simulate_gateway_payment, solve_pow
 from tests.test_chat import png_bytes
 from tests.test_uploads import OGG_OPUS, WEBM
 
@@ -226,6 +226,7 @@ async def test_secure_cookie_uses_host_prefix(env):
             "password": "long-enough-pw",
             "display_name": "S",
             "locale": "en",
+            "pow": await solve_pow(c, "register"),
         },
     )
     cookie = r.headers["set-cookie"]

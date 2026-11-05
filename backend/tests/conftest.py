@@ -42,6 +42,7 @@ VAULT_PUB_JSON = json.dumps(
 )
 FP_KEY = base64.b64encode(secrets.token_bytes(32)).decode()
 QUOTE_KEY = base64.b64encode(secrets.token_bytes(32)).decode()
+POW_KEY = base64.b64encode(secrets.token_bytes(32)).decode()
 INTERNAL_TOKEN = secrets.token_urlsafe(32)
 ZPAY_PID = "1001"
 ZPAY_KEY = "test-merchant-key-0123456789"
@@ -146,7 +147,9 @@ async def services(tmp_path_factory: pytest.TempPathFactory) -> AsyncIterator[Se
 
 
 TABLES = (
-    "audit_log, outbox, ledger_entries, deliveries, card_stock, payments, order_events, "
+    "after_sales, articles, "
+    "audit_log, outbox, ledger_entries, deliveries, card_stock, card_batches, payments, "
+    "order_events, "
     "orders, quotes, messages, conversations, attachments, products, agent_status, users, "
     "custom_domains, tenants"
 )
@@ -165,6 +168,8 @@ def make_settings(s: Services, **over):
         vault_active_kid=VAULT_KID,
         vault_fingerprint_key=FP_KEY,
         quote_hmac_key=QUOTE_KEY,
+        pow_key=POW_KEY,
+        pow_bits=8,
         internal_token=INTERNAL_TOKEN,
         delivery_url="http://delivery",
         zpay_pid=ZPAY_PID,

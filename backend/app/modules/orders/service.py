@@ -5,12 +5,14 @@ import logging
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core import accesscode
 from app.core.audit import audit
 from app.core.config import Settings
 from app.core.db import tenant_session
@@ -28,7 +30,6 @@ from app.core.money import to_decimal
 from app.core.ratelimit import release, reserve
 from app.core.resources import Resources
 from app.models import (
-    Attachment,
     CardStock,
     Conversation,
     Message,
@@ -37,10 +38,11 @@ from app.models import (
     Tenant,
     User,
 )
-from app.modules.catalog.service import get_active_product
+from app.modules.catalog.service import claimable, get_active_product
 from app.modules.chat import service as chat
 from app.modules.chat.messages import insert_message, order_card_messages, post_system
-from app.modules.common.views import REVEALABLE, order_card_payload, order_view
+from app.modules.common.orderviews import latest_tickets, one_view, order_views  # noqa: F401
+from app.modules.common.views import REVEALABLE, order_card_payload
 from app.modules.orders.events import add_event, snapshot
 from app.modules.realtime.publish import publish_order
 
@@ -58,9 +60,7 @@ def new_order_no() -> str:
 
 async def available_stock(db: AsyncSession, product_id: uuid.UUID) -> int:
     n = await db.scalar(
-        select(func.count(CardStock.id)).where(
-            CardStock.product_id == product_id, CardStock.status == "available"
-        )
+        select(func.count(CardStock.id)).where(CardStock.product_id == product_id, *claimable())
     )
     return int(n or 0)
 
@@ -79,7 +79,10 @@ async def create_order(
     quote_id: uuid.UUID | None,
     conversation_id: uuid.UUID | None,
     ip: str | None,
+    source: str | None = None,
 ) -> tuple[Order, Message | None]:
+    """Create a pending order. The one-time plaintext access code is left on
+    ``order.access_code_plain`` (never persisted, never logged)."""
     # Serialize order creation per buyer (row lock), then cap open unpaid orders.
     await db.execute(select(User.id).where(User.id == buyer.id).with_for_update())
     pending = await db.scalar(
@@ -87,13 +90,16 @@ async def create_order(
             Order.buyer_id == buyer.id, Order.status == "pending_payment"
         )
     )
-    if int(pending or 0) >= settings.max_pending_orders:
-        raise Conflict(
-            f"At most {settings.max_pending_orders} unpaid orders; pay or wait for one to expire"
-        )
+    cap = settings.max_pending_orders_instant if buyer.is_instant else settings.max_pending_orders
+    if int(pending or 0) >= cap:
+        raise Conflict(f"At most {cap} unpaid orders; pay or wait for one to expire")
+    order_no = new_order_no()
+    code = accesscode.generate()
     order = Order(
         tenant_id=buyer.tenant_id,
-        order_no=new_order_no(),
+        order_no=order_no,
+        access_code_hash=accesscode.digest(settings.lookup_secret(), order_no, code),
+        source=source,
         buyer_id=buyer.id,
         product_id=product_id,
         quote_id=quote_id,
@@ -109,6 +115,7 @@ async def create_order(
     )
     db.add(order)
     await db.flush()
+    order.access_code_plain = code  # type: ignore[attr-defined]
     await add_event(db, order, None, "pending_payment", actor_id=buyer.id, reason="created")
     await audit(
         db,
@@ -119,7 +126,7 @@ async def create_order(
         target=f"order:{order.id}",
         after=snapshot(order),
         ip=ip,
-        detail={"quote_id": str(quote_id) if quote_id else None},
+        detail={"quote_id": str(quote_id) if quote_id else None, "source": source},
     )
     msg = None
     if conversation_id is not None:
@@ -142,6 +149,7 @@ async def buy_now(
     product_id: uuid.UUID,
     qty: int,
     ip: str | None,
+    source: str | None = None,
 ) -> tuple[Order, Message | None]:
     product = await get_active_product(db, product_id)
     if product.delivery_mode == "auto_card" and await available_stock(db, product.id) < qty:
@@ -160,6 +168,7 @@ async def buy_now(
         quote_id=None,
         conversation_id=conv.id if conv else None,
         ip=ip,
+        source=source,
     )
     await db.commit()
     return order, msg
@@ -185,38 +194,14 @@ async def get_owned(db: AsyncSession, ref: str, user: User, *, lock: bool = Fals
     return order
 
 
-async def order_views(
-    db: AsyncSession, orders: list[Order], *, owner_id: uuid.UUID | None
-) -> list[dict[str, Any]]:
-    att_ids = {o.manual_delivery_attachment_id for o in orders if o.manual_delivery_attachment_id}
-    atts: dict[uuid.UUID, Attachment] = {}
-    if att_ids:
-        atts = {
-            a.id: a for a in await db.scalars(select(Attachment).where(Attachment.id.in_(att_ids)))
-        }
-    return [
-        order_view(
-            o,
-            viewer_is_owner=owner_id is not None and o.buyer_id == owner_id,
-            attachment=atts.get(o.manual_delivery_attachment_id)
-            if o.manual_delivery_attachment_id
-            else None,
-        )
-        for o in orders
-    ]
-
-
-async def one_view(db: AsyncSession, order: Order, owner_id: uuid.UUID | None) -> dict[str, Any]:
-    return (await order_views(db, [order], owner_id=owner_id))[0]
-
-
 async def broadcast_order(
     res: Resources, db: AsyncSession, order: Order, msgs: list[Message] | None = None
 ) -> None:
     """Publish the order (+ any chat messages) to buyer and staff. Call after commit."""
     await db.refresh(order)
-    bview = await one_view(db, order, order.buyer_id)
-    sview = await one_view(db, order, None)
+    buyer = await db.get(User, order.buyer_id)
+    bview = await one_view(db, order, order.buyer_id, buyer.locale if buyer else "en")
+    sview = await one_view(db, order, None, "en")
     await publish_order(res.redis, order.tenant_id, order.buyer_id, bview, sview)
     if order.conversation_id is None:
         return
@@ -233,7 +218,7 @@ async def broadcast_order(
         await chat.broadcast(res, db, conv, out)
 
 
-async def list_own(db: AsyncSession, user: User, page: Page) -> dict[str, Any]:
+async def list_own(db: AsyncSession, user: User, page: Page, lang: str = "en") -> dict[str, Any]:
     base = select(Order).where(Order.buyer_id == user.id)
     total = await db.scalar(select(func.count()).select_from(base.subquery())) or 0
     rows = list(
@@ -243,7 +228,7 @@ async def list_own(db: AsyncSession, user: User, page: Page) -> dict[str, Any]:
             .limit(page.page_size)
         )
     )
-    return page.wrap(await order_views(db, rows, owner_id=user.id), int(total))
+    return page.wrap(await order_views(db, rows, owner_id=user.id, lang=lang), int(total))
 
 
 async def pay_url(db: AsyncSession, res: Resources, ref: str, user: User, channel: str) -> str:
@@ -293,9 +278,34 @@ async def confirm(
     return order, msg
 
 
-async def reveal(res: Resources, order: Order, user: User) -> list[str]:
+async def rotate_access_code(
+    db: AsyncSession, settings: Settings, ref: str, user: User, ip: str | None
+) -> str:
+    order = await get_owned(db, ref, user, lock=True)
+    code = accesscode.generate()
+    order.access_code_hash = accesscode.digest(settings.lookup_secret(), order.order_no, code)
+    await audit(
+        db,
+        tenant_id=order.tenant_id,
+        action="order.access_code_rotated",
+        actor_id=user.id,
+        actor_role=user.role,
+        target=f"order:{order.id}",
+        ip=ip,
+    )
+    await db.commit()
+    return code
+
+
+async def reveal(res: Resources, order: Order, user: User) -> list[dict[str, str]]:
+    """Reveal an order's codes for its buyer. Returns ``[{id, code}]``."""
+    return await reveal_for(res, order, user.id)
+
+
+async def reveal_for(res: Resources, order: Order, buyer_id: uuid.UUID) -> list[dict[str, str]]:
+    user = SimpleNamespace(id=buyer_id)
     if not (
-        order.buyer_id == user.id
+        order.buyer_id == buyer_id
         and order.delivery_mode == "auto_card"
         and order.status in REVEALABLE
     ):
@@ -324,7 +334,9 @@ async def reveal(res: Resources, order: Order, user: User) -> list[str]:
         raise
 
 
-async def _call_reveal(res: Resources, order: Order, user: User, token: str) -> list[str]:
+async def _call_reveal(
+    res: Resources, order: Order, user: SimpleNamespace | User, token: str
+) -> list[dict[str, str]]:
     try:
         resp = await res.delivery.post(
             "/internal/reveal",
@@ -335,10 +347,11 @@ async def _call_reveal(res: Resources, order: Order, user: User, token: str) -> 
         log.error("delivery service unreachable error=%s", type(exc).__name__)
         raise Unavailable("Delivery service unavailable") from None
     if resp.status_code == 200:
-        secrets_ = resp.json().get("secrets")
-        if not isinstance(secrets_, list):
+        data = resp.json()
+        cards = data.get("cards")
+        if not isinstance(cards, list):
             raise Unavailable("Delivery service error")
-        return [str(s) for s in secrets_]
+        return [{"id": str(c["id"]), "code": str(c["code"])} for c in cards]
     if resp.status_code == 429:
         raise RateLimited(retry_after=int(resp.headers.get("Retry-After", "3600")))
     if resp.status_code in (403, 404):

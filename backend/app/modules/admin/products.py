@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.audit import audit
 from app.core.deps import Page
 from app.core.errors import NotFound, Validation
+from app.core.markdown import render_i18n
 from app.core.money import MoneyError, parse_amount
 from app.models import Attachment, Product, User
 from app.modules.admin.schemas import ProductIn, ProductPatch
@@ -52,6 +53,7 @@ def _summary(p: Product) -> dict[str, Any]:
         "floor_price_minor": p.floor_price_minor,
         "status": p.status,
         "delivery_mode": p.delivery_mode,
+        "after_sales_hours": p.after_sales_hours,
     }
 
 
@@ -100,6 +102,13 @@ async def create(db: AsyncSession, body: ProductIn, admin: User, ip: str | None)
         status=body.status,
         sold=0,
         created_by=admin.id,
+        delivery_format=body.delivery_format,
+        delivery_separator=body.delivery_separator,
+        redeem_url=body.redeem_url,
+        usage_i18n=body.usage_i18n,
+        usage_html_i18n=render_i18n(body.usage_i18n),
+        after_sales_hours=body.after_sales_hours,
+        group_sort=body.group_sort,
     )
     db.add(p)
     await db.flush()
@@ -152,9 +161,16 @@ async def patch(
         p.title_i18n = data["title_i18n"]
     if data.get("description_i18n") is not None:
         p.description_i18n = data["description_i18n"]
-    for key in ("delivery_mode", "category", "status"):
+    for key in ("delivery_mode", "category", "status", "delivery_separator", "group_sort"):
         if data.get(key) is not None:
             setattr(p, key, data[key])
+    # nullable fields: an explicit null clears them (site default / no format / no link)
+    for key in ("delivery_format", "redeem_url", "after_sales_hours"):
+        if key in data:
+            setattr(p, key, data[key])
+    if data.get("usage_i18n") is not None:
+        p.usage_i18n = data["usage_i18n"]
+        p.usage_html_i18n = render_i18n(data["usage_i18n"])
     p.price_minor, p.floor_price_minor = price, floor
     await audit(
         db,
