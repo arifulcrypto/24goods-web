@@ -190,7 +190,10 @@ def create_delivery_app(ctx: DeliveryContext) -> Starlette:
 
             await db.execute(
                 update(Delivery)
-                .where(Delivery.order_id == order.id)
+                .where(
+                    Delivery.order_id == order.id,
+                    Delivery.card_stock_id.in_([uuid.UUID(c) for c in card_ids]),
+                )
                 .values(
                     reveal_count=Delivery.reveal_count + 1,
                     first_revealed_at=func.coalesce(Delivery.first_revealed_at, func.now()),

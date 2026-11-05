@@ -173,7 +173,28 @@ async def handle_replace(db: AsyncSession, payload: dict) -> JobResult:
     )
     old_ids = [cid for cid in await db.scalars(stmt) if not wanted or cid in wanted]
     result = JobResult(order, ticket=ticket)
-    if not old_ids:
+    actor_id = uuid.UUID(str(payload["actor_id"])) if payload.get("actor_id") else None
+    actor_role = str(payload.get("actor_role") or "system")
+    if not old_ids:  # nothing replaceable (all void already, or ids don't match): tell staff
+        await audit(
+            db,
+            tenant_id=order.tenant_id,
+            action="delivery.replace_no_cards",
+            actor_id=actor_id,
+            actor_role=actor_role,
+            target=f"after_sales:{ticket.id}",
+            detail={"order_id": str(order.id)},
+            severity="warning",
+        )
+        msg = await post_system(
+            db,
+            tenant_id=order.tenant_id,
+            conversation_id=order.conversation_id,
+            event="after_sales_replace_failed",
+            order_id=str(order.id),
+            after_sales_id=str(ticket.id),
+        )
+        result.messages = [msg] if msg else []
         return result
     new_ids = list(
         await db.scalars(
@@ -224,11 +245,14 @@ async def handle_replace(db: AsyncSession, payload: dict) -> JobResult:
     order.version += 1
     ticket.status = "replaced"
     ticket.resolved_at = now
+    ticket.resolved_by = actor_id
     ticket.updated_at = now
     await audit(
         db,
         tenant_id=order.tenant_id,
         action="aftersales.replaced",
+        actor_id=actor_id,
+        actor_role=actor_role,
         target=f"after_sales:{ticket.id}",
         before={"status": "processing"},
         after={"status": "replaced"},

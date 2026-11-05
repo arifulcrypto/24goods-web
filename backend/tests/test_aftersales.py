@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timedelta, timezone
 
+import httpx
+import pytest
 from sqlalchemy import text
 
 from app.modules.jobs import auto_confirm
-from tests.helpers import delivered_order, open_conversation
+from tests.helpers import delivered_order, notify_params, open_conversation
+from tests.test_notify import GatewayStub
 
 CODES = [f"ACC{i}----pw{i}----2fa{i}----n" for i in range(6)]
+NOTIFY_URL = "/api/v1/pay/notify/zpay"
 TICKET = {"reason": "invalid_code", "description": "does not work", "attachment_ids": []}
 
 
@@ -331,3 +336,244 @@ async def test_sse_after_sales_event_published_to_staff(env):
             break
     await pubsub.aclose()
     assert "after_sales" in seen
+
+
+# ------------------------------------------------------------------ payment-audit fixes
+async def _auto_order(env, n_codes=6, conversation=False):
+    p = await env.product(mode="auto_card")
+    await env.import_codes(p, CODES[:n_codes])
+    buyer, _ = await env.login("buyer")
+    staff, _ = await env.login("agent")
+    admin, _ = await env.login("admin")
+    if conversation:
+        await open_conversation(buyer)
+    order = await delivered_order(env, buyer, p)
+    return p, buyer, staff, admin, order
+
+
+async def test_refund_unpaid_order_rejected(env):
+    _p, buyer, _staff, admin, order = await setup_manual(env)
+    t = (await open_ticket(buyer, order)).json()
+    async with env.owner_session() as db:  # force an impossible state
+        await db.execute(text("UPDATE orders SET status='pending_payment'"))
+        await db.commit()
+    r = await admin.post(f"/api/v1/admin/after-sales/{t['id']}/action", json={"action": "refund"})
+    assert r.status_code == 409
+    assert await env.scalar("SELECT count(*) FROM ledger_entries WHERE memo LIKE 'refund %'") == 0
+
+
+async def test_service_level_refund_requires_admin(env):
+    from app.core.db import tenant_session
+    from app.core.errors import Forbidden
+    from app.models import User
+    from app.modules.aftersales import service
+    from app.modules.aftersales.schemas import ActionIn
+
+    _p, buyer, _staff, _admin, order = await setup_manual(env)
+    t = (await open_ticket(buyer, order)).json()
+    async with tenant_session(env.res.maker, env.tenant_id) as db:
+        agent = await db.scalar(select_user("agent"))
+        assert isinstance(agent, User)
+        try:
+            await service.act(db, agent, uuid.UUID(t["id"]), ActionIn(action="refund"), None)
+        except Forbidden:
+            pass
+        else:
+            raise AssertionError("agent refund must be refused by the service")
+
+
+def select_user(role: str):
+    from sqlalchemy import select
+
+    from app.models import User
+
+    return select(User).where(User.role == role).limit(1)
+
+
+@pytest.fixture
+async def gw(env):
+    stub = GatewayStub()
+    client = httpx.AsyncClient(transport=httpx.MockTransport(stub.handler))
+    env.res.zpay._http = client
+    yield stub
+    await client.aclose()
+
+
+async def test_duplicate_notify_after_refund_is_benign(env, gw):
+    notify = notify_params
+    p = await env.product(mode="manual", price=1990, floor=100)
+    buyer, _ = await env.login("buyer")
+    admin, _ = await env.login("admin")
+    from tests.helpers import buy
+
+    o = await buy(buyer, p)
+    params = notify(o["order_no"], "19.90")
+    assert (await env.client(csrf=False).get(NOTIFY_URL, params=params)).text == "success"
+    async with env.owner_session() as db:  # delivered + ticket, then refund
+        await db.execute(text("UPDATE orders SET status='delivered', delivered_at=now()"))
+        await db.execute(
+            text("UPDATE orders SET after_sales_until=now()+interval '1 day', version=version+1")
+        )
+        await db.commit()
+    t = (await open_ticket(buyer, o)).json()
+    r = await admin.post(f"/api/v1/admin/after-sales/{t['id']}/action", json={"action": "refund"})
+    assert r.status_code == 200
+    before = (
+        await env.scalar("SELECT count(*) FROM payments"),
+        await env.scalar("SELECT count(*) FROM ledger_entries"),
+        await env.scalar("SELECT count(*) FROM audit_log WHERE severity='critical'"),
+    )
+    # replay guard branch (same notify) and settle branch (fresh replay key) both succeed quietly
+    assert (await env.client(csrf=False).get(NOTIFY_URL, params=params)).text == "success"
+    for k in await env.s.redis.keys("notify:zpay:*"):
+        await env.s.redis.delete(k)
+    assert (await env.client(csrf=False).get(NOTIFY_URL, params=params)).text == "success"
+    after = (
+        await env.scalar("SELECT count(*) FROM payments"),
+        await env.scalar("SELECT count(*) FROM ledger_entries"),
+        await env.scalar("SELECT count(*) FROM audit_log WHERE severity='critical'"),
+    )
+    assert before == after
+    assert await env.scalar("SELECT status FROM orders") == "refunded"
+    # a DIFFERENT trade_no on a refunded order stays a critical audit
+    other = notify(o["order_no"], "19.90", trade_no="T999")
+    gw.trade_no = "T999"
+    assert (await env.client(csrf=False).get(NOTIFY_URL, params=other)).text == "success"
+    assert (
+        await env.scalar(
+            "SELECT count(*) FROM audit_log WHERE action='payment.unexpected_state' "
+            "AND severity='critical'"
+        )
+        == 1
+    )
+    assert await env.scalar("SELECT status FROM orders") == "refunded"
+
+
+async def test_reveal_after_refund_is_409(env):
+    _p, buyer, _staff, admin, order = await _auto_order(env)
+    t = (await open_ticket(buyer, order)).json()
+    r = await admin.post(f"/api/v1/admin/after-sales/{t['id']}/action", json={"action": "refund"})
+    assert r.status_code == 200
+    r = await buyer.post(f"/api/v1/orders/{order['id']}/reveal")
+    assert r.status_code == 409
+
+
+async def test_replace_rejects_foreign_unknown_and_empty_card_ids(env):
+    p, buyer, staff, _admin, order = await _auto_order(env)
+    other_buyer, _ = await env.login("buyer")
+    other = await delivered_order(env, other_buyer, p)
+    foreign = (await other_buyer.post(f"/api/v1/orders/{other['id']}/reveal")).json()["cards"][0][
+        "id"
+    ]
+    t = (await open_ticket(buyer, order)).json()
+    url = f"/api/v1/admin/after-sales/{t['id']}/action"
+    for ids in ([foreign], ["00000000-0000-0000-0000-000000000009"]):
+        r = await staff.post(url, json={"action": "replace", "card_ids": ids})
+        assert r.status_code == 422 and r.json()["error"]["code"] == "validation"
+    assert await env.scalar("SELECT count(*) FROM outbox WHERE topic='delivery.replace'") == 0
+    # no non-void cards left at all -> 422
+    async with env.owner_session() as db:
+        await db.execute(
+            text(
+                "UPDATE card_stock SET status='void', void_reason='defective', voided_at=now() "
+                "WHERE order_id=:o"
+            ),
+            {"o": order["id"]},
+        )
+        await db.commit()
+    r = await staff.post(url, json={"action": "replace"})
+    assert r.status_code == 422
+
+
+async def test_duplicate_replace_rows_are_noop_and_actor_recorded(env):
+    _p, buyer, staff, _admin, order = await _auto_order(env)
+    t = (await open_ticket(buyer, order)).json()
+    r = await staff.post(f"/api/v1/admin/after-sales/{t['id']}/action", json={"action": "replace"})
+    assert r.status_code == 200
+    async with env.owner_session() as db:  # duplicate the outbox row
+        await db.execute(
+            text(
+                "INSERT INTO outbox (tenant_id, topic, key, payload) "
+                "SELECT tenant_id, topic, key, payload FROM outbox WHERE topic='delivery.replace'"
+            )
+        )
+        await db.commit()
+    assert await env.drain() == 2
+    assert await env.scalar("SELECT count(*) FROM card_stock WHERE status='void'") == 1
+    assert await env.scalar("SELECT count(*) FROM deliveries WHERE order_id=:i", i=order["id"]) == 2
+    assert (
+        await env.scalar("SELECT count(*) FROM audit_log WHERE action='aftersales.replaced'") == 1
+    )
+    me = str(await env.scalar("SELECT id FROM users WHERE role='agent'"))
+    assert (
+        str(await env.scalar("SELECT actor_id FROM audit_log WHERE action='aftersales.replaced'"))
+        == me
+    )
+    assert (
+        await env.scalar("SELECT actor_role FROM audit_log WHERE action='aftersales.replaced'")
+        == "agent"
+    )
+    assert str(await env.scalar("SELECT resolved_by FROM after_sales")) == me
+    assert await env.scalar("SELECT resolved_at FROM after_sales") is not None
+
+
+async def test_replace_with_no_live_cards_in_worker_posts_failure(env):
+    _p, buyer, staff, _admin, order = await _auto_order(env, conversation=True)
+    t = (await open_ticket(buyer, order)).json()
+    await staff.post(f"/api/v1/admin/after-sales/{t['id']}/action", json={"action": "replace"})
+    async with env.owner_session() as db:  # cards voided between queueing and processing
+        await db.execute(
+            text("UPDATE card_stock SET status='void', void_reason='defective', voided_at=now()")
+        )
+        await db.commit()
+    await env.drain()
+    assert await env.scalar("SELECT status FROM after_sales") == "processing"
+    assert (
+        await env.scalar("SELECT count(*) FROM audit_log WHERE action='delivery.replace_no_cards'")
+        == 1
+    )
+    assert (
+        await env.scalar(
+            "SELECT count(*) FROM messages WHERE payload->>'event'='after_sales_replace_failed'"
+        )
+        == 1
+    )
+
+
+async def test_third_replacement_requires_admin(env):
+    _p, buyer, staff, admin, order = await setup_manual(env)
+    for i in range(2):
+        t = (await open_ticket(buyer, order)).json()
+        r = await staff.post(
+            f"/api/v1/admin/after-sales/{t['id']}/action",
+            json={"action": "replace", "delivery_text": f"new {i}"},
+        )
+        assert r.status_code == 200, r.text
+    t = (await open_ticket(buyer, order)).json()
+    url = f"/api/v1/admin/after-sales/{t['id']}/action"
+    body = {"action": "replace", "delivery_text": "third"}
+    r = await staff.post(url, json=body)
+    assert r.status_code == 403 and r.json()["error"]["code"] == "forbidden"
+    assert (await admin.post(url, json=body)).status_code == 200
+
+
+async def test_open_ticket_bumps_version_and_autoconfirm_rechecks(env):
+    _p, buyer, _staff, _admin, order = await setup_manual(env)
+    v0 = await env.scalar("SELECT version FROM orders")
+    await open_ticket(buyer, order)
+    assert await env.scalar("SELECT version FROM orders") == v0 + 1
+
+
+async def test_migration_backfill_sql(env):
+    import importlib
+
+    mig = importlib.import_module("migrations.versions.0002_storefront_v3")
+    _p, _buyer, _staff, _admin, _order = await setup_manual(env)
+    async with env.owner_session() as db:
+        await db.execute(text("UPDATE orders SET after_sales_until=NULL, auto_confirm_at=NULL"))
+        for stmt in mig.BACKFILL:
+            await db.execute(text(stmt))
+        await db.commit()
+    d = await env.scalar("SELECT delivered_at FROM orders")
+    assert await env.scalar("SELECT after_sales_until FROM orders") == d + timedelta(hours=672)
+    assert await env.scalar("SELECT auto_confirm_at FROM orders") == d + timedelta(hours=72)

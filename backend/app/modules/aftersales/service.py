@@ -12,9 +12,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import audit
 from app.core.deps import Page
-from app.core.errors import ApiError, InvalidState, NotFound, Validation
+from app.core.errors import ApiError, Forbidden, InvalidState, NotFound, Validation
 from app.core.money import fmt
-from app.models import AfterSales, Attachment, Message, Order, Outbox, User
+from app.models import AfterSales, Attachment, CardStock, Delivery, Message, Order, Outbox, User
 from app.modules.aftersales.schemas import ActionIn, OpenIn
 from app.modules.chat.messages import post_system
 from app.modules.common.sitedefaults import AFTER_SALES_REOPEN_EXTENSION
@@ -24,6 +24,8 @@ from app.modules.orders.service import get_owned
 from app.modules.payments.ledger import Line, post_txn
 
 ELIGIBLE = ("delivered", "completed")
+# From the Nth replacement on (3rd), replacing needs an admin (agents can't loop replacements).
+REPLACE_ADMIN_FROM = 3
 OPEN_STATES = ("open", "processing")
 REPLACE_TOPIC = "delivery.replace"
 
@@ -103,6 +105,7 @@ async def open_ticket(
     except IntegrityError:
         await db.rollback()
         raise AfterSalesOpen("This order already has an open after-sales request") from None
+    order.version += 1  # serialises against the auto-confirm job (which locks the order row)
     await audit(
         db,
         tenant_id=order.tenant_id,
@@ -232,12 +235,24 @@ async def act(
     detail: dict[str, Any] = {"action": body.action, "order_id": str(order.id)}
     event = None
 
+    if body.action == "refund" and staff.role != "admin":
+        raise Forbidden("Refunds require an admin")
     if body.action == "reject" and note is None:
         raise Validation("note is required to reject a request")
 
     if body.action == "replace":
         if order.status not in ELIGIBLE:
             raise InvalidState("Order is not in a replaceable state")
+        replaced_before = (
+            await db.scalar(
+                select(func.count())
+                .select_from(AfterSales)
+                .where(AfterSales.order_id == order.id, AfterSales.status == "replaced")
+            )
+            or 0
+        )
+        if replaced_before + 1 >= REPLACE_ADMIN_FROM and staff.role != "admin":
+            raise Forbidden("From the 3rd replacement on, an admin must approve it")
         if order.delivery_mode == "manual":
             text = (body.delivery_text or "").strip()
             if not text:
@@ -248,6 +263,19 @@ async def act(
             detail["delivery_text_chars"] = len(text)
             event = "after_sales_replaced"
         else:
+            live = set(
+                await db.scalars(
+                    select(CardStock.id)
+                    .join(Delivery, Delivery.card_stock_id == CardStock.id)
+                    .where(Delivery.order_id == order.id, CardStock.order_id == order.id)
+                    .where(CardStock.status != "void")
+                )
+            )
+            if not live:
+                raise Validation("This order has no replaceable cards")
+            chosen = list(dict.fromkeys(body.card_ids or []))
+            if chosen and not set(chosen) <= live:
+                raise Validation("card_ids must belong to this order's current cards")
             db.add(
                 Outbox(
                     tenant_id=t.tenant_id,
@@ -256,7 +284,9 @@ async def act(
                     payload={
                         "order_id": str(order.id),
                         "after_sales_id": str(t.id),
-                        "card_ids": [str(c) for c in (body.card_ids or [])],
+                        "card_ids": [str(c) for c in chosen],
+                        "actor_id": str(staff.id),
+                        "actor_role": staff.role,
                     },
                 )
             )

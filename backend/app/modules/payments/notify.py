@@ -209,7 +209,9 @@ async def handle_notify(
         await db.rollback()
         current = await db.scalar(select(Order.status).where(Order.id == order_id))
         # Acknowledge once the order is settled; otherwise ask the gateway to retry later.
-        return NotifyOutcome(SUCCESS if current in PAID_STATES | {"manual_review"} else FAIL)
+        return NotifyOutcome(
+            SUCCESS if current in PAID_STATES | {"manual_review", "refunded"} else FAIL
+        )
 
     try:
         outcome = await _settle(db, res, order.id, trade_no, params, ip)
@@ -287,6 +289,11 @@ async def _settle(
     # Late payments (order expired/cancelled, however late) are still RECORDED
     # (Payment + ledger) and held in manual_review: received money must never vanish.
     late = order.status in ("expired", "cancelled")
+    if order.status == "refunded":
+        existing = await db.scalar(select(Payment).where(Payment.order_id == order.id))
+        if existing is not None and existing.gateway_trade_no == trade_no:
+            await db.rollback()  # benign duplicate of the notify that was refunded later
+            return NotifyOutcome(SUCCESS, order)
     if order.status not in ("pending_payment", "expired", "cancelled"):
         await audit(
             db,

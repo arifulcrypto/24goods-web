@@ -53,7 +53,19 @@ async def auto_confirm(maker: async_sessionmaker[AsyncSession], res: Resources |
                 )
             )
             msgs = {}
+            done: list[Order] = []
             for order in rows:
+                # re-check under the order lock: a ticket may have been opened since the select
+                if await db.scalar(
+                    select(
+                        exists().where(
+                            AfterSales.order_id == order.id,
+                            AfterSales.status.in_(("open", "processing")),
+                        )
+                    )
+                ):
+                    continue
+                done.append(order)
                 before = snapshot(order)
                 order.status = "completed"
                 order.completed_at = datetime.now(timezone.utc)
@@ -84,9 +96,9 @@ async def auto_confirm(maker: async_sessionmaker[AsyncSession], res: Resources |
                     auto=True,
                 )
             await db.commit()
-            total += len(rows)
+            total += len(done)
             if res is not None:
-                for order in rows:
+                for order in done:
                     await broadcast_order(res, db, order, [msgs.get(order.id)])
     return total
 

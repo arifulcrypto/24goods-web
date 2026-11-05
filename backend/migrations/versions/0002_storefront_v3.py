@@ -159,11 +159,21 @@ GRANTS = [
     "GRANT UPDATE (void_reason, voided_at, replaced_by) ON card_stock TO app_delivery",
     "GRANT UPDATE (after_sales_until, auto_confirm_at) ON orders TO app_delivery",
     "GRANT SELECT ON after_sales TO app_delivery",
-    "GRANT UPDATE (status, resolution_note, resolved_at, updated_at) ON after_sales "
-    "TO app_delivery",
+    "GRANT UPDATE (status, resolution_note, resolved_by, resolved_at, updated_at) "
+    "ON after_sales TO app_delivery",
     "GRANT SELECT (id, tenant_id, locale) ON users TO app_delivery",
     # attachment metadata only (file bytes live on disk): after-sales ticket views
     "GRANT SELECT ON attachments TO app_delivery",
+]
+
+# Orders delivered before v3 (e.g. the demo DB) get their windows backfilled:
+# after-sales 28 d (672 h), auto-confirm 72 h manual / 24 h auto_card.
+BACKFILL = [
+    "UPDATE orders SET after_sales_until = delivered_at + interval '672 hours' "
+    "WHERE delivered_at IS NOT NULL AND after_sales_until IS NULL",
+    "UPDATE orders SET auto_confirm_at = delivered_at + CASE delivery_mode "
+    "WHEN 'manual' THEN interval '72 hours' ELSE interval '24 hours' END "
+    "WHERE delivered_at IS NOT NULL AND auto_confirm_at IS NULL",
 ]
 
 
@@ -187,6 +197,8 @@ def upgrade() -> None:
         "WITH CHECK (id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)"
     )
     for stmt in GRANTS:
+        op.execute(stmt)
+    for stmt in BACKFILL:
         op.execute(stmt)
 
 
