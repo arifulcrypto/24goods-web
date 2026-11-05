@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.age
+secrets/
+
+# Node
+node_modules/
+.nuxt/
+.output/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+.claude/settings.local.json
