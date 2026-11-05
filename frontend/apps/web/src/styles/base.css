@@ -37,8 +37,10 @@ a {
   color: inherit;
 }
 :focus-visible {
-  outline: 2px solid var(--c-accent-strong);
+  /* dark ring + white halo: visible on white and on yellow primary buttons (WCAG 1.4.11) */
+  outline: 2px solid #1f1f1f;
   outline-offset: 2px;
+  box-shadow: 0 0 0 4px #fff;
 }
 #app {
   min-height: 100vh;

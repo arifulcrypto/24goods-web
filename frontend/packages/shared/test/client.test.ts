@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { ApiClient, ApiError, buildQuery, errorFromBody, errorI18nKey, safePayUrl, safeRedirect } from '../src'
+import { ApiClient, ApiError, buildQuery, errorFromBody, errorI18nKey, safeAssetUrl, safePayUrl, safeRedirect } from '../src'
 
 function res(status: number, body?: unknown, raw?: string): Response {
   const text = raw ?? (body === undefined ? '' : JSON.stringify(body))
@@ -98,11 +98,27 @@ describe('ApiClient', () => {
 })
 
 describe('URL safety', () => {
-  it('safePayUrl allows only http(s)', () => {
-    expect(safePayUrl('/mockpay/submit.php?x=1', 'https://shop.test/')).toBe('https://shop.test/mockpay/submit.php?x=1')
-    expect(safePayUrl('https://pay.example/submit.php')).toBe('https://pay.example/submit.php')
-    expect(safePayUrl('javascript:alert(1)')).toBeNull()
-    expect(safePayUrl('data:text/html,x')).toBeNull()
+  it('safePayUrl allows same-origin or https on allowlisted gateway hosts only', () => {
+    const base = 'https://shop.test/orders/1'
+    expect(safePayUrl('/mockpay/submit.php?x=1', base)).toBe('https://shop.test/mockpay/submit.php?x=1')
+    expect(safePayUrl('http://107.0.0.1/mockpay/submit.php', 'http://107.0.0.1/chat')).toBe('http://107.0.0.1/mockpay/submit.php')
+    expect(safePayUrl('https://zpayz.cn/submit.php?pid=1', base)).toBe('https://zpayz.cn/submit.php?pid=1')
+    expect(safePayUrl('http://zpayz.cn/submit.php', base)).toBeNull() // no plain http off-origin
+    expect(safePayUrl('https://evil.example/submit.php', base)).toBeNull() // not allowlisted
+    expect(safePayUrl('https://zpayz.cn.evil.example/x', base)).toBeNull()
+    expect(safePayUrl('javascript:alert(1)', base)).toBeNull()
+    expect(safePayUrl('data:text/html,x', base)).toBeNull()
+    expect(safePayUrl('https://pay.partner/x', base, ['pay.partner'])).toBe('https://pay.partner/x')
+  })
+  it('safeAssetUrl blocks script/data/blob schemes and plain-http off-origin', () => {
+    const base = 'http://107.0.0.1/orders/1'
+    expect(safeAssetUrl('/api/v1/files/abc', base)).toBe('http://107.0.0.1/api/v1/files/abc')
+    expect(safeAssetUrl('https://media.example/x.webp', base)).toBe('https://media.example/x.webp')
+    expect(safeAssetUrl('http://evil.example/x.webp', base)).toBeNull()
+    expect(safeAssetUrl('javascript:alert(1)', base)).toBeNull()
+    expect(safeAssetUrl('data:image/svg+xml,<svg onload=alert(1)>', base)).toBeNull()
+    expect(safeAssetUrl('blob:http://107.0.0.1/uuid', base)).toBeNull()
+    expect(safeAssetUrl(null, base)).toBeNull()
   })
   it('safeRedirect only allows internal paths', () => {
     expect(safeRedirect('/orders/1')).toBe('/orders/1')

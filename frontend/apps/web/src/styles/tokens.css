@@ -5,10 +5,10 @@
   --c-accent-soft: #fff6cc;
   --c-accent-ink: #7a4f00; /* text on soft accent */
   --c-on-accent: #1f1f1f;
-  --c-price: #ff5000;
+  --c-price: #d93f00; /* 4.6:1 on white (WCAG AA) */
   --c-text: #1f1f1f;
   --c-text-2: #555;
-  --c-muted: #8a8a8a;
+  --c-muted: #6b6b6b; /* 5.3:1 on white */
   --c-line: #ececec;
   --c-bg: #f5f5f3; /* app background */
   --c-surface: #ffffff;

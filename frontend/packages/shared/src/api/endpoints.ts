@@ -169,15 +169,42 @@ export function createAdminApi(c: ApiClient) {
 }
 export type AdminApi = ReturnType<typeof createAdminApi>
 
+/** Payment gateway hosts the buyer may be sent to (besides same-origin, e.g. the demo `/mockpay`). */
+export const PAY_HOSTS: readonly string[] = ['zpayz.cn']
+
+function currentBase(): string {
+  return globalThis.location?.href ?? 'http://localhost/'
+}
+
 /**
- * Only allow navigating to a pay_url that is same-origin-relative or http(s).
- * Defends against `javascript:` / `data:` URLs if the API were ever compromised.
+ * Only allow navigating to a pay_url that is same-origin, or https on an allowlisted
+ * gateway host. Defends against `javascript:`/`data:` URLs and open redirects / plain-http
+ * phishing if the API were ever compromised.
  */
-export function safePayUrl(raw: string, base = globalThis.location?.href ?? 'http://localhost/'): string | null {
+export function safePayUrl(raw: string, base = currentBase(), hosts: readonly string[] = PAY_HOSTS): string | null {
   try {
     const u = new URL(raw, base)
-    if (u.protocol !== 'https:' && u.protocol !== 'http:') return null
-    return u.toString()
+    const origin = new URL(base).origin
+    if ((u.protocol === 'https:' || u.protocol === 'http:') && u.origin === origin) return u.toString()
+    if (u.protocol === 'https:' && hosts.includes(u.hostname)) return u.toString()
+    return null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * URL for user-generated assets (attachments, covers) used in `href`/`src`/previews.
+ * Same-origin (any scheme the page itself uses) or https only — never `javascript:`, `data:`, `blob:` from the server.
+ */
+export function safeAssetUrl(raw: string | null | undefined, base = currentBase()): string | null {
+  if (!raw) return null
+  try {
+    const u = new URL(raw, base)
+    const origin = new URL(base).origin
+    if ((u.protocol === 'https:' || u.protocol === 'http:') && u.origin === origin) return u.toString()
+    if (u.protocol === 'https:') return u.toString()
+    return null
   } catch {
     return null
   }

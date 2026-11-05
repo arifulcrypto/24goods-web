@@ -8,6 +8,7 @@ import {
   formatDateTime,
   formatMoney,
   isApiError,
+  safeAssetUrl,
   safePayUrl,
   type Order,
 } from '@24goods/shared'
@@ -21,6 +22,7 @@ const router = useRouter()
 const rt = useRealtimeStore()
 
 const order = ref<Order | null>(null)
+const attachmentUrl = computed(() => safeAssetUrl(order.value?.manual_delivery?.attachment?.url))
 const loading = ref(true)
 const notFound = ref(false)
 const paying = ref(false)
@@ -245,17 +247,17 @@ function back() {
       <section v-if="order.manual_delivery" class="section card pad">
         <h2 class="h2">{{ t('order.manualDelivery') }}</h2>
         <p v-if="order.manual_delivery.text" class="manual-text">{{ order.manual_delivery.text }}</p>
-        <template v-if="order.manual_delivery.attachment">
+        <template v-if="order.manual_delivery.attachment && attachmentUrl">
           <button
             v-if="order.manual_delivery.attachment.kind === 'image'"
             type="button"
             class="att-img"
             :aria-label="t('order.openAttachment')"
-            @click="previewAttachment(order.manual_delivery.attachment.url)"
+            @click="previewAttachment(attachmentUrl)"
           >
-            <img :src="order.manual_delivery.attachment.url" :alt="t('order.attachment')" loading="lazy" />
+            <img :src="attachmentUrl" :alt="t('order.attachment')" loading="lazy" />
           </button>
-          <a v-else :href="order.manual_delivery.attachment.url" target="_blank" rel="noopener noreferrer">{{ t('order.openAttachment') }}</a>
+          <a v-else :href="attachmentUrl" target="_blank" rel="noopener noreferrer">{{ t('order.openAttachment') }}</a>
         </template>
       </section>
 

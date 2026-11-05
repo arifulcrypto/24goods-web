@@ -11,6 +11,7 @@ import {
   isValidAmount,
   multiplyAmount,
   normalizeAmount,
+  safeAssetUrl,
   type AdminOrderDetail,
   type Attachment,
   type Order,
@@ -217,8 +218,8 @@ defineExpose({ reload: () => props.orderId && load(props.orderId) })
             <p class="pre">{{ order.manual_delivery.text }}</p>
             <el-image
               v-if="order.manual_delivery.attachment?.kind === 'image'"
-              :src="order.manual_delivery.attachment.url"
-              :preview-src-list="[order.manual_delivery.attachment.url]"
+              :src="safeAssetUrl(order.manual_delivery.attachment.url) ?? undefined"
+              :preview-src-list="[safeAssetUrl(order.manual_delivery.attachment.url) ?? '']"
               fit="cover"
               class="att"
               preview-teleported
@@ -268,7 +269,7 @@ defineExpose({ reload: () => props.orderId && load(props.orderId) })
           <el-upload :show-file-list="false" :http-request="uploadAttachment" accept="image/jpeg,image/png,image/webp">
             <el-button :loading="deliver.uploading">{{ t('products.form.upload') }}</el-button>
           </el-upload>
-          <el-image v-if="deliver.attachment" :src="deliver.attachment.url" fit="cover" class="att" />
+          <el-image v-if="deliver.attachment" :src="safeAssetUrl(deliver.attachment.url) ?? undefined" fit="cover" class="att" />
         </el-form-item>
       </el-form>
       <template #footer>

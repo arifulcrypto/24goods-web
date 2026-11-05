@@ -1,0 +1,16 @@
+# gitleaks config: default rules + narrowly scoped false-positive allowlist.
+# Keep every entry here specific and justified; never allowlist whole files.
+title = "24goods gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Internal Docker service URLs and .env.example placeholders are not credentials"
+regexTarget = "line"
+regexes = [
+  # http://api:8000 / http://api:8081/internal/tls/ask (compose service name + port)
+  '''https?://api:(8000|8081)(/[A-Za-z0-9/_.-]*)?''',
+  # .env.example placeholders, e.g. APP_SEED_ADMIN_PASSWORD=REPLACE_MIN_12_CHARS
+  '''[A-Z0-9_]+=REPLACE_[A-Z0-9_]+''',
+]

@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { OrderCardPayload, ProductCardPayload, QuoteCardPayload, SystemPayload } from '../../types'
 import { formatMoney } from '../../format'
+import { safeAssetUrl } from '../../api/endpoints'
 import type { ChatItem } from '../useConversation'
 import VoiceBubble from './VoiceBubble.vue'
 import QuoteCardView from './QuoteCardView.vue'
@@ -31,8 +32,8 @@ const view = computed(() => {
       text: p.text,
       senderRole: it.senderRole,
       senderName: '',
-      imageUrl: p.type === 'image' ? (p.attachment?.url ?? p.objectUrl) : null,
-      voiceUrl: p.type === 'voice' ? (p.attachment?.url ?? p.objectUrl) : null,
+      imageUrl: p.type === 'image' ? (safeAssetUrl(p.attachment?.url) ?? p.objectUrl) : null,
+      voiceUrl: p.type === 'voice' ? (safeAssetUrl(p.attachment?.url) ?? p.objectUrl) : null,
       durationMs: p.durationMs ?? 0,
       width: p.width,
       height: p.height,
@@ -47,8 +48,8 @@ const view = computed(() => {
     text: m.text,
     senderRole: m.sender.role,
     senderName: m.sender.display_name,
-    imageUrl: m.type === 'image' ? (m.attachment?.url ?? null) : null,
-    voiceUrl: m.type === 'voice' ? (m.attachment?.url ?? null) : null,
+    imageUrl: m.type === 'image' ? safeAssetUrl(m.attachment?.url) : null,
+    voiceUrl: m.type === 'voice' ? safeAssetUrl(m.attachment?.url) : null,
     durationMs: m.attachment?.duration_ms ?? 0,
     width: m.attachment?.width,
     height: m.attachment?.height,
