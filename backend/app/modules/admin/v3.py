@@ -44,11 +44,12 @@ async def list_articles(
     status: Literal["draft", "published"] | None = None,
     kind: Literal["article", "page"] | None = None,
     category: str | None = Query(None, max_length=32),
+    q: str | None = Query(None, max_length=100),
     page: Page = Depends(get_page),
     _: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    return await content.admin_list(db, page, status, kind, category)
+    return await content.admin_list(db, page, status, kind, category, q)
 
 
 @router.post("/articles")

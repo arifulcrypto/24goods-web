@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from redis.asyncio import Redis
-from sqlalchemy import func, select, update
+from sqlalchemy import Text, cast, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -230,9 +230,22 @@ async def get_public(
 
 
 async def admin_list(
-    db: AsyncSession, page: Page, status: str | None, kind: str | None, category: str | None
+    db: AsyncSession,
+    page: Page,
+    status: str | None,
+    kind: str | None,
+    category: str | None,
+    q: str | None = None,
 ) -> dict:
     stmt = select(Article)
+    if q and q.strip():
+        like = q.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        stmt = stmt.where(
+            or_(
+                Article.slug.ilike(f"%{like}%", escape="\\"),
+                cast(Article.title_i18n, Text).ilike(f"%{like}%", escape="\\"),
+            )
+        )
     if status:
         stmt = stmt.where(Article.status == status)
     if kind:

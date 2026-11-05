@@ -205,6 +205,9 @@ async def test_articles_crud_and_public_listing(env):
         and "<b>" not in r.json()["body_html_i18n"]["en"]
         and 'href="javascript' not in r.json()["body_html_i18n"]["en"]
     )
+    found = (await admin.get("/api/v1/admin/articles", params={"q": "DRAFT"})).json()
+    assert [i["slug"] for i in found["items"]] == ["draft"]
+    assert (await admin.get("/api/v1/admin/articles", params={"q": "100%"})).json()["total"] == 0
     assert (await admin.delete(f"/api/v1/admin/articles/{draft['id']}")).status_code == 204
     assert (await admin.get(f"/api/v1/admin/articles/{draft['id']}")).status_code == 404
     assert await env.scalar("SELECT count(*) FROM audit_log WHERE action LIKE 'article.%'") == 5

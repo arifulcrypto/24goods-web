@@ -46,9 +46,11 @@ def attachment_view(a: Attachment | None) -> dict[str, Any] | None:
 
 
 def user_view(u: User) -> dict[str, Any]:
+    # The `<handle>@instant.invalid` placeholder is an internal login key, never shown.
+    email = "" if u.email.endswith("@instant.invalid") else u.email
     return {
         "id": str(u.id),
-        "email": u.email,
+        "email": email,
         "display_name": u.display_name,
         "role": u.role,
         "locale": u.locale,

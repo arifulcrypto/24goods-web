@@ -28,9 +28,11 @@ async def test_instant_account_shape_and_session(env):
     assert len(body["credentials"]["password"]) == 14
     assert body["user"]["is_instant"] is True and body["user"]["handle"] == handle
     assert body["user"]["role"] == "buyer" and body["user"]["display_name"] == handle
+    assert body["user"]["email"] == ""  # the placeholder address is never exposed
     assert r.headers["cache-control"] == "no-store"
     assert "sid=" in r.headers["set-cookie"]
-    assert (await c.get("/api/v1/auth/me")).json()["id"] == body["user"]["id"]
+    me = (await c.get("/api/v1/auth/me")).json()
+    assert me["id"] == body["user"]["id"] and me["email"] == ""
     email = await env.scalar("SELECT email FROM users WHERE handle=:h", h=handle)
     assert email == f"{handle}@instant.invalid"
     pw_hash = await env.scalar("SELECT pw_hash FROM users WHERE handle=:h", h=handle)

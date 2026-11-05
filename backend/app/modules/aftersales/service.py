@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.audit import audit
 from app.core.deps import Page
 from app.core.errors import ApiError, InvalidState, NotFound, Validation
+from app.core.money import fmt
 from app.models import AfterSales, Attachment, Message, Order, Outbox, User
 from app.modules.aftersales.schemas import ActionIn, OpenIn
 from app.modules.chat.messages import post_system
@@ -155,6 +156,9 @@ async def admin_views(db: AsyncSession, rows: list[AfterSales]) -> list[dict[str
                 "status": o.status,
                 "delivery_mode": o.delivery_mode,
                 "qty": o.qty,
+                "amount": fmt(o.amount_minor),
+                "currency": o.currency,
+                "delivered_at": iso(o.delivered_at),
                 "after_sales_until": iso(o.after_sales_until),
             }
             if o
