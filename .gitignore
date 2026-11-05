@@ -30,3 +30,7 @@ node_modules/
 .idea/
 .vscode/
 .claude/settings.local.json
+
+# deploy runtime
+deploy/.env
+deploy/secrets/
