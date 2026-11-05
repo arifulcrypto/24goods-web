@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import select, update
@@ -13,9 +14,10 @@ from app.core.audit import audit
 from app.core.errors import ApiError, Conflict, Forbidden, Validation
 from app.core.resources import Resources
 from app.core.security import hash_password, verify_password
-from app.models import AfterSales, Order, User
+from app.models import AfterSales, Attachment, Message, Order, User
 from app.modules.auth.schemas import INSTANT_DOMAIN, normalize_email
 from app.modules.me.schemas import CredentialsIn, DeleteIn, ProfileIn
+from app.modules.uploads.storage import FileStore
 
 UNUSABLE_HASH = "!"  # not a valid Argon2 string: verification always fails
 OPEN_ORDER_STATES = ("pending_payment", "paid", "manual_review")
@@ -123,8 +125,14 @@ async def has_open_obligations(db: AsyncSession, user_id: uuid.UUID) -> bool:
     return ticket is not None
 
 
-async def anonymize(db: AsyncSession, user: User) -> dict[str, Any]:
-    """Irreversibly strip PII from a buyer row (kept for order / ledger integrity)."""
+async def anonymize(db: AsyncSession, user: User) -> tuple[dict[str, Any], list[str]]:
+    """Irreversibly strip PII from a buyer row (kept for order / ledger integrity).
+
+    Also redacts the user's chat messages (text -> NULL, ``payload={"redacted": true}``; the
+    row stays so conversations keep their order), marks their uploads deleted and clears the
+    descriptions of their closed after-sales tickets. Returns ``(summary, storage_keys)``:
+    the caller deletes those files from the store AFTER the commit. Audit-log IPs are kept.
+    """
     user.email = f"deleted+{user.id}@invalid"
     user.display_name = "Deleted user"
     user.pw_hash = UNUSABLE_HASH
@@ -137,11 +145,41 @@ async def anonymize(db: AsyncSession, user: User) -> dict[str, Any]:
         .where(AfterSales.buyer_id == user.id, AfterSales.status.notin_(OPEN_TICKET_STATES))
         .values(description="[deleted]")
     )
-    return {"status": user.status}
+    await db.execute(
+        update(Message)
+        .where(Message.sender_id == user.id, Message.sender_role == "buyer")
+        .values(text=None, payload={"redacted": True})
+    )
+    keys = list(
+        await db.scalars(
+            select(Attachment.storage_key).where(
+                Attachment.owner_id == user.id, Attachment.deleted_at.is_(None)
+            )
+        )
+    )
+    await db.execute(
+        update(Attachment)
+        .where(Attachment.owner_id == user.id, Attachment.deleted_at.is_(None))
+        .values(deleted_at=datetime.now(timezone.utc))
+    )
+    return {"status": user.status}, keys
+
+
+async def remove_files(store: FileStore, keys: list[str]) -> None:
+    for key in keys:
+        try:
+            await store.delete(key)
+        except OSError:  # best effort: the row is already marked deleted and serves 404
+            continue
 
 
 async def delete_account(
-    db: AsyncSession, res: Resources, user: User, body: DeleteIn, ip: str | None
+    db: AsyncSession,
+    res: Resources,
+    user: User,
+    body: DeleteIn,
+    ip: str | None,
+    store: FileStore,
 ) -> None:
     if user.role != "buyer":
         raise Forbidden("Staff accounts cannot be deleted here")
@@ -153,7 +191,7 @@ async def delete_account(
     if await has_open_obligations(db, user.id):
         raise HasOpenOrders("Finish or cancel your open orders and after-sales requests first")
     uid, tid, role = user.id, user.tenant_id, user.role
-    await anonymize(db, user)
+    _, keys = await anonymize(db, user)
     await audit(
         db,
         tenant_id=tid,
@@ -164,4 +202,5 @@ async def delete_account(
         ip=ip,
     )
     await db.commit()
+    await remove_files(store, keys)
     await res.sessions.revoke_user_sessions(uid)

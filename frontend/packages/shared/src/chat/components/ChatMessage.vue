@@ -65,6 +65,11 @@ const view = computed(() => {
   }
 })
 
+/** The author deleted their account: the server blanks the content and sets payload.redacted. */
+const redacted = computed(
+  () => (view.value.payload as { redacted?: boolean } | null)?.redacted === true && view.value.type !== 'system',
+)
+
 const self = computed(() =>
   props.mode === 'buyer' ? view.value.senderRole === 'buyer' : view.value.senderRole === 'agent',
 )
@@ -132,7 +137,9 @@ const systemText = computed(() => {
           <button type="button" class="gc-discard" @click="emit('discard', view.clientMsgId!)">{{ t('chat.discard') }}</button>
         </span>
 
-        <div v-if="view.type === 'text'" class="gc-bubble" :class="{ self }">{{ view.text }}</div>
+        <div v-if="redacted" class="gc-bubble gc-redacted" :class="{ self }">{{ t('chat.redacted') }}</div>
+
+        <div v-else-if="view.type === 'text'" class="gc-bubble" :class="{ self }">{{ view.text }}</div>
 
         <button
           v-else-if="view.type === 'image'"

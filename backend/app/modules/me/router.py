@@ -10,6 +10,8 @@ from app.models import User
 from app.modules.common.views import user_view
 from app.modules.me import service
 from app.modules.me.schemas import CredentialsIn, DeleteIn, ProfileIn
+from app.modules.uploads.router import get_store
+from app.modules.uploads.storage import FileStore
 
 router = APIRouter(prefix="/me", tags=["me"])
 
@@ -45,9 +47,10 @@ async def delete(
     user: User = Depends(current_user),
     db: AsyncSession = Depends(get_db),
     res: Resources = Depends(get_res),
+    store: FileStore = Depends(get_store),
 ) -> Response:
     await enforce(res.redis, "me:delete", str(user.id), 5, 3600)
-    await service.delete_account(db, res, user, body, client_ip(request))
+    await service.delete_account(db, res, user, body, client_ip(request), store)
     resp = Response(status_code=204)
     res.sessions.clear_cookie(resp)
     return resp

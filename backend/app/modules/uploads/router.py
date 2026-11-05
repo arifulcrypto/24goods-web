@@ -48,7 +48,7 @@ async def get_file(
     store: FileStore = Depends(get_store),
 ) -> FileResponse:
     att = await db.get(Attachment, file_id)
-    if att is None:
+    if att is None or att.deleted_at is not None:
         raise NotFound("File not found")
     if not att.is_public:
         if user is None:

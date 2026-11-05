@@ -50,6 +50,7 @@ SCHEMA = [
     "ALTER TABLE attachments ADD CONSTRAINT attachments_kind_check "
     "CHECK (kind IN ('image', 'voice', 'file'))",
     "ALTER TABLE attachments ADD COLUMN name varchar(120)",
+    "ALTER TABLE attachments ADD COLUMN deleted_at timestamptz",  # account deletion: bytes removed
     "ALTER TABLE messages DROP CONSTRAINT messages_type_check",
     "ALTER TABLE messages ADD CONSTRAINT messages_type_check CHECK (type IN ('text', 'image', "
     "'voice', 'file', 'product_card', 'quote_card', 'order_card', 'system'))",
@@ -154,7 +155,9 @@ GRANTS = [
     "replaced_by) ON card_stock TO app_api",
     "GRANT UPDATE (status, void_reason, voided_at, voided_by, replaced_by) ON card_stock "
     "TO app_api",
-    "GRANT UPDATE (name) ON attachments TO app_api",
+    "GRANT UPDATE (name, deleted_at) ON attachments TO app_api",
+    # account deletion redacts the buyer's own chat messages (text -> NULL, payload marker)
+    "GRANT UPDATE (text, payload) ON messages TO app_api",
     # app_delivery: claim filter + replacement + after-sales bookkeeping, nothing more
     "GRANT UPDATE (void_reason, voided_at, replaced_by) ON card_stock TO app_delivery",
     "GRANT UPDATE (after_sales_until, auto_confirm_at) ON orders TO app_delivery",

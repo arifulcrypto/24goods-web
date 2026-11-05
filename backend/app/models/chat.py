@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import BigInteger, ForeignKey, Identity, Integer, String, Text
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Identity, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, created_at, updated_at, uuid_pk
@@ -27,6 +27,7 @@ class Attachment(Base):
     storage_key: Mapped[str] = mapped_column(String(64), unique=True)
     name: Mapped[str | None] = mapped_column(String(120))
     created_at: Mapped[datetime] = created_at()
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class Conversation(Base):

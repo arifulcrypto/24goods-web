@@ -99,10 +99,13 @@ export interface Message {
   type: MessageType
   text: string | null
   attachment: Attachment | null
-  payload: ProductCardPayload | QuoteCardPayload | OrderCardPayload | SystemPayload | FilePayload | null
+  payload: ProductCardPayload | QuoteCardPayload | OrderCardPayload | SystemPayload | FilePayload | RedactedPayload | null
   created_at: string
 }
 /** v3: `type=file` message payload (text/plain attachment). */
+export interface RedactedPayload {
+  redacted: true
+}
 export interface FilePayload {
   name: string
   bytes: number

@@ -15,9 +15,10 @@ from app.core.resources import Resources
 from app.models import AfterSales, Order, Tenant, User
 from app.modules.chat.messages import post_system
 from app.modules.inventory.service import void_expired
-from app.modules.me.service import anonymize
+from app.modules.me.service import anonymize, remove_files
 from app.modules.orders.events import add_event, snapshot
 from app.modules.orders.service import broadcast_order
+from app.modules.uploads.storage import FileStore
 
 log = logging.getLogger("app.jobs")
 
@@ -112,6 +113,7 @@ async def purge_instant_accounts(
     for tid in await _tenant_ids(maker):
         async with tenant_session(maker, tid) as db:
             paid = exists().where(Order.buyer_id == User.id, Order.paid_at.is_not(None))
+            purged_keys: list[str] = []
             users = list(
                 await db.scalars(
                     select(User)
@@ -127,7 +129,8 @@ async def purge_instant_accounts(
                 )
             )
             for u in users:
-                await anonymize(db, u)
+                _, keys = await anonymize(db, u)
+                purged_keys.extend(keys)
                 await audit(
                     db,
                     tenant_id=tid,
@@ -135,6 +138,7 @@ async def purge_instant_accounts(
                     target=f"user:{u.id}",
                 )
             await db.commit()
+            await remove_files(FileStore(settings.upload_dir), purged_keys)
             total += len(users)
     return total
 

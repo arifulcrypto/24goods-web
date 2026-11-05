@@ -124,3 +124,68 @@ async def test_instant_user_can_delete_without_password_staff_cannot(env):
     staff, _ = await env.login("agent")
     r = await staff.post("/api/v1/me/delete", json={"confirm": "DELETE", "password": PASSWORD})
     assert r.status_code == 403
+
+
+async def test_delete_redacts_messages_files_and_ticket_text(env):
+    from pathlib import Path
+
+    from tests.helpers import delivered_order, open_conversation
+    from tests.test_chat import png_bytes
+
+    p = await env.product(mode="manual")
+    c, u = await env.login("buyer", email="redact@example.com")
+    staff, _ = await env.login("agent")
+    conv = await open_conversation(c)
+    up = (
+        await c.post(
+            "/api/v1/uploads",
+            data={"kind": "image"},
+            files={"file": ("a.png", png_bytes(), "image/png")},
+        )
+    ).json()
+    murl = f"/api/v1/conversations/{conv['id']}/messages"
+    await c.post(murl, json={"client_msg_id": "t1", "type": "text", "text": "my secret text"})
+    await c.post(murl, json={"client_msg_id": "i1", "type": "image", "attachment_id": up["id"]})
+    surl = f"/api/v1/admin/conversations/{conv['id']}/messages"
+    r = await staff.post(surl, json={"client_msg_id": "s1", "type": "text", "text": "agent reply"})
+    assert r.status_code == 200, r.text
+    order = await delivered_order(env, c, p, staff=staff)
+    t = (
+        await c.post(
+            f"/api/v1/orders/{order['id']}/after-sales",
+            json={"reason": "other", "description": "private details", "attachment_ids": []},
+        )
+    ).json()
+    await staff.post(f"/api/v1/admin/after-sales/{t['id']}/action", json={"action": "resolve"})
+    key = await env.scalar("SELECT storage_key FROM attachments WHERE id=:i", i=up["id"])
+    path = Path(env.s.upload_dir) / key[:2] / key
+    assert path.is_file()
+    r = await c.post("/api/v1/me/delete", json={"confirm": "DELETE", "password": PASSWORD})
+    assert r.status_code == 204, r.text
+    assert not path.exists()
+    assert await env.scalar("SELECT deleted_at FROM attachments WHERE id=:i", i=up["id"])
+    assert (
+        await env.scalar(
+            "SELECT count(*) FROM messages WHERE sender_id=:i AND text IS NOT NULL", i=u.id
+        )
+        == 0
+    )
+    assert (
+        await env.scalar(
+            "SELECT count(*) FROM messages WHERE sender_id=:i AND payload->>'redacted'='true'",
+            i=u.id,
+        )
+        >= 2
+    )
+    assert await env.scalar("SELECT description FROM after_sales") == "[deleted]"
+    assert (
+        await env.scalar("SELECT text FROM messages WHERE client_msg_id='s1'") == "agent reply"
+    )  # staff messages are not the user's data
+    # the staff console shows the redacted marker, never the old text, and the file is gone
+    msgs = (await staff.get(surl)).json()
+    redacted = [m for m in msgs if m["payload"] == {"redacted": True}]
+    assert len(redacted) >= 2 and all(
+        m["text"] is None and m["attachment"] is None for m in redacted
+    )
+    assert "my secret text" not in str(msgs)
+    assert (await staff.get(up["url"])).status_code == 404

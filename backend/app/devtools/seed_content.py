@@ -132,14 +132,18 @@ PAGES: list[dict[str, Any]] = [
                 "## What we do not do\n\nWe never store card codes in plaintext and we do not "
                 "load third-party trackers or CDNs in the storefront.\n\n## Your choices\n\n"
                 "You can edit your profile or delete your account in **Me**. Deleting removes "
-                "personal data; orders are kept in anonymised form for accounting."
+                "personal data: your chat messages are redacted, files you uploaded are deleted and "
+                "after-sales descriptions are cleared. Orders are kept in anonymised form for "
+                "accounting. Security audit logs, which include IP addresses, are retained "
+                "for fraud prevention and legal compliance."
             ),
             "zh-CN": TEMPLATE_ZH
             + (
                 "## 我们收集的信息\n\n账号标识（邮箱或系统生成的账号名）、订单记录、聊天内容，以及运营所需"
                 "的技术日志。\n\n## 我们不会做的事\n\n卡密绝不以明文存储，商城前端不加载任何第三方追踪或 "
                 "CDN。\n\n## 您的选择\n\n您可在 **我的** 中修改资料或删除账号。删除后个人信息将被清除，订单"
-                "以匿名形式保留用于记账。"
+                "以匿名形式保留用于记账。您的聊天内容将被清除，上传的文件将被删除，售后描述也会被清空。"
+                "包含 IP 地址的安全审计日志将因防欺诈与合规需要而继续保留。"
             ),
         },
     },

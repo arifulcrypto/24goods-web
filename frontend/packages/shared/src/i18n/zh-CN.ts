@@ -115,6 +115,7 @@ const zhCN: MessageSchema = {
     manual: '卖家发货内容',
   },
   chat: {
+    redacted: '消息已删除',
     preview: {
       text: '{text}',
       image: '[图片]',

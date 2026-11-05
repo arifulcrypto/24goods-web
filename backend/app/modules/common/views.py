@@ -227,6 +227,23 @@ def message_view(
     attachment: Attachment | None = None,
     payload_overlay: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    if m.payload is not None and m.payload.get("redacted"):
+        # the author deleted their account: keep the row (ordering, type) but no content
+        return {
+            "id": m.id,
+            "conversation_id": str(m.conversation_id),
+            "client_msg_id": m.client_msg_id,
+            "sender": {
+                "id": str(m.sender_id) if m.sender_id else None,
+                "role": m.sender_role,
+                "display_name": sender_name or SYSTEM_NAME,
+            },
+            "type": m.type,
+            "text": None,
+            "attachment": None,
+            "payload": {"redacted": True},
+            "created_at": iso(m.created_at),
+        }
     payload = dict(m.payload) if m.payload is not None else None
     if payload is not None and payload_overlay:
         payload.update(payload_overlay)

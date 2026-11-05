@@ -117,6 +117,7 @@ export default {
     manual: 'Delivery from seller',
   },
   chat: {
+    redacted: 'Message deleted',
     preview: {
       text: '{text}',
       image: '[Image]',
