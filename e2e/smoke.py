@@ -12,6 +12,7 @@ ledger balance. Exits non-zero on the first failure.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import re
 import sys
 import time
@@ -36,6 +37,17 @@ def fail(msg: str) -> None:
 def check(cond: object, msg: str) -> None:
     if not cond:
         fail(msg)
+
+
+def solve_pow(client: "Client", scope: str) -> dict[str, str]:
+    """Fetch and solve a proof-of-work challenge (docs/api-contract.md, 'Proof of work')."""
+    ch = client.j("GET", f"pow/challenge?scope={scope}")
+    n = 0
+    while True:
+        digest = hashlib.sha256(f"{ch['challenge']}:{n}".encode()).digest()
+        if int.from_bytes(digest, "big") >> (256 - ch["bits"]) == 0:
+            return {"challenge": ch["challenge"], "nonce": str(n)}
+        n += 1
 
 
 def read_env(path: str) -> dict[str, str]:
@@ -192,7 +204,7 @@ def main() -> None:
     eve = Client(base)
     eve.j("POST", "auth/register", json={"email": f"eve-{uuid.uuid4().hex[:8]}@demo.local",
                                         "password": "correct-horse-battery", "display_name": "Eve",
-                                        "locale": "en"})
+                                        "locale": "en", "pow": solve_pow(eve, "register")})
     eve.req("GET", f"orders/{order['id']}", expect=(403, 404))
     eve.req("POST", f"orders/{order['id']}/reveal", expect=(403, 404))
     eve.req("GET", f"conversations/{conv['id']}/messages", expect=(403, 404))

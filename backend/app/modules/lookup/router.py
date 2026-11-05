@@ -25,9 +25,7 @@ router = APIRouter(prefix="/lookup", tags=["lookup"])
 
 NO_STORE = {"Cache-Control": "no-store", "Pragma": "no-cache"}
 _ORDER_NO = re.compile(r"^G[A-Z2-7]{12}$")
-IP_LOOKUPS = (10, 3600)  # per IP per hour (each attempt counts)
 IP_REVEALS = (30, 3600)
-ORDER_FAILURES = (5, 3600)  # wrong codes per order per hour
 
 
 class LookupIn(BaseModel):
@@ -51,7 +49,8 @@ async def _authenticate(
     no = (order_no or "").strip().upper()
     code = accesscode.normalize(access_code)
     key = f"{tenant_id}:{no}"
-    await blocked(res.redis, "lookup:fail", key, *ORDER_FAILURES)
+    fails = (res.settings.lookup_failures_per_order_hour, 3600)  # wrong codes per order per hour
+    await blocked(res.redis, "lookup:fail", key, *fails)
     order = None
     if code is not None and _ORDER_NO.match(no):
         order = await db.scalar(select(Order).where(Order.order_no == no))
@@ -59,7 +58,7 @@ async def _authenticate(
         res.settings.lookup_secret(), order.order_no, code or "", order.access_code_hash
     )
     if not ok or order is None:
-        await hit(res.redis, "lookup:fail", key, *ORDER_FAILURES)
+        await hit(res.redis, "lookup:fail", key, *fails)
         raise NotFound("Order not found or access code incorrect")
     return order
 
@@ -75,7 +74,7 @@ async def lookup(
 ) -> JSONResponse:
     await powmod.verify(res.settings, res.redis, "lookup", body.pow)
     ip = client_ip(request)
-    await enforce(res.redis, "lookup:ip", ip or "-", *IP_LOOKUPS)
+    await enforce(res.redis, "lookup:ip", ip or "-", res.settings.lookup_per_ip_hour, 3600)
     order = await _authenticate(db, res, tenant_id, body.order_no, body.access_code)
     view = await service.one_view(db, order, order.buyer_id, lang)
     return JSONResponse(view, headers=NO_STORE)
