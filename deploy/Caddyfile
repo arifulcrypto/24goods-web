@@ -1,0 +1,102 @@
+# 24goods edge — Caddy 2.11
+#
+# SITE_ADDRESS examples:
+#   ":80"                       demo on a bare public IP, plain HTTP, mock data only
+#   "shop.example.com"          production single domain, automatic HTTPS (Let's Encrypt)
+#
+# Reseller custom domains (M4) use On-Demand TLS — see the commented block at
+# the bottom. On-Demand TLS MUST stay gated by the `ask` endpoint (docs/architecture.md §9.2).
+
+{
+	admin off
+	# Don't trust client-supplied X-Forwarded-For; Caddy is the first hop.
+	servers {
+		timeouts {
+			read_header 10s
+			idle 2m
+		}
+	}
+
+	# --- M4 only: enable when the first reseller domain is onboarded -------
+	# on_demand_tls {
+	#     # Internal listener of the API (never routed publicly). Returns 200 only
+	#     # for hostnames in custom_domains that are TXT-verified and active;
+	#     # negative-cached and rate-limited (docs/architecture.md §9.2).
+	#     ask http://api:8081/internal/tls/ask
+	# }
+}
+
+(security_headers) {
+	header {
+		Strict-Transport-Security "max-age=63072000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), geolocation=(), microphone=(self)"
+		Cross-Origin-Opener-Policy "same-origin"
+		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+		-Server
+	}
+}
+
+(app) {
+	import security_headers
+	encode zstd gzip
+	request_body {
+		max_size 10MB
+	}
+
+	# API (incl. SSE: flush immediately, long-lived)
+	handle /api/* {
+		reverse_proxy api:8000 {
+			flush_interval -1
+			header_up X-Forwarded-For {remote_host}
+			transport http {
+				read_timeout 0
+			}
+		}
+	}
+
+	# Demo-only ZPay simulator. Remove this block in production.
+	handle_path /mockpay/* {
+		reverse_proxy mockpay:8002
+	}
+
+	# Staff dashboard (PC). In production restrict further (VPN / Cloudflare Access).
+	redir /admin /admin/ 308
+	handle_path /admin/* {
+		root * /srv/admin
+		@immutable path /assets/*
+		header @immutable Cache-Control "public, max-age=31536000, immutable"
+		try_files {path} /index.html
+		file_server
+	}
+
+	# Buyer SPA (mobile-first)
+	handle {
+		root * /srv/web
+		@immutable path /assets/*
+		header @immutable Cache-Control "public, max-age=31536000, immutable"
+		@html path / /index.html
+		header @html Cache-Control "no-cache"
+		try_files {path} /index.html
+		file_server
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}
+
+{$SITE_ADDRESS::80} {
+	import app
+}
+
+# --- M4: reseller custom domains via On-Demand TLS ------------------------
+# https:// {
+#     tls {
+#         on_demand
+#     }
+#     import app
+# }

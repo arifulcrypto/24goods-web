@@ -1,0 +1,7 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["vitest/importMeta"]
+  },
+  "include": ["src/**/*.ts", "src/**/*.vue", "test/**/*.ts", "vitest.config.ts"]
+}

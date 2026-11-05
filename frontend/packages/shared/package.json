@@ -1,0 +1,28 @@
+{
+  "name": "@24goods/shared",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./chat": "./src/chat/index.ts",
+    "./i18n": "./src/i18n/index.ts"
+  },
+  "scripts": {
+    "typecheck": "vue-tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "peerDependencies": {
+    "vue": "^3.5.0",
+    "vue-i18n": "^11.0.0"
+  },
+  "devDependencies": {
+    "vue": "3.5.44",
+    "vue-i18n": "11.4.16",
+    "typescript": "5.9.3",
+    "vue-tsc": "3.3.14",
+    "vitest": "4.1.12",
+    "@vitejs/plugin-vue": "6.0.10",
+    "vite": "8.3.5"
+  }
+}

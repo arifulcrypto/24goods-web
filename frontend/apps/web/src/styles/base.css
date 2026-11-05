@@ -1,0 +1,163 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+}
+html,
+body {
+  margin: 0;
+  padding: 0;
+  font-family: var(--font);
+  color: var(--c-text);
+  background: var(--c-page);
+  overflow-x: hidden;
+}
+body {
+  min-height: 100vh;
+  min-height: 100dvh;
+  font-size: 14px;
+  line-height: 1.5;
+  /* subtle desktop backdrop so the centered column looks intentional */
+  background-image: radial-gradient(circle at 20% 0%, rgba(255, 214, 10, 0.14), transparent 40%),
+    radial-gradient(circle at 90% 100%, rgba(255, 80, 0, 0.06), transparent 45%);
+  background-attachment: fixed;
+}
+img {
+  max-width: 100%;
+}
+button {
+  font-family: inherit;
+}
+a {
+  color: inherit;
+}
+:focus-visible {
+  outline: 2px solid var(--c-accent-strong);
+  outline-offset: 2px;
+}
+#app {
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+/* Centered app column (phone-like on desktop). */
+.shell {
+  position: relative;
+  max-width: var(--shell-w);
+  margin: 0 auto;
+  min-height: 100vh;
+  min-height: 100dvh;
+  background: var(--c-bg);
+  transition: max-width 0.2s ease;
+}
+.shell.wide {
+  max-width: var(--shell-wide);
+}
+@media (min-width: 560px) {
+  .shell {
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.04), 0 10px 40px rgba(0, 0, 0, 0.06);
+  }
+}
+
+/* Anything fixed to the viewport bottom stays inside the column. */
+.dock {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  margin: 0 auto;
+  max-width: var(--dock-w, var(--shell-w));
+  z-index: 50;
+}
+.van-action-bar.dock-bar {
+  left: 0;
+  right: 0;
+  margin: 0 auto;
+  max-width: var(--shell-w);
+}
+.van-nav-bar--fixed.dock-top {
+  left: 0;
+  right: 0;
+  margin: 0 auto;
+  max-width: var(--shell-w);
+}
+/* page padding so content clears the tabbar */
+.with-tabbar {
+  padding-bottom: calc(var(--tabbar-h) + var(--safe-bottom) + 8px);
+}
+
+.price {
+  color: var(--c-price);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.muted {
+  color: var(--c-muted);
+}
+.card {
+  background: var(--c-surface);
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow-1);
+}
+.section {
+  margin: 12px;
+}
+.badge-instant,
+.badge-manual {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 11px;
+  line-height: 18px;
+  padding: 0 6px;
+  border-radius: 4px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.badge-instant {
+  background: var(--c-accent-soft);
+  color: var(--c-accent-ink);
+}
+.badge-manual {
+  background: #eef2ff;
+  color: #3b4fb8;
+}
+.skeleton {
+  background: linear-gradient(90deg, #ececec 25%, #f6f6f6 37%, #ececec 63%);
+  background-size: 400% 100%;
+  animation: shimmer 1.4s ease infinite;
+  border-radius: 6px;
+}
+@keyframes shimmer {
+  0% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0 50%;
+  }
+}
+.tap {
+  min-height: 44px;
+  min-width: 44px;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton {
+    animation: none;
+  }
+}

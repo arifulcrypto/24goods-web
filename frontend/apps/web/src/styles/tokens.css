@@ -1,0 +1,85 @@
+/* Design tokens — warm, Xianyu-like. Light theme. */
+:root {
+  --c-accent: #ffd60a; /* warm yellow: primary buttons, self bubbles */
+  --c-accent-strong: #ffc300;
+  --c-accent-soft: #fff6cc;
+  --c-accent-ink: #7a4f00; /* text on soft accent */
+  --c-on-accent: #1f1f1f;
+  --c-price: #ff5000;
+  --c-text: #1f1f1f;
+  --c-text-2: #555;
+  --c-muted: #8a8a8a;
+  --c-line: #ececec;
+  --c-bg: #f5f5f3; /* app background */
+  --c-surface: #ffffff;
+  --c-page: #ebe8e1; /* desktop backdrop behind the centered column */
+  --c-success: #1f9d55;
+  --c-danger: #e5484d;
+  --c-warning: #f59e0b;
+  --radius-s: 8px;
+  --radius-m: 12px;
+  --radius-l: 16px;
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.04), 0 2px 8px rgba(0, 0, 0, 0.04);
+  --shell-w: 520px;
+  --shell-wide: 960px;
+  --tabbar-h: 56px;
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-top: env(safe-area-inset-top, 0px);
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', 'Noto Sans SC', sans-serif;
+}
+
+/* Vant theme overrides. Doubled :root beats the :root variables each Vant component CSS declares
+   (those load later via on-demand imports). */
+:root:root {
+  --van-primary-color: var(--c-accent);
+  --van-button-primary-background: var(--c-accent);
+  --van-button-primary-border-color: var(--c-accent);
+  --van-button-primary-color: var(--c-on-accent);
+  --van-button-default-height: 44px;
+  --van-button-large-height: 48px;
+  --van-button-normal-font-size: 15px;
+  --van-tabbar-height: var(--tabbar-h);
+  --van-tabbar-item-active-color: var(--c-text);
+  --van-tabbar-item-text-color: var(--c-muted);
+  --van-nav-bar-height: 48px;
+  --van-nav-bar-icon-color: var(--c-text);
+  --van-nav-bar-text-color: var(--c-text);
+  --van-cell-vertical-padding: 12px;
+  --van-cell-line-height: 22px;
+  --van-search-background: transparent;
+  --van-stepper-input-width: 44px;
+  --van-stepper-button-icon-color: var(--c-text);
+  --van-stepper-input-height: 36px;
+  --van-stepper-button-width: 36px;
+  --van-stepper-button-height: 36px;
+  --van-steps-active-color: var(--c-accent-ink);
+  --van-step-active-color: var(--c-accent-ink);
+  --van-step-finish-line-color: var(--c-accent-strong);
+  --van-action-bar-button-height: 44px;
+  --van-action-bar-icon-height: 52px;
+  --van-badge-background: var(--c-danger);
+  --van-tag-primary-color: var(--c-accent);
+  --van-swipe-indicator-active-background: var(--c-accent);
+  --van-toast-max-width: 80%;
+  --van-dialog-confirm-button-text-color: var(--c-text);
+  --van-pull-refresh-head-text-color: var(--c-muted);
+}
+
+:root {
+  /* shared chat components */
+  --gc-self-bg: var(--c-accent);
+  --gc-self-fg: var(--c-on-accent);
+  --gc-other-bg: var(--c-surface);
+  --gc-list-bg: var(--c-bg);
+  --gc-text: var(--c-text);
+  --gc-muted: var(--c-muted);
+  --gc-price: var(--c-price);
+  --gc-primary-bg: var(--c-accent);
+  --gc-primary-fg: var(--c-on-accent);
+  --gc-accent-soft: var(--c-accent-soft);
+  --gc-accent-ink: var(--c-accent-ink);
+  --gc-danger: var(--c-danger);
+  --gc-avatar-bg: #2b2b2b;
+  --gc-avatar-fg: var(--c-accent);
+}

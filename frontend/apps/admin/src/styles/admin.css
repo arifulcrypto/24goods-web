@@ -1,0 +1,101 @@
+:root:root {
+  --a-bg: #f5f6f8;
+  --a-surface: #ffffff;
+  --a-sidebar: #111827;
+  --a-sidebar-text: #cbd5e1;
+  --a-sidebar-active: #ffd60a;
+  --a-text: #1f2937;
+  --a-muted: #6b7280;
+  --a-line: #e5e7eb;
+  --a-accent: #ffd60a;
+  --a-price: #e8590c;
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif;
+  /* Element Plus: neutral, professional */
+  --el-color-primary: #2563eb;
+  --el-font-family: var(--font);
+  /* shared chat components */
+  --gc-self-bg: #dbeafe;
+  --gc-self-fg: #0f172a;
+  --gc-other-bg: #ffffff;
+  --gc-list-bg: #f3f4f6;
+  --gc-text: var(--a-text);
+  --gc-muted: var(--a-muted);
+  --gc-price: var(--a-price);
+  --gc-primary-bg: #2563eb;
+  --gc-primary-fg: #fff;
+  --gc-accent-soft: #fef3c7;
+  --gc-accent-ink: #92400e;
+  --gc-avatar-bg: #e5e7eb;
+  --gc-avatar-fg: #374151;
+}
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+html,
+body {
+  margin: 0;
+  padding: 0;
+  font-family: var(--font);
+  color: var(--a-text);
+  background: var(--a-bg);
+  font-size: 14px;
+}
+#app {
+  min-height: 100vh;
+}
+.page {
+  padding: 20px;
+}
+.page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+.page-head h1 {
+  font-size: 20px;
+  margin: 0;
+}
+.toolbar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.panel {
+  background: var(--a-surface);
+  border: 1px solid var(--a-line);
+  border-radius: 10px;
+  padding: 16px;
+}
+.muted {
+  color: var(--a-muted);
+}
+.price {
+  color: var(--a-price);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.pager {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+.pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 0;
+}
+@media (max-width: 900px) {
+  .page {
+    padding: 12px;
+  }
+}

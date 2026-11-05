@@ -1,0 +1,23 @@
+{
+  "name": "24goods-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "description": "24goods MVP-0 frontend workspace: buyer SPA (apps/web), staff console (apps/admin), shared TS (packages/shared)",
+  "type": "module",
+  "packageManager": "pnpm@12.15.0",
+  "engines": {
+    "node": ">=20.19.0",
+    "pnpm": ">=10"
+  },
+  "scripts": {
+    "dev:web": "pnpm --filter @24goods/web dev",
+    "dev:admin": "pnpm --filter @24goods/admin dev",
+    "build": "pnpm -r --workspace-concurrency=1 build && node scripts/check-size.mjs",
+    "build:web": "pnpm --filter @24goods/web build && node scripts/check-size.mjs",
+    "build:admin": "pnpm --filter @24goods/admin build",
+    "size": "node scripts/check-size.mjs",
+    "typecheck": "pnpm -r --workspace-concurrency=1 typecheck",
+    "test": "pnpm -r --workspace-concurrency=1 test",
+    "lint": "node scripts/lint.mjs"
+  }
+}

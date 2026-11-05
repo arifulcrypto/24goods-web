@@ -1,0 +1,85 @@
+/** Error codes from docs/api-contract.md plus client-side codes (network, server_error, unknown). */
+export const API_ERROR_CODES = [
+  'unauthorized',
+  'forbidden',
+  'csrf',
+  'not_found',
+  'validation',
+  'rate_limited',
+  'conflict',
+  'out_of_stock',
+  'invalid_state',
+  'quote_expired',
+  'upload_rejected',
+] as const
+export const CLIENT_ERROR_CODES = ['network', 'server_error', 'timeout', 'unknown'] as const
+export type ContractErrorCode = (typeof API_ERROR_CODES)[number]
+export type ClientErrorCode = (typeof CLIENT_ERROR_CODES)[number]
+export type ApiErrorCode = ContractErrorCode | ClientErrorCode
+
+export class ApiError extends Error {
+  readonly code: string
+  readonly status: number
+  /** Raw `error` object or body, for diagnostics only. Never shown to users. */
+  readonly details: unknown
+
+  constructor(code: string, message: string, status: number, details?: unknown) {
+    super(message)
+    this.name = 'ApiError'
+    this.code = code
+    this.status = status
+    this.details = details
+  }
+}
+
+export function isApiError(e: unknown): e is ApiError {
+  return e instanceof ApiError
+}
+
+export function isKnownErrorCode(code: string): code is ApiErrorCode {
+  return (
+    (API_ERROR_CODES as readonly string[]).includes(code) ||
+    (CLIENT_ERROR_CODES as readonly string[]).includes(code)
+  )
+}
+
+/** Fallback code from the HTTP status when the body is not a contract error envelope. */
+export function codeFromStatus(status: number): ApiErrorCode {
+  if (status === 401) return 'unauthorized'
+  if (status === 403) return 'forbidden'
+  if (status === 404) return 'not_found'
+  if (status === 409) return 'conflict'
+  if (status === 400 || status === 422) return 'validation'
+  if (status === 413) return 'upload_rejected'
+  if (status === 429) return 'rate_limited'
+  if (status >= 500) return 'server_error'
+  return 'unknown'
+}
+
+const CODE_RE = /^[a-z][a-z0-9_]{0,63}$/
+
+/**
+ * Map a non-2xx response body to an ApiError.
+ * Contract shape: `{ "error": { "code": "snake_case", "message": "..." } }`.
+ * Also tolerates FastAPI's default `{ "detail": ... }` (→ validation / status code).
+ */
+export function errorFromBody(status: number, body: unknown): ApiError {
+  if (body && typeof body === 'object' && 'error' in body) {
+    const err = (body as { error: unknown }).error
+    if (err && typeof err === 'object') {
+      const code = (err as { code?: unknown }).code
+      const message = (err as { message?: unknown }).message
+      if (typeof code === 'string' && CODE_RE.test(code)) {
+        return new ApiError(code, typeof message === 'string' ? message : code, status, err)
+      }
+    }
+  }
+  const code = codeFromStatus(status)
+  return new ApiError(code, `HTTP ${status}`, status, body)
+}
+
+/** i18n key for an error (falls back to errors.unknown). Use with the shared bundle. */
+export function errorI18nKey(e: unknown): string {
+  if (isApiError(e)) return isKnownErrorCode(e.code) ? `errors.${e.code}` : 'errors.unknown'
+  return 'errors.unknown'
+}

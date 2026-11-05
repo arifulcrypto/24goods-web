@@ -1,0 +1,114 @@
+import { describe, expect, it, vi } from 'vitest'
+import { ApiClient, ApiError, buildQuery, errorFromBody, errorI18nKey, safePayUrl, safeRedirect } from '../src'
+
+function res(status: number, body?: unknown, raw?: string): Response {
+  const text = raw ?? (body === undefined ? '' : JSON.stringify(body))
+  return new Response(status === 204 ? null : text, { status, headers: { 'Content-Type': 'application/json' } })
+}
+
+describe('ApiClient', () => {
+  it('sends CSRF header, same-origin credentials, JSON body and Accept-Language', async () => {
+    const fetchImpl = vi.fn(async () => res(200, { ok: true }))
+    const c = new ApiClient({ fetchImpl, getLocale: () => 'zh-CN' })
+    await c.post('/orders', { product_id: 'p', qty: 1 })
+    const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit]
+    expect(url).toBe('/api/v1/orders')
+    const h = init.headers as Record<string, string>
+    expect(h['X-Requested-With']).toBe('fetch')
+    expect(h['Accept-Language']).toBe('zh-CN')
+    expect(h['Content-Type']).toBe('application/json')
+    expect(init.credentials).toBe('same-origin')
+    expect(init.body).toBe('{"product_id":"p","qty":1}')
+  })
+
+  it('sends the CSRF header on GET too and drops empty query params', async () => {
+    const fetchImpl = vi.fn(async () => res(200, []))
+    const c = new ApiClient({ fetchImpl })
+    await c.get('/products', { q: 'steam', category: '', page: 2, x: undefined })
+    const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit]
+    expect(url).toBe('/api/v1/products?q=steam&page=2')
+    expect((init.headers as Record<string, string>)['X-Requested-With']).toBe('fetch')
+  })
+
+  it('maps the contract error envelope to ApiError{code,message,status}', async () => {
+    const c = new ApiClient({ fetchImpl: async () => res(409, { error: { code: 'out_of_stock', message: 'Out of stock' } }) })
+    const err = await c.post('/orders', {}).catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(ApiError)
+    expect(err).toMatchObject({ code: 'out_of_stock', message: 'Out of stock', status: 409 })
+    expect(errorI18nKey(err)).toBe('errors.out_of_stock')
+  })
+
+  it('falls back to status-derived codes for non-envelope bodies', () => {
+    expect(errorFromBody(422, { detail: [{ loc: ['body'] }] }).code).toBe('validation')
+    expect(errorFromBody(429, 'Too Many').code).toBe('rate_limited')
+    expect(errorFromBody(502, '<html>').code).toBe('server_error')
+    expect(errorFromBody(404, undefined).code).toBe('not_found')
+    // malformed code is not trusted
+    expect(errorFromBody(400, { error: { code: '<script>', message: 'x' } }).code).toBe('validation')
+  })
+
+  it('unknown codes translate to errors.unknown', () => {
+    expect(errorI18nKey(new ApiError('brand_new_code', 'x', 400))).toBe('errors.unknown')
+    expect(errorI18nKey(new Error('x'))).toBe('errors.unknown')
+  })
+
+  it('maps fetch failures to code=network', async () => {
+    const c = new ApiClient({
+      fetchImpl: async () => {
+        throw new TypeError('Failed to fetch')
+      },
+    })
+    await expect(c.get('/products')).rejects.toMatchObject({ code: 'network', status: 0 })
+  })
+
+  it('invokes onUnauthorized for 401 unless skipped', async () => {
+    const onUnauthorized = vi.fn()
+    const c = new ApiClient({
+      onUnauthorized,
+      fetchImpl: async () => res(401, { error: { code: 'unauthorized', message: 'no' } }),
+    })
+    await expect(c.get('/orders')).rejects.toMatchObject({ code: 'unauthorized', status: 401 })
+    expect(onUnauthorized).toHaveBeenCalledTimes(1)
+    await expect(c.get('/auth/me', undefined, { skipAuthHandler: true })).rejects.toBeInstanceOf(ApiError)
+    expect(onUnauthorized).toHaveBeenCalledTimes(1)
+  })
+
+  it('returns undefined for 204 and rejects non-JSON success bodies', async () => {
+    const c1 = new ApiClient({ fetchImpl: async () => res(204) })
+    await expect(c1.post('/auth/logout')).resolves.toBeUndefined()
+    const c2 = new ApiClient({ fetchImpl: async () => res(200, undefined, '<html>') })
+    await expect(c2.get('/x')).rejects.toMatchObject({ code: 'server_error' })
+  })
+
+  it('does not set Content-Type for multipart uploads', async () => {
+    const fetchImpl = vi.fn(async () => res(200, { id: 'a' }))
+    const c = new ApiClient({ fetchImpl })
+    const fd = new FormData()
+    fd.append('kind', 'image')
+    await c.upload('/uploads', fd)
+    const init = (fetchImpl.mock.calls[0] as unknown as [string, RequestInit])[1]
+    expect((init.headers as Record<string, string>)['Content-Type']).toBeUndefined()
+    expect(init.body).toBe(fd)
+  })
+
+  it('buildQuery encodes values', () => {
+    expect(buildQuery({ q: 'a b&c' })).toBe('?q=a+b%26c')
+    expect(buildQuery({})).toBe('')
+  })
+})
+
+describe('URL safety', () => {
+  it('safePayUrl allows only http(s)', () => {
+    expect(safePayUrl('/mockpay/submit.php?x=1', 'https://shop.test/')).toBe('https://shop.test/mockpay/submit.php?x=1')
+    expect(safePayUrl('https://pay.example/submit.php')).toBe('https://pay.example/submit.php')
+    expect(safePayUrl('javascript:alert(1)')).toBeNull()
+    expect(safePayUrl('data:text/html,x')).toBeNull()
+  })
+  it('safeRedirect only allows internal paths', () => {
+    expect(safeRedirect('/orders/1')).toBe('/orders/1')
+    expect(safeRedirect('//evil.com')).toBe('/')
+    expect(safeRedirect('/\\evil.com')).toBe('/')
+    expect(safeRedirect('https://evil.com')).toBe('/')
+    expect(safeRedirect(undefined, '/me')).toBe('/me')
+  })
+})
