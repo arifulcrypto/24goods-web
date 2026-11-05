@@ -13,23 +13,18 @@ export function isOpenStatus(s: TicketStatus): boolean {
 }
 
 /**
- * Actions offered for a ticket in a given status.
- * - open: mark processing, replace, refund, reject, resolve
- * - processing: replace, refund, reject, resolve
- * - replaced: resolve (close after the buyer confirmed), or refund if the replacement also failed
- * - refunded / rejected / resolved: terminal
+ * Actions offered for a ticket in a given status (the server only accepts actions on open or
+ * processing tickets; `replaced`/`refunded`/`rejected`/`resolved` are terminal). `refund` is
+ * admin-only (403 for agents), so it is not offered to them.
  */
-export function availableActions(status: TicketStatus): TicketAction[] {
-  switch (status) {
-    case 'open':
-      return ['processing', 'replace', 'refund', 'reject', 'resolve']
-    case 'processing':
-      return ['replace', 'refund', 'reject', 'resolve']
-    case 'replaced':
-      return ['refund', 'resolve']
-    default:
-      return []
-  }
+export function availableActions(status: TicketStatus, role: 'agent' | 'admin' = 'admin'): TicketAction[] {
+  const all: TicketAction[] =
+    status === 'open'
+      ? ['processing', 'replace', 'refund', 'reject', 'resolve']
+      : status === 'processing'
+        ? ['replace', 'refund', 'reject', 'resolve']
+        : []
+  return role === 'admin' ? all : all.filter((a) => a !== 'refund')
 }
 
 /** Destructive actions need an explicit confirm dialog. */

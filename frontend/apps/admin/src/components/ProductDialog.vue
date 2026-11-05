@@ -143,7 +143,7 @@ function payload(): AdminProductInputV3 {
     delivery_format: joinFormat(labels.value, form.separator),
     delivery_separator: form.separator,
     redeem_url: form.redeem_url.trim() || null,
-    usage_i18n: usage.en || usage['zh-CN'] ? usage : null,
+    usage_i18n: usage,
     after_sales_hours: form.after_sales_hours,
     title_i18n: { en: form.title_en.trim(), 'zh-CN': form.title_zh.trim() },
     description_i18n: { en: form.desc_en.trim(), 'zh-CN': form.desc_zh.trim() },

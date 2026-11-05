@@ -52,7 +52,7 @@ describe('pow', () => {
     }
   })
   it('solvePow returns a decimal-string nonce (main-thread fallback)', async () => {
-    const s = await solvePow({ challenge: 'zz', bits: 8, expires_at: '' }, { noWorker: true })
+    const s = await solvePow({ challenge: 'zz', bits: 8, expires_at: 0 }, { noWorker: true })
     expect(s.nonce).toMatch(/^\d+$/)
     expect(leadingZeroBits(sha(`zz:${s.nonce}`))).toBeGreaterThanOrEqual(8)
   })

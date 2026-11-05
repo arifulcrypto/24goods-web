@@ -18,7 +18,6 @@ const email = ref('')
 const password = ref('')
 const show = ref(false)
 const busy = ref(false)
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 async function submit() {
   if (busy.value) return
@@ -50,12 +49,12 @@ async function submit() {
       <van-field
         v-model="email"
         name="email"
-        type="email"
+        type="text"
         autocomplete="username"
-        inputmode="email"
-        :label="t('auth.email')"
-        :placeholder="t('auth.emailPlaceholder')"
-        :rules="[{ validator: (v: string) => EMAIL_RE.test(v.trim()), message: t('auth.invalidEmail') }]"
+        autocapitalize="none"
+        :label="t('auth.loginId')"
+        :placeholder="t('auth.loginIdPlaceholder')"
+        :rules="[{ validator: (v: string) => v.trim().length > 0, message: t('common.required') }]"
       />
       <van-field
         v-model="password"

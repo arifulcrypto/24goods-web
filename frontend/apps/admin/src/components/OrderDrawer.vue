@@ -15,6 +15,7 @@ import {
   multiplyAmount,
   normalizeAmount,
   safeAssetUrl,
+  visibleEmail,
   type Attachment,
   type Order,
 } from '@24goods/shared'
@@ -251,7 +252,7 @@ defineExpose({ reload: () => props.orderId && load(props.orderId) })
         <el-descriptions :column="1" border size="small" class="desc">
           <el-descriptions-item :label="t('orders.col.title')">{{ order.title }}</el-descriptions-item>
           <el-descriptions-item :label="t('orders.col.buyer')">{{ order.buyer.display_name }}</el-descriptions-item>
-          <el-descriptions-item :label="t('orders.info.buyerEmail')">{{ order.buyer.email }}</el-descriptions-item>
+          <el-descriptions-item :label="t('orders.info.buyerEmail')">{{ visibleEmail(order.buyer.email) || '—' }}</el-descriptions-item>
           <el-descriptions-item :label="t('orders.info.qty')">{{ order.qty }}</el-descriptions-item>
           <el-descriptions-item :label="t('orders.col.mode')">{{ t(`deliveryMode.${order.delivery_mode}`) }}</el-descriptions-item>
           <el-descriptions-item :label="t('orders.info.channel')">{{ order.channel ?? '—' }}</el-descriptions-item>

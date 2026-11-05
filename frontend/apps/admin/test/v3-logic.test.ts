@@ -109,8 +109,8 @@ describe('after-sales action availability', () => {
   it('by status', () => {
     expect(availableActions('open')).toEqual(['processing', 'replace', 'refund', 'reject', 'resolve'])
     expect(availableActions('processing')).not.toContain('processing')
-    expect(availableActions('replaced')).toEqual(['refund', 'resolve'])
-    for (const s of ['refunded', 'rejected', 'resolved'] as const) expect(availableActions(s)).toEqual([])
+    expect(availableActions('open', 'agent')).toEqual(['processing', 'replace', 'reject', 'resolve'])
+    for (const s of ['replaced', 'refunded', 'rejected', 'resolved'] as const) expect(availableActions(s)).toEqual([])
     expect(isOpenStatus('processing')).toBe(true)
     expect(isOpenStatus('replaced')).toBe(false)
   })

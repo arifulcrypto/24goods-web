@@ -15,8 +15,8 @@ const { t, locale } = useI18n()
 const router = useRouter()
 const auth = useAuthStore()
 const convs = useConversationsStore()
-const initial = computed(() => (auth.user?.display_name || auth.user?.login || auth.user?.email || '?').trim().charAt(0).toUpperCase())
-const identity = computed(() => auth.user?.email || auth.user?.login || '')
+const initial = computed(() => (auth.user?.display_name || auth.user?.handle || auth.user?.email || '?').trim().charAt(0).toUpperCase())
+const identity = computed(() => auth.user?.email || auth.user?.handle || '')
 const recent = ref<ProductSummary[]>([])
 
 onMounted(async () => {
@@ -106,7 +106,7 @@ async function saveCred() {
     credShow.value = false
     showSuccessToast(t('common.saved'))
   } catch (e) {
-    if (isApiError(e) && (e.code === 'unauthorized' || e.code === 'forbidden')) showToast(t('me.wrongPassword'))
+    if (isApiError(e) && (e.code === 'invalid_password' || e.code === 'unauthorized' || e.code === 'forbidden')) showToast(t('me.wrongPassword'))
     else toastError(e)
   } finally {
     credCurrent.value = ''

@@ -11,11 +11,11 @@ export function slugify(title: string): string {
     .normalize('NFKD')
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
-    .slice(0, 80)
+    .slice(0, 63)
 }
 
 export function isValidSlug(s: string): boolean {
-  return s.length >= 1 && s.length <= 80 && SLUG_RE.test(s)
+  return s.length >= 1 && s.length <= 63 && SLUG_RE.test(s)
 }
 
 /** Hours → whole days when divisible (for "672 h (28 d)" displays). */

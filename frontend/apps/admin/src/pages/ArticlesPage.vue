@@ -75,7 +75,7 @@ async function save() {
   const body = {
     slug: form.slug,
     kind: form.kind,
-    category: form.category.trim() || 'general',
+    category: form.category.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-').slice(0, 32) || 'general',
     title_i18n: { en: form.title_en.trim(), 'zh-CN': form.title_zh.trim() },
     body_i18n: { en: form.body_en, 'zh-CN': form.body_zh },
     status: form.status,
@@ -184,7 +184,7 @@ async function remove(a: AdminArticle) {
             <el-input v-model="form.slug" class="mono" maxlength="80" @input="slugTouched = true" />
           </el-form-item>
           <el-form-item :label="t('products.col.category')">
-            <el-input v-model="form.category" maxlength="40" />
+            <el-input v-model="form.category" maxlength="32" />
           </el-form-item>
           <el-form-item :label="t('articles.kind')">
             <el-radio-group v-model="form.kind">

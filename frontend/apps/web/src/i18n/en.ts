@@ -204,6 +204,8 @@ export default {
   },
   auth: {
     email: 'Email',
+    loginId: 'Email or account ID',
+    loginIdPlaceholder: "you{'@'}example.com or u-abc2345",
     emailPlaceholder: "you{'@'}example.com",
     password: 'Password',
     passwordHint: 'At least 10 characters',

@@ -102,6 +102,9 @@ const systemText = computed(() => {
         }) + note
       )
     }
+    const note = typeof p?.note === 'string' && p.note.trim() ? ` — ${p.note.trim()}` : ''
+    if (event === 'completed' && p?.auto === true) return t('chat.system.completedAuto')
+    if (event.startsWith('after_sales_') && note) return t(`chat.system.${event}`, params) + note
     if (typeof params.name !== 'string') params.name = typeof p?.display_name === 'string' ? p.display_name : ''
     return t(`chat.system.${event}`, params)
   }

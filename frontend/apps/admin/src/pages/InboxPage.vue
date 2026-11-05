@@ -9,10 +9,9 @@ import {
   type Conversation,
   type ConversationFilter,
   type Message,
-  safeAssetUrl,
   type QuoteCardPayload,
 } from '@24goods/shared'
-import { ChatMessageList, useConversation, type ChatItem } from '@24goods/shared/chat'
+import { ChatMessageList, useConversation } from '@24goods/shared/chat'
 import { api } from '../api'
 import InboxSidePanel from '../components/InboxSidePanel.vue'
 import OrderDrawer from '../components/OrderDrawer.vue'
@@ -57,34 +56,12 @@ const chat = useConversation({
   onError: (e) => toastError(e),
 })
 
-// ---------------- v3 message types the shared bubble does not know yet ----------------
-// `file` (long text sent as .txt, review-v3 §6): shown as a text bubble "📄 name — preview" and
-// listed with an open link in the bar above. After-sales system cards get a text and a link bar.
-type V3Payload = { name?: string; bytes?: number; preview?: string; event?: string; ticket_id?: string }
-const payloadOf = (m: Message) => (m.payload ?? {}) as V3Payload
-const isFile = (m: Message) => (m.type as string) === 'file'
+// ---------------- after-sales link bar ----------------
+// The shared bubble renders `file` messages and the after-sales system cards (server-sent
+// payload `{event, order_id, after_sales_id, note?}`); the staff only get a deep link here.
+type SystemPayload = { event?: string; after_sales_id?: string }
+const payloadOf = (m: Message) => (m.payload ?? {}) as SystemPayload
 const isAfterSales = (m: Message) => m.type === 'system' && (payloadOf(m).event ?? '').startsWith('after_sales')
-const displayItems = computed<ChatItem[]>(() =>
-  chat.items.value.map((it) => {
-    if (it.kind !== 'server') return it
-    const m = it.message
-    if (isFile(m)) {
-      const p = payloadOf(m)
-      return { ...it, message: { ...m, type: 'text', text: `📄 ${p.name ?? t('inbox.file')} — ${p.preview ?? ''}`.trim() } as Message }
-    }
-    if (isAfterSales(m) && !m.text) {
-      const ev = (payloadOf(m).event ?? '').replace('after_sales_', '')
-      return { ...it, message: { ...m, text: t(`afterSales.chat.${['opened', 'processing', 'replaced', 'refunded', 'rejected', 'resolved'].includes(ev) ? ev : 'generic'}`) } }
-    }
-    return it
-  }),
-)
-const fileLinks = computed(() =>
-  chat.messages.value
-    .filter(isFile)
-    .map((m) => ({ id: m.id, name: payloadOf(m).name ?? t('inbox.file'), url: safeAssetUrl(m.attachment?.url) }))
-    .filter((f): f is { id: number; name: string; url: string } => !!f.url),
-)
 const afterSalesCard = computed(() => chat.messages.value.filter(isAfterSales).at(-1) ?? null)
 
 // ---------------- conversation list ----------------
@@ -336,13 +313,12 @@ function openProduct(id: string) {
             <el-button v-if="!wideSide" size="small" :icon="InfoFilled" @click="detailsOpen = true" />
           </div>
         </header>
-        <div v-if="afterSalesCard || fileLinks.length" class="v3-bar">
-          <RouterLink v-if="afterSalesCard" :to="{ path: '/after-sales', query: { open: payloadOf(afterSalesCard).ticket_id } }">{{ t('inbox.openAfterSales') }}</RouterLink>
-          <a v-for="f in fileLinks" :key="f.id" :href="f.url" target="_blank" rel="noopener noreferrer">📄 {{ f.name }} — {{ t('inbox.openFile') }}</a>
+        <div v-if="afterSalesCard" class="v3-bar">
+          <RouterLink v-if="afterSalesCard" :to="{ path: '/after-sales', query: { open: payloadOf(afterSalesCard).after_sales_id } }">{{ t('inbox.openAfterSales') }}</RouterLink>
         </div>
         <ChatMessageList
           ref="msgList"
-          :items="displayItems"
+          :items="chat.items.value"
           mode="staff"
           :loading="chat.loading.value"
           :loading-older="chat.loadingOlder.value"

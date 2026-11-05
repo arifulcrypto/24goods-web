@@ -19,6 +19,7 @@ const by = ref<FindBy>('content')
 const busy = ref(false)
 const searched = ref(false)
 const items = ref<CardRowV3[]>([])
+const missing = ref(0)
 const count = computed(() => cleanLines(text.value).length)
 const tooMany = computed(() => count.value > FIND_MAX_LINES)
 
@@ -27,7 +28,9 @@ async function find() {
   const lines = cleanLines(text.value)
   busy.value = true
   try {
-    items.value = (await apiV3.cards.find(lines, by.value)).items
+    const r = await apiV3.cards.find(lines, by.value)
+    items.value = r.items
+    missing.value = r.missing
     searched.value = true
     text.value = ''
   } catch (e) {
@@ -35,6 +38,10 @@ async function find() {
   } finally {
     busy.value = false
   }
+}
+function productTitle(r: CardRowV3): string {
+  const m = r.product_title_i18n
+  return (m && (m[locale.value as 'en' | 'zh-CN'] || m.en || m['zh-CN'])) || '—'
 }
 function orderLink(r: CardRowV3) {
   return r.order_id ? { path: '/orders', query: { open: r.order_id } } : { path: '/orders', query: { q: r.order_no ?? undefined } }
@@ -75,7 +82,9 @@ function orderLink(r: CardRowV3) {
             <el-tag size="small" :type="row.status === 'available' ? 'success' : row.status === 'void' ? 'danger' : 'info'">{{ t(`inventory.cardStatus.${row.status}`) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column :label="t('cards.col.product')" prop="product_title" min-width="160" show-overflow-tooltip />
+        <el-table-column :label="t('cards.col.product')" min-width="160" show-overflow-tooltip>
+          <template #default="{ row }">{{ productTitle(row as CardRowV3) }}</template>
+        </el-table-column>
         <el-table-column :label="t('cards.col.batch')" width="110">
           <template #default="{ row }"><span class="mono small">{{ row.batch_id ? row.batch_id.slice(0, 8) : '—' }}</span></template>
         </el-table-column>
@@ -92,6 +101,7 @@ function orderLink(r: CardRowV3) {
           </template>
         </el-table-column>
       </el-table>
+      <p v-if="missing > 0" class="warn small" role="status">{{ t('cards.find.missing', { n: missing }) }}</p>
       <p class="muted small">{{ t('cards.find.cleared') }}</p>
     </template>
   </section>

@@ -20,8 +20,10 @@ const f = reactive({
   after_sales_default_hours: 672,
   manual: 72,
   auto_card: 24,
-  support_hours: '',
+  support_en: '',
+  support_zh: '',
 })
+const defaults = ref<AdminSiteSettings['defaults'] | null>(null)
 
 function apply(s: AdminSiteSettings) {
   const a = s.announcement
@@ -34,7 +36,9 @@ function apply(s: AdminSiteSettings) {
   f.after_sales_default_hours = s.after_sales_default_hours
   f.manual = s.auto_confirm_hours.manual
   f.auto_card = s.auto_confirm_hours.auto_card
-  f.support_hours = s.support_hours ?? ''
+  f.support_en = s.support_hours?.en ?? ''
+  f.support_zh = s.support_hours?.['zh-CN'] ?? ''
+  defaults.value = s.defaults ?? null
 }
 onMounted(async () => {
   loading.value = true
@@ -53,7 +57,7 @@ async function save() {
   const e: Record<string, string> = {}
   if (f.enabled && !f.title_en.trim()) e.title = t('articles.v.titleRequired')
   if (!okHours(f.after_sales_default_hours, 8760)) e.as = t('delivery.hoursInvalid')
-  if (!okHours(f.manual, 720) || !okHours(f.auto_card, 720)) e.ac = t('site.v.autoConfirm')
+  if (!okHours(f.manual, 720) || !okHours(f.auto_card, 720) || f.manual < 1 || f.auto_card < 1) e.ac = t('site.v.autoConfirm')
   errors.value = e
   if (Object.keys(e).length) return
   saving.value = true
@@ -67,7 +71,7 @@ async function save() {
         },
         after_sales_default_hours: f.after_sales_default_hours,
         auto_confirm_hours: { manual: f.manual, auto_card: f.auto_card },
-        support_hours: f.support_hours.trim() || null,
+        support_hours: { en: f.support_en.trim(), 'zh-CN': f.support_zh.trim() },
       }),
     )
     toastOk(t('site.saved'))
@@ -104,15 +108,21 @@ async function save() {
           <span class="unit muted">{{ t('site.hours') }} ({{ Math.round((f.after_sales_default_hours / 24) * 10) / 10 }} {{ t('site.days') }})</span>
         </el-form-item>
         <el-form-item :label="t('site.autoConfirmManual')" :error="errors.ac">
-          <el-input-number v-model="f.manual" :min="0" :max="720" /><span class="unit muted">{{ t('site.hours') }}</span>
+          <el-input-number v-model="f.manual" :min="1" :max="720" /><span class="unit muted">{{ t('site.hours') }}</span>
         </el-form-item>
         <el-form-item :label="t('site.autoConfirmAuto')">
-          <el-input-number v-model="f.auto_card" :min="0" :max="720" /><span class="unit muted">{{ t('site.hours') }}</span>
+          <el-input-number v-model="f.auto_card" :min="1" :max="720" /><span class="unit muted">{{ t('site.hours') }}</span>
         </el-form-item>
         <p class="muted small">{{ t('site.autoConfirmNote') }}</p>
-        <el-form-item :label="t('site.supportHours')">
-          <el-input v-model="f.support_hours" maxlength="120" :placeholder="t('site.supportPlaceholder')" />
+        <el-form-item :label="`${t('site.supportHours')} (EN)`">
+          <el-input v-model="f.support_en" maxlength="200" :placeholder="t('site.supportPlaceholder')" />
         </el-form-item>
+        <el-form-item :label="`${t('site.supportHours')} (中文)`">
+          <el-input v-model="f.support_zh" maxlength="200" :placeholder="t('site.supportPlaceholder')" />
+        </el-form-item>
+        <p v-if="defaults" class="muted small">
+          {{ t('site.builtinDefaults', { as: defaults.after_sales_default_hours, m: defaults.auto_confirm_hours.manual, a: defaults.auto_confirm_hours.auto_card }) }}
+        </p>
       </section>
       <el-button type="primary" native-type="submit" :loading="saving">{{ t('common.save') }}</el-button>
     </el-form>

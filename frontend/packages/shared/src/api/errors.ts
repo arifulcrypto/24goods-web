@@ -15,6 +15,9 @@ export const API_ERROR_CODES = [
   'pow_required',
   'pow_invalid',
   'has_open_orders',
+  'invalid_password',
+  'after_sales_closed',
+  'after_sales_open',
 ] as const
 export const CLIENT_ERROR_CODES = ['network', 'server_error', 'timeout', 'unknown'] as const
 export type ContractErrorCode = (typeof API_ERROR_CODES)[number]

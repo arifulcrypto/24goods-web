@@ -27,7 +27,7 @@ export interface ProductDeliveryFields {
   delivery_format: string | null
   delivery_separator: string | null
   redeem_url: string | null
-  usage_i18n: I18nText | null
+  usage_i18n: I18nText
   /** null = site default (672 h); 0 = no after-sales. */
   after_sales_hours: number | null
 }
@@ -46,9 +46,10 @@ export interface CardRowV3 {
   created_at: string
   /** Present on /admin/cards/find results (cross-product search). Optional elsewhere. */
   product_id?: string | null
-  product_title?: string | null
-  /** MVP-0 field; still used when present to open the order directly. */
-  order_id?: string | null
+  product_title_i18n?: I18nText | null
+  /** 1-based position of the matching line among the non-blank submitted lines (find only). */
+  line?: number
+  order_id: string | null
 }
 export interface CardBatch {
   id: string
@@ -60,7 +61,8 @@ export interface CardBatch {
   available: number
   sold: number
   void: number
-  reserved?: number
+  reserved: number
+  expiring_7d: number
 }
 export interface CardImportResultV3 {
   imported: number
@@ -148,14 +150,17 @@ export interface SiteAnnouncement {
   enabled: boolean
   title_i18n: I18nText
   body_i18n: I18nText
+  body_html_i18n?: I18nText
 }
 export interface AdminSiteSettings {
   announcement: SiteAnnouncement | null
   after_sales_default_hours: number
   auto_confirm_hours: { manual: number; auto_card: number }
-  support_hours: string | null
+  support_hours: I18nText
+  /** Built-in fallbacks used when a value was never set. */
+  defaults: { after_sales_default_hours: number; auto_confirm_hours: { manual: number; auto_card: number } }
 }
-export type AdminSiteSettingsInput = Omit<AdminSiteSettings, 'announcement'> & {
+export type AdminSiteSettingsInput = Omit<AdminSiteSettings, 'announcement' | 'defaults'> & {
   announcement: Omit<SiteAnnouncement, 'version'>
 }
 
@@ -166,7 +171,7 @@ export function createAdminV3Api(c: ApiClient) {
         c.get<Paginated<AdminProductV3>>('/admin/products', q),
       create: (b: AdminProductInputV3) => c.post<AdminProductV3>('/admin/products', b),
       update: (id: string, b: Partial<AdminProductInputV3>) => c.patch<AdminProductV3>(`/admin/products/${seg(id)}`, b),
-      batches: (id: string) => c.get<{ items: CardBatch[] } | CardBatch[]>(`/admin/products/${seg(id)}/batches`).then(unwrapItems),
+      batches: (id: string) => c.get<{ items: CardBatch[] }>(`/admin/products/${seg(id)}/batches`).then((r) => r.items),
       importCards: (id: string, b: { lines: string; note?: string; expires_at?: string }) =>
         c.post<CardImportResultV3>(`/admin/products/${seg(id)}/cards/import`, b),
       cards: (id: string, f: CardFilters, page: number, page_size: number) =>
@@ -174,7 +179,7 @@ export function createAdminV3Api(c: ApiClient) {
     },
     cards: {
       /** Codes go in the JSON body only (never the URL). */
-      find: (lines: string[], by: FindBy) => c.post<{ items: CardRowV3[] }>('/admin/cards/find', { lines, by }),
+      find: (lines: string[], by: FindBy) => c.post<{ items: CardRowV3[]; missing: number }>('/admin/cards/find', { lines, by }),
       voidIds: (ids: string[], reason: string) => c.post<{ voided: number }>('/admin/cards/void', { ids, reason }),
       voidBatch: (batch_id: string, reason: string) => c.post<{ voided: number }>('/admin/cards/void', { batch_id, reason }),
       replace: (id: string, code: string) => c.post<CardRowV3>(`/admin/cards/${seg(id)}/replace`, { code }),
@@ -203,7 +208,3 @@ export function createAdminV3Api(c: ApiClient) {
   }
 }
 export type AdminV3Api = ReturnType<typeof createAdminV3Api>
-
-function unwrapItems<T>(r: { items: T[] } | T[]): T[] {
-  return Array.isArray(r) ? r : (r?.items ?? [])
-}

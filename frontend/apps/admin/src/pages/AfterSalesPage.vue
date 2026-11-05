@@ -3,11 +3,12 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ChatLineRound } from '@element-plus/icons-vue'
-import { formatDateTime, formatMoney, safeAssetUrl } from '@24goods/shared'
+import { formatDateTime, formatMoney, safeAssetUrl, visibleEmail } from '@24goods/shared'
 import { apiV3 } from '../api'
 import type { AfterSalesTicket } from '../api-v3'
 import { usePaged } from '../composables/usePaged'
 import { TICKET_STATUSES, availableActions, needsConfirm, statusTagType, validateAction, type TicketAction, type TicketStatus } from '../lib/afterSales'
+import { useAuthStore } from '../stores/auth'
 import { useDeskStore } from '../stores/desk'
 import { useRealtimeStore } from '../stores/realtime'
 import { confirmBox, toastError, toastOk } from '../ui'
@@ -17,6 +18,7 @@ const route = useRoute()
 const router = useRouter()
 const rt = useRealtimeStore()
 const desk = useDeskStore()
+const auth = useAuthStore()
 const status = ref<TicketStatus | ''>((TICKET_STATUSES as readonly string[]).includes(route.query.status as string) ? (route.query.status as TicketStatus) : '')
 const openId = ref<string | null>(typeof route.query.open === 'string' ? route.query.open : null)
 const ticket = ref<AfterSalesTicket | null>(null)
@@ -65,7 +67,7 @@ function close() {
   if (route.query.open) void router.replace({ query: { ...route.query, open: undefined } })
 }
 
-const actions = computed(() => (ticket.value ? availableActions(ticket.value.status) : []))
+const actions = computed(() => (ticket.value ? availableActions(ticket.value.status, auth.isAdmin ? 'admin' : 'agent') : []))
 const orderNo = (x: AfterSalesTicket) => x.order_no ?? x.order?.order_no ?? '—'
 const deadline = computed(() => ticket.value?.after_sales_until ?? ticket.value?.order?.after_sales_until ?? null)
 const images = computed(() => (ticket.value?.attachments ?? []).map((a) => safeAssetUrl(a.url)).filter((u): u is string => !!u))
@@ -168,7 +170,7 @@ function tagType(a: TicketAction) {
             <el-descriptions-item v-if="ticket.order" :label="t('orders.col.title')">{{ ticket.order.title }} × {{ ticket.order.qty }}</el-descriptions-item>
             <el-descriptions-item v-if="ticket.order" :label="t('orders.col.amount')">{{ formatMoney(ticket.order.amount, ticket.order.currency, locale) }}</el-descriptions-item>
             <el-descriptions-item v-if="ticket.order" :label="t('orders.col.mode')">{{ t(`deliveryMode.${ticket.order.delivery_mode}`) }}</el-descriptions-item>
-            <el-descriptions-item :label="t('orders.col.buyer')">{{ ticket.buyer?.display_name ?? '—' }}<span v-if="ticket.buyer?.email" class="muted"> · {{ ticket.buyer.email }}</span></el-descriptions-item>
+            <el-descriptions-item :label="t('orders.col.buyer')">{{ ticket.buyer?.display_name ?? '—' }}<span v-if="visibleEmail(ticket.buyer?.email)" class="muted"> · {{ visibleEmail(ticket.buyer?.email) }}</span></el-descriptions-item>
             <el-descriptions-item :label="t('afterSales.reasonLabel')">{{ t(`afterSales.reason.${ticket.reason}`) }}</el-descriptions-item>
             <el-descriptions-item :label="t('afterSales.description')"><p class="pre">{{ ticket.description || '—' }}</p></el-descriptions-item>
             <el-descriptions-item v-if="ticket.order?.delivered_at" :label="t('orders.info.deliveredAt')">{{ formatDateTime(ticket.order.delivered_at, locale) }}</el-descriptions-item>

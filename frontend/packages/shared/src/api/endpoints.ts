@@ -142,7 +142,7 @@ export function createBuyerApi(c: ApiClient) {
       get: (id: string) => c.get<Order>(`/orders/${seg(id)}`),
       pay: (id: string, channel: string = DEFAULT_PAY_CHANNEL) =>
         c.post<{ pay_url: string }>(`/orders/${seg(id)}/pay`, { channel }),
-      reveal: (id: string) => c.post<{ secrets: string[] }>(`/orders/${seg(id)}/reveal`),
+      reveal: (id: string) => c.post<{ secrets: string[]; cards: { id: string; code: string }[] }>(`/orders/${seg(id)}/reveal`),
       confirm: (id: string) => c.post<Order>(`/orders/${seg(id)}/confirm`),
       afterSales: (id: string, b: AfterSalesInput) => c.post<AfterSales>(`/orders/${seg(id)}/after-sales`, b),
     },

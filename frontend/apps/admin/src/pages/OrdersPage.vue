@@ -3,7 +3,7 @@ import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { Search } from '@element-plus/icons-vue'
-import { formatDateTime, formatMoney, type AdminOrder, type Order, type OrderStatus } from '@24goods/shared'
+import { formatDateTime, formatMoney, visibleEmail, type AdminOrder, type Order, type OrderStatus } from '@24goods/shared'
 import { api } from '../api'
 import OrderDrawer from '../components/OrderDrawer.vue'
 import OrderStatusTag from '../components/OrderStatusTag.vue'
@@ -78,7 +78,7 @@ function open(row: AdminOrder) {
         <el-table-column :label="t('orders.col.buyer')" min-width="180">
           <template #default="{ row }">
             <div>{{ row.buyer.display_name }}</div>
-            <div class="muted small">{{ row.buyer.email }}</div>
+            <div class="muted small">{{ visibleEmail(row.buyer.email) }}</div>
           </template>
         </el-table-column>
         <el-table-column :label="t('orders.col.amount')" width="130">

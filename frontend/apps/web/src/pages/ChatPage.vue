@@ -15,6 +15,7 @@ import { AgentStatusDot, ChatMessageList, useConversation } from '@24goods/share
 import { api } from '../api'
 import ChatComposer from '../components/ChatComposer.vue'
 import ChatDelivery from '../components/ChatDelivery.vue'
+import { stashAccessCode } from '../lib/attribution'
 import { useConversationsStore } from '../stores/conversations'
 import { useRealtimeStore } from '../stores/realtime'
 import { useSupportStore } from '../stores/support'
@@ -178,6 +179,7 @@ async function acceptQuote(q: QuoteCardPayload) {
   try {
     const order = await api.quotes.accept(q.quote_id)
     orderId = order.id
+    stashAccessCode(order.id, order.access_code)
     chat.patchQuote({ quote_id: q.quote_id, status: 'accepted', order_id: order.id })
     const { pay_url } = await api.orders.pay(order.id)
     const safe = safePayUrl(pay_url)

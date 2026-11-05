@@ -204,6 +204,8 @@ const zhCN: WebMessages = {
   },
   auth: {
     email: '邮箱',
+    loginId: '邮箱或账号 ID',
+    loginIdPlaceholder: "you{'@'}example.com 或 u-abc2345",
     emailPlaceholder: "you{'@'}example.com",
     password: '密码',
     passwordHint: '至少 10 个字符',

@@ -14,8 +14,8 @@ export interface User {
   /** v3: one-tap instant account (random handle + password, email optional). */
   is_instant?: boolean
   email_verified?: boolean
-  /** v3 (assumed): login handle `u-xxxxxxx` of instant accounts; email may be empty for them. */
-  login?: string | null
+  /** v3: login handle `u-xxxxxxx` of instant accounts (usable as the login id). `email` is blank for them. */
+  handle?: string | null
 }
 
 export type DeliveryMode = 'auto_card' | 'manual'
@@ -221,6 +221,9 @@ export interface AfterSales {
   resolution_note: string | null
   created_at: string
   updated_at: string
+  resolved_at?: string | null
+  /** Staff views and SSE only. */
+  order_no?: string
 }
 export interface AfterSalesInput {
   reason: AfterSalesReason
@@ -266,7 +269,8 @@ export type PowScope = 'instant' | 'register' | 'lookup' | 'login'
 export interface PowChallenge {
   challenge: string
   bits: number
-  expires_at: string
+  /** Unix timestamp (seconds). */
+  expires_at: number
 }
 export interface PowSolution {
   challenge: string
