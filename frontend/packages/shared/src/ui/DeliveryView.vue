@@ -11,6 +11,7 @@ import { safeLinkUrl } from '../api/endpoints'
 import { cardsToText, daysLeft, downloadText, isExpired, splitCard } from '../delivery'
 import { formatCountdown, formatDateTime } from '../format'
 import { copyText } from '../util'
+import SafeHtml from './SafeHtml.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -132,9 +133,7 @@ function download() {
       <a v-if="redeemUrl" class="dv-btn primary wide" :href="redeemUrl" target="_blank" rel="noopener noreferrer">{{
         t('delivery.redeem')
       }}</a>
-      <!-- usage_html is sanitised server-side (markdown-it + nh3); only *_html fields use v-html -->
-      <!-- eslint-disable-next-line vue/no-v-html -->
-      <div v-if="usage" class="dv-usage" v-html="usage" />
+      <SafeHtml v-if="usage" class="dv-usage" :html="usage" />
     </section>
 
     <p v-if="afterSalesUntil && hasContent" class="dv-after" :class="{ ended: isExpired(afterSalesUntil, now) }">

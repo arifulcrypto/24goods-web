@@ -57,3 +57,25 @@ export function downloadText(filename: string, text: string): void {
   document.body.removeChild(a)
   setTimeout(() => URL.revokeObjectURL(url), 10_000)
 }
+
+/** After-sales badge: ≤48 h shown in hours, longer in days; 0 / null → no badge. */
+export function afterSalesBadge(hours: number | null | undefined): { n: number; unit: 'h' | 'd' } | null {
+  if (!hours || hours <= 0) return null
+  return hours <= 48 ? { n: hours, unit: 'h' } : { n: Math.round(hours / 24), unit: 'd' }
+}
+
+/** Delivered/completed, inside the window, and no open ticket. */
+export function canRequestAfterSales(
+  o: { status: string; after_sales_until?: string | null; after_sales?: { status: string } | null },
+  now: number = Date.now(),
+): boolean {
+  if (o.status !== 'delivered' && o.status !== 'completed') return false
+  if (isExpired(o.after_sales_until, now)) return false
+  return !o.after_sales || !['open', 'processing'].includes(o.after_sales.status)
+}
+
+/** Labels of a `delivery_format` string, e.g. "Account----Password" → ["Account", "Password"]. */
+export function formatLabels(format: string | null | undefined, separator: string | null | undefined): string[] {
+  if (!format) return []
+  return format.split(separator || '----').map((x) => x.trim()).filter(Boolean)
+}

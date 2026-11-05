@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import {
   IMAGE_MAX_BYTES,
   VOICE_MAX_MS,
+  longTextDecision,
   VoiceError,
   VoiceRecorder,
   compressImage,
@@ -12,10 +13,11 @@ import {
   isVoiceSupported,
   voiceExtension,
 } from '@24goods/shared'
-import { showToast } from '../ui'
+import { showConfirmDialog, showToast } from '../ui'
 
 const emit = defineEmits<{
   sendText: [text: string]
+  sendFile: [text: string]
   sendImage: [blob: Blob, meta: { width?: number; height?: number; filename: string }]
   sendVoice: [blob: Blob, durationMs: number, filename: string]
   focus: []
@@ -36,14 +38,30 @@ function autoGrow() {
   el.style.height = 'auto'
   el.style.height = `${Math.min(el.scrollHeight, 112)}px`
 }
-function submitText() {
+async function submitText() {
   const v = text.value.trim()
   if (!v) return
-  if (v.length > 2000) {
-    showToast(t('chat.tooLong'))
-    return
+  const decision = longTextDecision(v)
+  if (decision === 'ask') {
+    // default (confirm) = send as a .txt file; cancel = send as plain text
+    let asFile = true
+    try {
+      await showConfirmDialog({
+        title: t('chat.longTitle'),
+        message: t('chat.longMessage', { n: [...v].length }),
+        confirmButtonText: t('chat.sendAsFile'),
+        cancelButtonText: t('chat.sendAsText'),
+      })
+    } catch {
+      asFile = false
+    }
+    if (asFile) emit('sendFile', v)
+    else emit('sendText', v)
+  } else if (decision === 'file') {
+    emit('sendFile', v)
+  } else {
+    emit('sendText', v)
   }
-  emit('sendText', v)
   text.value = ''
   void nextTick(autoGrow)
   textarea.value?.focus()
@@ -206,7 +224,7 @@ onBeforeUnmount(() => {
       <button
         type="button"
         class="icon-btn"
-        :aria-label="mode === 'text' ? t('chat.voice') : t('chat.keyboard')"
+        :aria-label="mode === 'text' ? t('chat.voiceMode') : t('chat.keyboard')"
         :disabled="disabled"
         @click="toggleMode"
       >

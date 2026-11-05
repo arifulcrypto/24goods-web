@@ -28,8 +28,11 @@ function check(path) {
   }
   if (!exts.test(path) || path.endsWith('.d.ts')) return
   const lines = readFileSync(path, 'utf8').split('\n')
+  // SafeHtml.vue is the single, audited renderer of server-sanitised *_html fields
+  const allowHtml = path.endsWith('packages/shared/src/ui/SafeHtml.vue') || path.endsWith('packages/shared/src/sanitize.ts')
   lines.forEach((line, i) => {
     for (const r of rules) {
+      if (allowHtml && /v-html|innerHTML/.test(r.msg + r.re.source)) continue
       if (r.re.test(line)) {
         problems++
         console.log(`${relative(root, path)}:${i + 1}  ${r.msg}\n    ${line.trim()}`)

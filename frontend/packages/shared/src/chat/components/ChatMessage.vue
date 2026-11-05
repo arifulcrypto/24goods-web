@@ -41,6 +41,7 @@ const view = computed(() => {
       height: p.height,
       payload: p.type === 'file' ? ({ name: p.filename ?? 'message.txt', bytes: p.blob?.size ?? 0, preview: p.text ?? '' } as FilePayload) : null,
       fileUrl: null as string | null,
+      createdAt: p.created_at,
       state: p.state,
       clientMsgId: p.client_msg_id,
     }
@@ -57,6 +58,7 @@ const view = computed(() => {
     width: m.attachment?.width,
     height: m.attachment?.height,
     payload: m.payload,
+    createdAt: m.created_at,
     fileUrl: m.type === 'file' ? safeAssetUrl(m.attachment?.url) : null,
     state: 'sent' as const,
     clientMsgId: m.client_msg_id,
@@ -90,11 +92,15 @@ const systemText = computed(() => {
     if (typeof p?.amount === 'string') {
       params.amount = formatMoney(p.amount, typeof p.currency === 'string' ? p.currency : 'CNY', locale.value)
     }
-    if (event === 'delivered' && typeof p?.delivered_at === 'string' && te('chat.system.deliveredAt')) {
-      return t('chat.system.deliveredAt', {
-        time: formatChatTime(p.delivered_at, locale.value),
-        ago: formatRelative(p.delivered_at, locale.value, nowTick.value),
-      })
+    if (event === 'delivered' && view.value.createdAt) {
+      const at = typeof p?.delivered_at === 'string' ? p.delivered_at : view.value.createdAt
+      const note = typeof p?.note === 'string' && p.note.trim() ? ` — ${p.note.trim()}` : ''
+      return (
+        t('chat.system.deliveredAt', {
+          time: formatChatTime(at, locale.value),
+          ago: formatRelative(at, locale.value, nowTick.value),
+        }) + note
+      )
     }
     if (typeof params.name !== 'string') params.name = typeof p?.display_name === 'string' ? p.display_name : ''
     return t(`chat.system.${event}`, params)

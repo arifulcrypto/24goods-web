@@ -153,3 +153,25 @@ describe('long text', () => {
     expect(daysLeft(null, now)).toBeNull()
   })
 })
+
+import { afterSalesBadge, canRequestAfterSales, formatLabels } from '../src'
+describe('after-sales helpers', () => {
+  it('badge', () => {
+    expect(afterSalesBadge(24)).toEqual({ n: 24, unit: 'h' })
+    expect(afterSalesBadge(672)).toEqual({ n: 28, unit: 'd' })
+    expect(afterSalesBadge(0)).toBeNull()
+    expect(afterSalesBadge(null)).toBeNull()
+  })
+  it('eligibility', () => {
+    const future = new Date(Date.now() + 86_400_000).toISOString()
+    expect(canRequestAfterSales({ status: 'delivered', after_sales_until: future })).toBe(true)
+    expect(canRequestAfterSales({ status: 'paid', after_sales_until: future })).toBe(false)
+    expect(canRequestAfterSales({ status: 'completed', after_sales_until: '2020-01-01T00:00:00Z' })).toBe(false)
+    expect(canRequestAfterSales({ status: 'completed', after_sales_until: future, after_sales: { status: 'open' } })).toBe(false)
+    expect(canRequestAfterSales({ status: 'completed', after_sales_until: future, after_sales: { status: 'rejected' } })).toBe(true)
+  })
+  it('format labels', () => {
+    expect(formatLabels('A----B----C', '----')).toEqual(['A', 'B', 'C'])
+    expect(formatLabels(null, '|')).toEqual([])
+  })
+})

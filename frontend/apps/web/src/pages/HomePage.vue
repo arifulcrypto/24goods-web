@@ -1,28 +1,77 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onActivated, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import type { Category } from '@24goods/shared'
+import { LogoMark } from '@24goods/shared/ui'
+import { BRAND, clearRecent, recentIds, type Category, type ProductSummary } from '@24goods/shared'
 import { api } from '../api'
-import ProductGrid from '../components/ProductGrid.vue'
+import Announcement from '../components/Announcement.vue'
+import BuySheet from '../components/BuySheet.vue'
+import MiniStrip from '../components/MiniStrip.vue'
+import ProductList from '../components/ProductList.vue'
 import SupportPill from '../components/SupportPill.vue'
 import { useProductFeed } from '../composables/useProductFeed'
 import { useAuthStore } from '../stores/auth'
 
-const { t } = useI18n()
+const VIEW_KEY = 'kesiv.view'
+const { t, locale } = useI18n()
 const router = useRouter()
 const auth = useAuthStore()
 const categories = ref<Category[]>([])
 const category = ref('')
 const refreshing = ref(false)
-const feed = useProductFeed(() => ({ category: category.value || undefined }))
+const view = ref<'list' | 'grid'>(readView())
+const feed = useProductFeed(() => ({ category: category.value || undefined }), 50)
+const recent = ref<ProductSummary[]>([])
+const recommended = ref<ProductSummary[]>([])
+const buying = ref<ProductSummary | null>(null)
+const buySheet = ref(false)
 
+const brandTitle = computed(() => (locale.value === 'zh-CN' ? `${BRAND.nameZh} ${BRAND.name}` : BRAND.name))
+const tagline = computed(() => BRAND.tagline[locale.value === 'zh-CN' ? 'zh-CN' : 'en'])
+
+function readView(): 'list' | 'grid' {
+  try {
+    return localStorage.getItem(VIEW_KEY) === 'grid' ? 'grid' : 'list'
+  } catch {
+    return 'list'
+  }
+}
+function setView(v: 'list' | 'grid') {
+  view.value = v
+  try {
+    localStorage.setItem(VIEW_KEY, v)
+  } catch {
+    /* ignore */
+  }
+}
+
+async function loadStrips() {
+  const ids = recentIds()
+  try {
+    recent.value = ids.length ? (await api.productsByIds(ids)).items : []
+  } catch {
+    recent.value = []
+  }
+  try {
+    recommended.value = (await api.recommended({ recent: ids, limit: 8 })).items
+  } catch {
+    recommended.value = []
+  }
+}
 onMounted(async () => {
+  void loadStrips()
   try {
     categories.value = await api.categories()
   } catch {
     /* chips are optional */
   }
+})
+// kept alive: refresh the recently-viewed strip when coming back from a product page
+let first = true
+onActivated(() => {
+  if (first) first = false
+  else void loadStrips()
 })
 
 function pick(key: string) {
@@ -34,7 +83,16 @@ function pick(key: string) {
 async function onRefresh() {
   feed.reset()
   await feed.load()
+  void loadStrips()
   refreshing.value = false
+}
+function clearViewed() {
+  clearRecent()
+  recent.value = []
+}
+function buy(p: ProductSummary) {
+  buying.value = p
+  buySheet.value = true
 }
 function openSupport() {
   void router.push(auth.loggedIn ? '/chat' : { name: 'login', query: { redirect: '/chat' } })
@@ -46,24 +104,25 @@ function openSupport() {
     <header class="hero">
       <div class="hero-top">
         <div class="brand">
-          <span class="logo" aria-hidden="true">24</span>
-          <span class="brand-name">{{ t('app.name') }}</span>
+          <LogoMark :size="32" />
+          <div class="brand-text">
+            <span class="brand-name">{{ brandTitle }}</span>
+            <span class="brand-tag">{{ tagline }}</span>
+          </div>
         </div>
         <SupportPill @click="openSupport" />
       </div>
+      <nav class="links" :aria-label="t('home.quickLinks')">
+        <RouterLink to="/lookup"><van-icon name="search" aria-hidden="true" />{{ t('home.lookup') }}</RouterLink>
+        <RouterLink to="/help"><van-icon name="question-o" aria-hidden="true" />{{ t('home.help') }}</RouterLink>
+        <button type="button" @click="openSupport"><van-icon name="service-o" aria-hidden="true" />{{ t('home.support') }}</button>
+      </nav>
       <RouterLink to="/search" class="searchbar" role="search">
         <van-icon name="search" size="18" aria-hidden="true" />
         <span>{{ t('home.searchPlaceholder') }}</span>
       </RouterLink>
       <div class="chips" role="tablist" :aria-label="t('product.category')">
-        <button
-          type="button"
-          role="tab"
-          class="chip"
-          :class="{ on: category === '' }"
-          :aria-selected="category === ''"
-          @click="pick('')"
-        >
+        <button type="button" role="tab" class="chip" :class="{ on: category === '' }" :aria-selected="category === ''" @click="pick('')">
           {{ t('home.allCategories') }}
         </button>
         <button
@@ -81,8 +140,23 @@ function openSupport() {
       </div>
     </header>
 
+    <Announcement />
+
     <van-pull-refresh v-model="refreshing" @refresh="onRefresh">
-      <h2 class="section-title">{{ t('home.recommended') }}</h2>
+      <MiniStrip :title="t('home.recentlyViewed')" :items="recent" :clear-label="t('home.clear')" @clear="clearViewed" />
+      <MiniStrip :title="t('home.recommended')" :items="recommended" />
+
+      <div class="list-head">
+        <h2>{{ t('home.allProducts') }}</h2>
+        <div class="seg" role="radiogroup" :aria-label="t('home.viewMode')">
+          <button type="button" role="radio" :aria-checked="view === 'list'" :aria-label="t('home.viewList')" :class="{ on: view === 'list' }" @click="setView('list')">
+            <van-icon name="bars" />
+          </button>
+          <button type="button" role="radio" :aria-checked="view === 'grid'" :aria-label="t('home.viewGrid')" :class="{ on: view === 'grid' }" @click="setView('grid')">
+            <van-icon name="apps-o" />
+          </button>
+        </div>
+      </div>
       <van-list
         v-model:loading="feed.loading.value"
         v-model:error="feed.error.value"
@@ -93,14 +167,19 @@ function openSupport() {
         :offset="400"
         @load="feed.load"
       >
-        <ProductGrid :items="feed.items.value" :skeleton="feed.loading.value && !feed.items.value.length ? 6 : 0" />
-        <van-empty
-          v-if="feed.finished.value && !feed.items.value.length"
-          image="search"
-          :description="t('home.emptyTitle')"
+        <ProductList
+          :items="feed.items.value"
+          :view="view"
+          :categories="categories"
+          :grouped="category === ''"
+          :skeleton="feed.loading.value && !feed.items.value.length ? 6 : 0"
+          @buy="buy"
         />
+        <van-empty v-if="feed.finished.value && !feed.items.value.length" image="search" :description="t('home.emptyTitle')" />
       </van-list>
     </van-pull-refresh>
+
+    <BuySheet v-model:show="buySheet" :product="buying" />
   </div>
 </template>
 
@@ -122,27 +201,51 @@ function openSupport() {
   gap: 8px;
   min-width: 0;
 }
-.logo {
-  width: 32px;
-  height: 32px;
-  border-radius: 10px;
-  background: #1f1f1f;
-  color: var(--c-accent);
-  display: grid;
-  place-items: center;
-  font-weight: 800;
-  font-size: 15px;
+.brand-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
 }
 .brand-name {
   font-weight: 800;
-  font-size: 19px;
+  font-size: 18px;
+  line-height: 20px;
   letter-spacing: -0.02em;
+}
+.brand-tag {
+  font-size: 10px;
+  line-height: 13px;
+  color: var(--c-text-2);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  max-width: 190px;
+}
+.links {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+}
+.links a,
+.links button {
+  flex: 1;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border: 0;
+  background: none;
+  color: var(--c-text);
+  font: inherit;
+  font-size: 13px;
+  text-decoration: none;
+  cursor: pointer;
 }
 .searchbar {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-top: 8px;
   min-height: 44px;
   padding: 0 14px;
   border-radius: 999px;
@@ -190,17 +293,41 @@ function openSupport() {
   color: var(--c-accent);
   font-weight: 600;
 }
-.section-title {
+.list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 12px;
+}
+.list-head h2 {
   font-size: 16px;
-  margin: 8px 12px 10px;
+  margin: 0;
+}
+.seg {
+  display: inline-flex;
+  background: #ececec;
+  border-radius: 999px;
+  padding: 2px;
+}
+.seg button {
+  min-height: 44px;
+  min-width: 44px;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: var(--c-text-2);
+  cursor: pointer;
+  font-size: 18px;
+}
+.seg button.on {
+  background: var(--c-surface);
+  color: var(--c-text);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 @media (min-width: 768px) {
   .hero {
     padding-left: 16px;
     padding-right: 16px;
-  }
-  .section-title {
-    margin-left: 16px;
   }
 }
 </style>
