@@ -4,6 +4,8 @@ updates:
     directory: /backend
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7  # don't propose releases younger than a week (supply-chain hygiene)
     groups:
       python-minor:
         update-types: [minor, patch]
@@ -11,7 +13,11 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7  # don't propose releases younger than a week (supply-chain hygiene)
   - package-ecosystem: docker
     directory: /backend
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7  # don't propose releases younger than a week (supply-chain hygiene)
