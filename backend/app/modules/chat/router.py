@@ -15,6 +15,7 @@ from app.modules.chat import service
 from app.modules.chat.schemas import ConversationIn, MessageIn, ReadIn
 from app.modules.orders.router import ORDER_ACTIONS
 from app.modules.orders.service import broadcast_order, one_view
+from app.modules.uploads.storage import FileStore
 
 router = APIRouter(tags=["chat"])
 
@@ -83,6 +84,7 @@ async def send_message(
         text=body.text,
         attachment_id=body.attachment_id,
         client_msg_id=body.client_msg_id,
+        store=FileStore(res.settings.upload_dir),
     )
     if created:
         await service.broadcast(res, db, conv, [msg])
@@ -106,6 +108,7 @@ async def mark_read(
 async def accept_quote(
     quote_id: uuid.UUID,
     request: Request,
+    lang: str = Depends(get_lang),
     user: User = Depends(current_user),
     db: AsyncSession = Depends(get_db),
     res: Resources = Depends(get_res),
@@ -115,5 +118,8 @@ async def accept_quote(
         db, res.settings, quote_id, user, client_ip(request)
     )
     qmsg = await quote_svc.quote_message(db, quote)  # same id, updated status/order_id
+    code = getattr(order, "access_code_plain", None)
     await broadcast_order(res, db, order, [qmsg, *msgs])
-    return await one_view(db, order, user.id)
+    view = await one_view(db, order, user.id, lang)
+    view["access_code"] = code
+    return view

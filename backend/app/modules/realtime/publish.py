@@ -53,6 +53,17 @@ async def publish_order(
     await publish(redis, staff_channel(tenant_id), "order", staff_view)
 
 
+async def publish_after_sales(
+    redis: Redis,
+    tenant_id: uuid.UUID,
+    buyer_id: uuid.UUID,
+    buyer_view: dict[str, Any],
+    staff_view: dict[str, Any],
+) -> None:
+    await publish(redis, user_channel(buyer_id), "after_sales", buyer_view)
+    await publish(redis, staff_channel(tenant_id), "after_sales", staff_view)
+
+
 async def publish_conversation(
     redis: Redis,
     tenant_id: uuid.UUID,

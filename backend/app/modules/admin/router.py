@@ -173,11 +173,14 @@ async def import_cards(
         actor_id=admin.id,
         actor_role=admin.role,
         ip=client_ip(request),
+        note=body.note,
+        expires_at=body.expires_at,
     )
     return {
         "imported": result.imported,
         "duplicates": result.duplicates,
         "rejected": result.rejected,
+        "batch_id": str(result.batch_id) if result.batch_id else None,
     }
 
 
@@ -185,11 +188,22 @@ async def import_cards(
 async def list_cards(
     product_id: uuid.UUID,
     status: Literal["available", "reserved", "sold", "void"] | None = None,
+    batch_id: uuid.UUID | None = None,
+    expiring_days: int | None = Query(None, ge=0, le=3650),
+    order_no: str | None = Query(None, max_length=16),
     page: Page = Depends(get_page),
     _: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    return await inventory.list_cards(db, product_id, status, page)
+    return await inventory.list_cards(
+        db,
+        product_id,
+        status,
+        page,
+        batch_id=batch_id,
+        expiring_days=expiring_days,
+        order_no=order_no,
+    )
 
 
 # ---------------------------------------------------------------- orders
@@ -306,6 +320,7 @@ async def send_message(
         text=body.text,
         attachment_id=body.attachment_id,
         client_msg_id=body.client_msg_id,
+        store=FileStore(res.settings.upload_dir),
     )
     if created:
         await chat.broadcast(res, db, conv, [msg])

@@ -32,6 +32,10 @@ class Order(Base):
     paid_at: Mapped[datetime | None]
     delivered_at: Mapped[datetime | None]
     completed_at: Mapped[datetime | None]
+    access_code_hash: Mapped[str | None] = mapped_column(String(64))
+    source: Mapped[str | None] = mapped_column(String(32))
+    after_sales_until: Mapped[datetime | None]
+    auto_confirm_at: Mapped[datetime | None]
     manual_delivery_text: Mapped[str | None] = mapped_column(Text)
     manual_delivery_attachment_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("attachments.id")

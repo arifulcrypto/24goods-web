@@ -17,6 +17,8 @@ from app.modules.catalog.service import get_active_product
 from app.modules.chat.messages import insert_message
 from app.modules.common.views import iso, message_view, product_card_payload
 from app.modules.realtime.publish import publish_conversation, publish_message
+from app.modules.uploads.service import text_preview
+from app.modules.uploads.storage import FileStore
 
 MAX_PAGE = 100
 
@@ -251,7 +253,9 @@ async def send_user_message(
     text: str | None,
     attachment_id: uuid.UUID | None,
     client_msg_id: str,
+    store: FileStore | None = None,
 ) -> tuple[Message, bool]:
+    payload: dict[str, Any] | None = None
     existing = await db.scalar(
         select(Message).where(
             Message.sender_id == sender.id, Message.client_msg_id == client_msg_id
@@ -277,6 +281,14 @@ async def send_user_message(
         if att is None or att.owner_id != sender.id or att.kind != type or att.purpose != "chat":
             raise NotFound("Attachment not found")
         text = None
+        if type == "file":
+            if store is None:
+                raise Validation("file messages are not available")
+            payload = {
+                "name": att.name or "message.txt",
+                "bytes": att.bytes,
+                "preview": await text_preview(store, att),
+            }
     msg, created = await insert_message(
         db,
         tenant_id=conv.tenant_id,
@@ -286,6 +298,7 @@ async def send_user_message(
         type=type,
         text=text,
         attachment_id=attachment_id,
+        payload=payload,
         client_msg_id=client_msg_id,
     )
     if created:

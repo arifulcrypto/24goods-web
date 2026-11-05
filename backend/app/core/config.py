@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
+import hmac
 import ipaddress
 from functools import cached_property, lru_cache
 
@@ -66,6 +68,8 @@ class Settings(BaseSettings):
     vault_active_kid: str = ""
     vault_fingerprint_key: str = ""  # base64, >= 32 bytes
     quote_hmac_key: str = ""  # base64, >= 32 bytes
+    pow_key: str = ""  # base64, >= 32 bytes: signs proof-of-work challenges
+    lookup_key: str = ""  # base64, >= 32 bytes: HMAC for order access codes (derived if empty)
 
     # --- internal services ---
     internal_token: str = ""  # shared secret API -> delivery, >= 32 chars
@@ -77,6 +81,20 @@ class Settings(BaseSettings):
     reveal_per_buyer_cards: int = 30  # cards revealed per buyer per window (API side)
     reveal_per_buyer_window_s: int = 600
     expiry_interval_s: int = 60
+    max_pending_orders_instant: int = 2
+    order_source_max: int = 32
+
+    # --- storefront v3 ---
+    brand_name: str = "Kesiv"
+    pow_bits: int = 18  # leading zero bits required (~0.3-1 s on a phone)
+    pow_ttl_s: int = 120
+    instant_per_ip_hour: int = 3
+    instant_per_ip_day: int = 10
+    instant_per_net_day: int = 30  # per /24 (IPv4) or /48 (IPv6)
+    instant_purge_days: int = 7
+    lookup_per_ip_hour: int = 10
+    lookup_failures_per_order_hour: int = 5
+    card_expiry_interval_s: int = 3600
 
     # --- payments (ZPay / EPay) ---
     zpay_pid: str = ""
@@ -112,6 +130,7 @@ class Settings(BaseSettings):
                 raise ValueError("APP_ZPAY_API_BASE must be https:// in prod (it carries the key)")
             if not self.cookie_secure:
                 raise ValueError("APP_COOKIE_SECURE must be true in prod")
+
         return self
 
     @cached_property
@@ -140,6 +159,18 @@ class Settings(BaseSettings):
 
     def quote_key(self) -> bytes:
         return decode_key(self.quote_hmac_key)
+
+    def pow_secret(self) -> bytes:
+        if self.pow_key.strip():
+            return decode_key(self.pow_key)
+        if self.is_prod:
+            raise ValueError("APP_POW_KEY is required in prod")
+        return hashlib.sha256(b"dev-pow\x00" + self.quote_key()).digest()
+
+    def lookup_secret(self) -> bytes:
+        if self.lookup_key.strip():
+            return decode_key(self.lookup_key)
+        return hmac.new(self.pow_secret(), b"order-access-code/v1", hashlib.sha256).digest()
 
     def fingerprint_key(self) -> bytes:
         return decode_key(self.vault_fingerprint_key)
