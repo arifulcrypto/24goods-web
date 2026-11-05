@@ -7,3 +7,16 @@ packages:
 # so engines of dependencies are not enforced; the toolchain itself (vite 8, vitest 4)
 # supports Node ^20.19 and 22 LTS.
 engineStrict: false
+
+# --- supply-chain hardening (Semgrep pnpm-* rules) --------------------------------
+# Only registry packages as transitive deps (no git/tarball/URL sub-dependencies).
+blockExoticSubdeps: true
+# Don't resolve versions published < 3 days ago (fresh hijacked releases are usually pulled by then).
+minimumReleaseAge: 4320
+# Fail if a package's publish trust level drops (e.g. provenance -> none) vs. earlier versions.
+trustPolicy: no-downgrade
+# Reviewed 2026-11-05: undici-types@6.21.0 (required as ~6.21.0 by @types/node@22) was
+# published by Node.js core maintainer matteo.collina before the project adopted
+# trusted publishing; later versions have provenance, hence the "downgrade". Not a takeover.
+trustPolicyExclude:
+  - undici-types@6.21.0
