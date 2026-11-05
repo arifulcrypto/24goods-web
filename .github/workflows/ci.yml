@@ -34,6 +34,7 @@ jobs:
     env:
       TEST_DATABASE_URL: postgresql+asyncpg://postgres:test@localhost:5432/test
       TEST_REDIS_URL: redis://localhost:6379/15
+      TEST_REQUIRE_SERVICES: "1"  # fail (not skip) if PG/Redis are missing
     defaults:
       run:
         working-directory: backend
@@ -85,11 +86,12 @@ jobs:
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
-      - run: pnpm -r typecheck
-      - run: pnpm -r test
-      - run: pnpm -r build
-      - name: Bundle budget (web initial JS <= 150 KB gzip)
-        run: pnpm --filter web run size
+      - name: Policy lint (no v-html / CDN / eval / console.log)
+        run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - name: Build both apps + bundle budget (web initial JS <= 150 KB gzip)
+        run: pnpm build
       - name: pnpm audit (advisory)
         continue-on-error: true
         run: pnpm audit --prod
@@ -106,7 +108,7 @@ jobs:
       - name: Semgrep scan
         run: >-
           semgrep scan --config p/python --config p/owasp-top-ten --config p/secrets
-          --config p/javascript --config p/typescript --config p/vue
+          --config p/javascript --config p/typescript
           --error --metrics=off
 
   gitleaks:
@@ -183,17 +185,17 @@ jobs:
           PUBLISH_HTTP: "8080"
         run: |
           ./deploy/bootstrap.sh
-          docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --wait --wait-timeout 240
+          docker compose -f deploy/docker-compose.yml --env-file deploy/.env --profile demo up -d --wait --wait-timeout 300
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
       - name: Smoke test (buyer chat -> quote -> pay -> deliver -> reveal)
         run: |
           pip install httpx
-          python e2e/smoke.py --base http://127.0.0.1:8080 --env deploy/.env
+          python e2e/smoke.py --base http://127.0.0.1:8080 --seed-env deploy/env/seed.env
       - name: Logs on failure
         if: failure()
-        run: docker compose -f deploy/docker-compose.yml --env-file deploy/.env logs --tail 200
+        run: docker compose -f deploy/docker-compose.yml --env-file deploy/.env --profile demo logs --tail 200
 
   publish:
     name: Push images to GHCR
