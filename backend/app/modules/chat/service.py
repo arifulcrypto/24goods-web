@@ -204,7 +204,20 @@ async def find_or_create(
     conv = await open_conversation_for(db, buyer)
     assert conv is not None
     new_msgs: list[Message] = []
-    if product is not None and conv.product_id != product.id:
+    # Compare with the last product card actually in the thread, not conv.product_id: staff
+    # can post cards for other products (v4) without changing conv.product_id, and a buyer
+    # coming back to the earlier product must get its card again.
+    last_card = (
+        await db.scalar(
+            select(Message.payload)
+            .where(Message.conversation_id == conv.id, Message.type == "product_card")
+            .order_by(Message.id.desc())
+            .limit(1)
+        )
+        if product is not None
+        else None
+    )
+    if product is not None and (last_card or {}).get("product_id") != str(product.id):
         msg, _ = await insert_message(
             db,
             tenant_id=buyer.tenant_id,
