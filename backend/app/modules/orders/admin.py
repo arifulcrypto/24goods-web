@@ -14,6 +14,7 @@ from app.core.deps import Page
 from app.core.errors import InvalidState, NotFound, Validation
 from app.core.money import MoneyError, fmt, parse_amount
 from app.core.resources import Resources
+from app.core.settings_v5 import section
 from app.models import Attachment, Checkout, Message, Order, OrderEvent, Product, User
 from app.modules.catalog.service import escape_like
 from app.modules.chat.messages import post_system
@@ -199,8 +200,23 @@ async def list_orders(
     tenant_id: uuid.UUID,
     buyer_id: uuid.UUID | None = None,
     reseller_id: uuid.UUID | None = None,
+    overdue_manual: bool = False,
 ) -> dict[str, Any]:
     stmt = select(Order).where(Order.tenant_id == tenant_id)
+    if overdue_manual:  # manual orders still awaiting delivery past paid_at + ETA
+        default_eta = section(await tenant_settings(db, tenant_id), "delivery")["manual_eta_hours"]
+        eta = func.coalesce(
+            select(Product.delivery_eta_hours)
+            .where(Product.id == Order.product_id, Product.tenant_id == tenant_id)
+            .scalar_subquery(),
+            default_eta,
+        )
+        stmt = stmt.where(
+            Order.delivery_mode == "manual",
+            Order.status == "paid",
+            Order.paid_at.is_not(None),
+            Order.paid_at + func.make_interval(0, 0, 0, 0, eta, 0, 0) < func.now(),
+        )
     if buyer_id is not None:
         stmt = stmt.where(Order.buyer_id == buyer_id)
     if reseller_id is not None:

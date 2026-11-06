@@ -5,8 +5,8 @@ async def test_categories_localized(env):
     c = env.client()
     en = (await c.get("/api/v1/categories")).json()
     zh = (await c.get("/api/v1/categories", headers={"Accept-Language": "zh-CN,zh;q=0.9"})).json()
-    assert {"key": "gift_cards", "name": "Gift cards"} in en
-    assert {"key": "gift_cards", "name": "礼品卡"} in zh
+    assert {"slug": "gift_cards", "key": "gift_cards", "name": "Gift cards", "icon": None} in en
+    assert {"slug": "gift_cards", "key": "gift_cards", "name": "礼品卡", "icon": None} in zh
     assert (await c.get("/api/v1/categories?lang=zh-CN")).json() == zh
 
 

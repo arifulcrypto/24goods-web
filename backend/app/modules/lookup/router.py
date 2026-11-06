@@ -16,9 +16,12 @@ from app.core import pow as powmod
 from app.core.audit import audit
 from app.core.deps import client_ip, get_db, get_lang, get_res, get_tenant_id
 from app.core.errors import NotFound
+from app.core.features import require_feature
 from app.core.ratelimit import blocked, enforce, hit
 from app.core.resources import Resources
+from app.core.turnstile import require_turnstile
 from app.models import Order
+from app.modules.content.site import tenant_settings
 from app.modules.orders import service
 
 router = APIRouter(prefix="/lookup", tags=["lookup"])
@@ -86,6 +89,9 @@ async def lookup(
     db: AsyncSession = Depends(get_db),
     res: Resources = Depends(get_res),
 ) -> JSONResponse:
+    ts = await tenant_settings(db, tenant_id)
+    require_feature(ts, "lookup")
+    await require_turnstile(request, ts, "lookup", request.headers.get("x-turnstile-token"))
     await powmod.verify(res.settings, res.redis, "lookup", body.pow)
     ip = client_ip(request)
     await enforce(res.redis, "lookup:ip", ip or "-", res.settings.lookup_per_ip_hour, 3600)
@@ -102,6 +108,7 @@ async def reveal(
     db: AsyncSession = Depends(get_db),
     res: Resources = Depends(get_res),
 ) -> JSONResponse:
+    require_feature(await tenant_settings(db, tenant_id), "lookup")
     ip = client_ip(request)
     await enforce(res.redis, "lookup:reveal:ip", ip or "-", *IP_REVEALS)
     order = await _authenticate(db, res, tenant_id, body.order_no, body.access_code, ip)

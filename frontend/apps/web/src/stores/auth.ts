@@ -35,18 +35,32 @@ export const useAuthStore = defineStore('auth', () => {
     return loading
   }
 
-  async function login(email: string, password: string, pow?: PowSolution) {
-    user.value = await api.auth.login(pow ? { email, password, pow } : { email, password })
+  async function login(email: string, password: string, pow?: PowSolution, turnstile_token?: string) {
+    user.value = await api.auth.login({
+      email,
+      password,
+      ...(pow ? { pow } : {}),
+      ...(turnstile_token ? { turnstile_token } : {}),
+    })
     ready.value = true
     return user.value
   }
-  async function register(b: { email: string; password: string; display_name: string; locale: Locale; pow?: PowSolution }) {
+  async function register(b: {
+    email: string
+    password: string
+    display_name: string
+    locale: Locale
+    pow?: PowSolution
+    email_code?: string
+    agree_terms?: boolean
+    turnstile_token?: string
+  }) {
     user.value = await api.auth.register(b)
     ready.value = true
     return user.value
   }
-  async function instant(pow: PowSolution): Promise<InstantCredentials> {
-    const r = await api.auth.instant({ pow })
+  async function instant(pow: PowSolution, turnstile_token?: string): Promise<InstantCredentials> {
+    const r = await api.auth.instant(turnstile_token ? { pow, turnstile_token } : { pow })
     user.value = r.user
     ready.value = true
     guestCreds.value = r.credentials

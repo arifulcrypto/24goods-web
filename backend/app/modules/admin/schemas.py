@@ -7,7 +7,6 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-from app.modules.catalog.categories import CATEGORIES
 from app.modules.inventory.service import end_of_day
 
 _FILE_URL = re.compile(
@@ -37,10 +36,18 @@ def _images(value: list[str]) -> list[str]:
     return value
 
 
-def _category(value: str) -> str:
-    if value not in CATEGORIES:
-        raise ValueError("unknown category")
-    return value
+def _source_url(value: str | None) -> str | None:
+    """http(s) URL, at most 1000 characters, or None (staff-only field)."""
+    if value is None:
+        return None
+    v = value.strip()
+    if not v:
+        return None
+    if len(v) > 1000 or any(ord(c) < 32 or ord(c) == 127 or c.isspace() for c in v):
+        raise ValueError("source_url must be at most 1000 characters without whitespace")
+    if not v.lower().startswith(("https://", "http://")):
+        raise ValueError("source_url must be an http(s) URL")
+    return v
 
 
 SEPARATORS = ("----", "|", ",", "\t", ":")
@@ -117,6 +124,15 @@ class ProductIn(BaseModel):
     after_sales_hours: int | None = Field(None, ge=0, le=8760)
     group_sort: int = Field(0, ge=-1000, le=1000)
     buyer_input: BuyerInputConfig | None = None
+    # v5 (staff-only fields except the ETA): manual delivery promise, import/middleman data
+    delivery_eta_hours: int | None = Field(None, ge=1, le=720)
+    cost_minor: int | None = Field(None, ge=0, le=10**12)
+    source_url: str | None = None
+
+    @field_validator("source_url")
+    @classmethod
+    def _su(cls, v: str | None) -> str | None:
+        return _source_url(v)
 
     @field_validator("delivery_format")
     @classmethod
@@ -153,11 +169,6 @@ class ProductIn(BaseModel):
     def _i(cls, v: list[str]) -> list[str]:
         return _images(v)
 
-    @field_validator("category")
-    @classmethod
-    def _c(cls, v: str) -> str:
-        return _category(v)
-
 
 class ProductPatch(BaseModel):
     title_i18n: dict[str, str] | None = None
@@ -175,6 +186,14 @@ class ProductPatch(BaseModel):
     after_sales_hours: int | None = Field(None, ge=0, le=8760)
     group_sort: int | None = Field(None, ge=-1000, le=1000)
     buyer_input: BuyerInputConfig | None = None  # explicit null clears the popup
+    delivery_eta_hours: int | None = Field(None, ge=1, le=720)  # explicit null = tenant default
+    cost_minor: int | None = Field(None, ge=0, le=10**12)
+    source_url: str | None = None
+
+    @field_validator("source_url")
+    @classmethod
+    def _su(cls, v: str | None) -> str | None:
+        return _source_url(v)
 
     @field_validator("delivery_format")
     @classmethod
@@ -210,11 +229,6 @@ class ProductPatch(BaseModel):
     @classmethod
     def _i(cls, v: list[str] | None) -> list[str] | None:
         return None if v is None else _images(v)
-
-    @field_validator("category")
-    @classmethod
-    def _c(cls, v: str | None) -> str | None:
-        return None if v is None else _category(v)
 
 
 class CardsImportIn(BaseModel):
@@ -278,3 +292,9 @@ class CardReplaceIn(BaseModel):
 class AgentStatusIn(BaseModel):
     status: Literal["online", "away", "on_hold", "offline"]
     message: str | None = Field(None, max_length=200)
+
+
+class BulkProductsIn(BaseModel):
+    ids: list[uuid.UUID] = Field(min_length=1, max_length=200)
+    action: Literal["publish", "unpublish", "archive", "restore", "set_category"]
+    category: str | None = Field(None, max_length=32)

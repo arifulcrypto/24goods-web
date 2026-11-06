@@ -7,6 +7,7 @@ import { api } from '../api'
 import MiniStrip from '../components/MiniStrip.vue'
 import { useAuthStore } from '../stores/auth'
 import { useConversationsStore } from '../stores/conversations'
+import { useSiteStore } from '../stores/site'
 import { setLocale } from '../locale'
 import type { AppLocale } from '../i18n'
 import { confirm, showSuccessToast, showToast, toastError } from '../ui'
@@ -15,6 +16,7 @@ const { t, locale } = useI18n()
 const router = useRouter()
 const auth = useAuthStore()
 const convs = useConversationsStore()
+const site = useSiteStore()
 const initial = computed(() => (auth.user?.display_name || auth.user?.handle || auth.user?.email || '?').trim().charAt(0).toUpperCase())
 const identity = computed(() => auth.user?.email || auth.user?.handle || '')
 const recent = ref<ProductSummary[]>([])
@@ -37,7 +39,7 @@ function switchLang(l: AppLocale) {
   if (locale.value !== l) setLocale(l)
 }
 async function logout() {
-  if (!(await confirm(t('me.logout'), t('me.logoutConfirm')))) return
+  if (!(await confirm(t('me.logout'), t('me.logoutConfirm', { brand: site.headerName })))) return
   try {
     await auth.logout()
     showToast(t('me.loggedOut'))
@@ -168,7 +170,7 @@ async function deleteAccount() {
 
     <div v-if="!auth.user" class="section auth-actions">
       <van-button round type="primary" block :to="{ name: 'login', query: { redirect: '/me' } }">{{ t('me.login') }}</van-button>
-      <van-button round plain block :to="{ name: 'register', query: { redirect: '/me' } }">{{ t('me.register') }}</van-button>
+      <van-button v-if="site.features.registration" round plain block :to="{ name: 'register', query: { redirect: '/me' } }">{{ t('me.register') }}</van-button>
     </div>
 
     <section v-if="auth.user?.is_instant" class="section card secure">
@@ -186,7 +188,8 @@ async function deleteAccount() {
         <van-cell v-if="auth.user" :title="t('me.orders')" icon="orders-o" is-link to="/orders" />
         <van-cell v-if="auth.user" :title="t('me.messages')" icon="chat-o" is-link to="/messages" :value="convs.totalUnread ? String(convs.totalUnread) : ''" />
         <van-cell v-if="auth.user" :title="t('me.changeCredentials')" icon="lock" is-link @click="openCred" />
-        <van-cell :title="t('lookup.title')" icon="search" is-link to="/lookup" />
+        <van-cell v-if="auth.user && !auth.user.is_instant && site.features.resellers" :title="t('reseller.center')" icon="shop-o" is-link to="/reseller" />
+        <van-cell v-if="site.features.lookup" :title="t('lookup.title')" icon="search" is-link to="/lookup" />
         <van-cell :title="t('help.title')" icon="question-o" is-link to="/help" />
         <van-cell :title="t('me.rules')" icon="description-o" is-link to="/a/rules" />
         <van-cell :title="t('me.afterSalesPolicy')" icon="shield-o" is-link to="/a/after-sales" />
@@ -212,7 +215,7 @@ async function deleteAccount() {
 
     <section class="section card tips">
       <div class="tips-title"><van-icon name="shield-o" /> {{ t('me.safety') }}</div>
-      <p class="muted">{{ t('me.safetyText') }}</p>
+      <p class="muted">{{ t('me.safetyText', { brand: site.headerName }) }}</p>
     </section>
 
     <div v-if="auth.user" class="section">

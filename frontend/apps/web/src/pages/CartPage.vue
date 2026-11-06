@@ -8,6 +8,7 @@ import {
   formatMoney,
   isApiError,
   safePayUrl,
+  toMinor,
   type BuyerInputConfig,
   type InstantCredentials,
 } from '@24goods/shared'
@@ -15,11 +16,14 @@ import { api } from '../api'
 import BuyerInputSheet from '../components/BuyerInputSheet.vue'
 import CredentialsSheet from '../components/CredentialsSheet.vue'
 import FeeLines from '../components/FeeLines.vue'
+import ManualPromise from '../components/ManualPromise.vue'
+import PromoField, { type AppliedPromo } from '../components/PromoField.vue'
+import TurnstileBox from '../components/TurnstileBox.vue'
 import PowStatus from '../components/PowStatus.vue'
 import { isPowAbort } from '../composables/usePow'
 import { useEnsureAccount } from '../composables/useEnsureAccount'
 import { recalledSrc, stashAccessCode } from '../lib/attribution'
-import { CART_MAX_QTY, useCartStore } from '../stores/cart'
+import { CART_MAX_QTY, useCartStore, type CartLine } from '../stores/cart'
 import { useAuthStore } from '../stores/auth'
 import { useSiteStore } from '../stores/site'
 import { closeToast, confirm, showLoadingToast, showToast, toastError } from '../ui'
@@ -43,18 +47,67 @@ onMounted(() => {
   void cart.refreshQuote()
 })
 
-const rows = computed(() =>
-  cart.lines.map((l) => {
-    const q = cart.quoteByProduct.get(l.product_id) ?? null
-    return { line: l, q, available: q ? q.available : true, loaded: !!q }
-  }),
-)
-const allSelected = computed({
-  get: () => cart.lines.length > 0 && cart.lines.every((l) => l.selected),
-  set: (v: boolean) => cart.selectAll(v),
+function toRow(l: CartLine) {
+  const q = cart.quoteByProduct.get(l.product_id) ?? null
+  const off = !!q && (!q.available || !!q.unavailable_reason)
+  return { line: l, q, available: !off, loaded: !!q }
+}
+const rows = computed(() => cart.availableLines.map(toRow))
+const offRows = computed(() => cart.unavailableLines.map(toRow))
+
+// ---- v5 §1: manage mode (select all / delete selected) ----
+const managing = ref(false)
+const picked = ref<Set<string>>(new Set())
+const allPicked = computed({
+  get: () => cart.lines.length > 0 && picked.value.size === cart.lines.length,
+  set: (v: boolean) => (picked.value = v ? new Set(cart.lines.map((l) => l.product_id)) : new Set()),
 })
-const totals = computed(() => cart.totals(site.permille))
+function togglePick(id: string, v: boolean) {
+  const n = new Set(picked.value)
+  if (v) n.add(id)
+  else n.delete(id)
+  picked.value = n
+}
+function toggleManage() {
+  managing.value = !managing.value
+  picked.value = new Set()
+}
+async function deletePicked() {
+  const ids = [...picked.value]
+  if (!ids.length) return
+  if (!(await confirm(t('cart.deleteSelectedTitle', { n: ids.length }), ''))) return
+  cart.removeMany(ids)
+  picked.value = new Set()
+  if (!cart.lines.length) managing.value = false
+  void cart.refreshQuote()
+}
+async function clearUnavailable() {
+  if (!(await confirm(t('cart.clearUnavailableTitle'), ''))) return
+  cart.removeMany(cart.unavailableLines.map((l) => l.product_id))
+  void cart.refreshQuote()
+}
+
+const allSelected = computed({
+  get: () => cart.availableLines.length > 0 && cart.availableLines.every((l) => l.selected),
+  set: (v: boolean) => cart.availableLines.forEach((l) => cart.setSelected(l.product_id, v)),
+})
+
+// ---- v5 §6: promo (preview via /promo/validate; the server recomputes at checkout) ----
+const promo = ref<AppliedPromo | null>(null)
+const promoItems = computed(() => cart.payable.map((l) => ({ product_id: l.product_id, qty: l.qty })))
+const discountMinor = computed(() => (promo.value && !promo.value.stale ? promo.value.discount_minor : 0))
+const totals = computed(() => cart.totals(site.permille, discountMinor.value))
+const discountApplied = computed(() => Number(toMinor(totals.value.discount) ?? 0n))
 const currency = computed(() => cart.currency)
+const groups = computed(() =>
+  [
+    { key: 'ok', rows: rows.value },
+    { key: 'off', rows: offRows.value },
+  ].filter((g) => g.rows.length),
+)
+function reasonText(r: string | null | undefined): string {
+  return r === 'archived' || r === 'unpublished' || r === 'out_of_stock' ? t(`cart.reason.${r}`) : t('cart.unavailable')
+}
 
 function maxQty(productId: string): number {
   const q = cart.quoteByProduct.get(productId)
@@ -119,6 +172,10 @@ async function checkout() {
     showToast(t('cart.nothingSelected'))
     return
   }
+  if (!auth.loggedIn && !site.features.guest_checkout) {
+    void router.push({ name: 'login', query: { redirect: '/cart' } })
+    return
+  }
   busy.value = true
   try {
     if (!(await collectMissingInputs())) return
@@ -157,7 +214,7 @@ async function submit() {
   let checkoutNo: string | null = null
   try {
     // Only product ids, qty and the order information are sent; the server prices everything.
-    const r = await api.checkout.create(cart.toInputs(chosen), recalledSrc())
+    const r = await api.checkout.create(cart.toInputs(chosen), recalledSrc(), promo.value?.code)
     checkoutNo = r.checkout.checkout_no
     for (const o of r.orders) {
       stashAccessCode(o.id, r.access_codes[o.order_no])
@@ -170,6 +227,11 @@ async function submit() {
     window.location.assign(safe)
   } catch (e) {
     closeToast()
+    if (isApiError(e) && e.code.startsWith('promo_')) {
+      promo.value = null // let the buyer re-apply or continue without the code
+      toastError(e)
+      return
+    }
     if (isApiError(e) && e.code === 'out_of_stock') {
       toastError(e)
       void cart.refreshQuote()
@@ -185,7 +247,11 @@ async function submit() {
 
 <template>
   <div class="page with-footer">
-    <van-nav-bar :title="t('cart.title')" class="dock-top" fixed placeholder safe-area-inset-top />
+    <van-nav-bar :title="t('cart.title')" class="dock-top" fixed placeholder safe-area-inset-top>
+      <template v-if="cart.lines.length" #right>
+        <button type="button" class="manage" @click="toggleManage">{{ managing ? t('cart.done') : t('cart.manage') }}</button>
+      </template>
+    </van-nav-bar>
 
     <van-empty v-if="!cart.lines.length" image="default" :description="t('cart.empty')">
       <van-button round type="primary" to="/">{{ t('cart.goShopping') }}</van-button>
@@ -195,54 +261,79 @@ async function submit() {
       <button v-if="cart.quoteError && !cart.quote" type="button" class="retry" @click="cart.refreshQuote()">
         {{ t('cart.refreshFailed') }}
       </button>
-      <ul class="lines">
-        <li v-for="r in rows" :key="r.line.product_id">
-          <van-swipe-cell class="card">
-            <div class="line" :class="{ off: !r.available }">
-              <van-checkbox
-                :model-value="r.line.selected && r.available"
-                :disabled="!r.available"
-                class="chk"
-                :aria-label="r.q?.title ?? ''"
-                @update:model-value="cart.setSelected(r.line.product_id, $event)"
-              />
-              <RouterLink :to="`/p/${encodeURIComponent(r.line.product_id)}`" class="thumb">
-                <ProductThumb :src="r.q?.cover ?? null" :title="r.q?.title ?? ''" :size="72" :radius="8" />
-              </RouterLink>
-              <div class="info">
-                <div class="title">{{ r.q?.title ?? '…' }}</div>
-                <div v-if="!r.available && r.loaded" class="flag">{{ t('cart.unavailable') }}</div>
-                <div v-else-if="r.q" class="muted small">
-                  {{ t('cart.unitPrice', { price: formatMoney(r.q.unit_price, r.q.currency, locale) }) }}
-                </div>
-                <button v-if="r.q?.needs_input && r.available" type="button" class="link" @click="editInput(r.line.product_id)">
-                  {{ r.line.buyer_input ? t('cart.infoSet') + ' · ' + t('cart.editInfo') : t('cart.editInfo') }}
-                </button>
-                <div class="bottom">
-                  <span v-if="r.q" class="price">{{ formatMoney(cart.lineSubtotal(r.line, r.q), r.q.currency, locale) }}</span>
-                  <van-stepper
-                    :model-value="r.line.qty"
-                    :min="1"
-                    :max="maxQty(r.line.product_id)"
-                    :disabled="!r.available"
-                    integer
-                    :input-width="40"
-                    :button-size="32"
-                    @change="onQty(r.line.product_id, $event)"
-                  />
+      <template v-for="g in groups" :key="g.key">
+        <div v-if="g.key === 'off'" class="off-head">
+          <span>{{ t('cart.unavailableGroup', { n: g.rows.length }) }}</span>
+          <button type="button" class="clear" @click="clearUnavailable">{{ t('cart.clearUnavailable') }}</button>
+        </div>
+        <ul class="lines" :class="{ 'lines-off': g.key === 'off' }">
+          <li v-for="r in g.rows" :key="r.line.product_id">
+            <van-swipe-cell class="card">
+              <div class="line" :class="{ off: !r.available }">
+                <van-checkbox
+                  v-if="managing"
+                  :model-value="picked.has(r.line.product_id)"
+                  class="chk"
+                  :aria-label="r.q?.title ?? ''"
+                  @update:model-value="togglePick(r.line.product_id, $event)"
+                />
+                <van-checkbox
+                  v-else
+                  :model-value="r.line.selected && r.available"
+                  :disabled="!r.available"
+                  class="chk"
+                  :aria-label="r.q?.title ?? ''"
+                  @update:model-value="cart.setSelected(r.line.product_id, $event)"
+                />
+                <RouterLink :to="`/p/${encodeURIComponent(r.line.product_id)}`" class="thumb">
+                  <ProductThumb :src="r.q?.cover ?? null" :title="r.q?.title ?? ''" :size="72" :radius="8" />
+                </RouterLink>
+                <div class="info">
+                  <div class="title-row">
+                    <div class="title">{{ r.q?.title ?? '…' }}</div>
+                    <button type="button" class="trash" :aria-label="t('cart.remove')" @click="removeLine(r.line.product_id)">
+                      <van-icon name="delete-o" size="20" />
+                    </button>
+                  </div>
+                  <div v-if="!r.available && r.loaded" class="flag">{{ reasonText(r.q?.unavailable_reason) }}</div>
+                  <template v-else-if="r.q">
+                    <div class="muted small">
+                      {{ t('cart.unitPrice', { price: formatMoney(r.q.unit_price, r.q.currency, locale) }) }}
+                    </div>
+                    <ManualPromise v-if="r.q.delivery_mode === 'manual'" class="small" :eta="r.q.delivery_eta_hours" compact />
+                  </template>
+                  <button v-if="r.q?.needs_input && r.available" type="button" class="link" @click="editInput(r.line.product_id)">
+                    {{ r.line.buyer_input ? t('cart.infoSet') + ' · ' + t('cart.editInfo') : t('cart.editInfo') }}
+                  </button>
+                  <div class="bottom">
+                    <span v-if="r.q" class="price">{{ formatMoney(cart.lineSubtotal(r.line, r.q), r.q.currency, locale) }}</span>
+                    <van-stepper
+                      :model-value="r.line.qty"
+                      :min="1"
+                      :max="maxQty(r.line.product_id)"
+                      :disabled="!r.available"
+                      integer
+                      :input-width="40"
+                      :button-size="32"
+                      @change="onQty(r.line.product_id, $event)"
+                    />
+                  </div>
                 </div>
               </div>
-            </div>
-            <template #right>
-              <van-button square type="danger" class="del" :text="t('cart.remove')" @click="removeLine(r.line.product_id)" />
-            </template>
-          </van-swipe-cell>
-          <p v-if="!r.available && r.loaded" class="muted small hint">{{ t('cart.unavailableHint') }}</p>
-        </li>
-      </ul>
-      <div v-if="cart.payableCount" class="card summary">
+              <template #right>
+                <van-button square type="danger" class="del" :text="t('cart.remove')" @click="removeLine(r.line.product_id)" />
+              </template>
+            </van-swipe-cell>
+            <p v-if="!r.available && r.loaded" class="muted small hint">{{ t('cart.unavailableHint') }}</p>
+          </li>
+        </ul>
+      </template>
+      <div v-if="!managing && cart.payableCount" class="card summary">
+        <PromoField v-model="promo" :items="promoItems" />
+        <p v-if="promo?.stale" class="muted small stale">{{ t('promo.stale') }}</p>
         <FeeLines
           :subtotal="totals.subtotal"
+          :discount-minor="discountApplied"
           :fee="totals.fee"
           :currency="currency"
           :label="site.channel?.label"
@@ -250,9 +341,17 @@ async function submit() {
           hide-when-free
         />
       </div>
+      <div v-if="!managing && !auth.loggedIn && cart.payableCount" class="summary"><TurnstileBox :ts="account.ts" /></div>
       <PowStatus :solving="account.solving.value" :progress="account.progress.value" />
 
-      <div class="dock footer">
+      <div v-if="managing" class="dock footer">
+        <van-checkbox v-model="allPicked" class="all">{{ t('cart.selectAll') }}</van-checkbox>
+        <div class="sum" />
+        <van-button round type="danger" class="go" :disabled="!picked.size" @click="deletePicked">
+          {{ t('cart.deleteN', { n: picked.size }) }}
+        </van-button>
+      </div>
+      <div v-else class="dock footer">
         <van-checkbox v-model="allSelected" class="all">{{ t('cart.selectAll') }}</van-checkbox>
         <div class="sum">
           <span class="muted small">{{ t('cart.total') }}</span>
@@ -404,5 +503,60 @@ async function submit() {
   flex: none;
   min-width: 120px;
   font-weight: 700;
+}
+.manage {
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0 4px;
+  border: 0;
+  background: none;
+  color: var(--c-text);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+.title-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+}
+.title-row .title {
+  flex: 1;
+  min-width: 0;
+}
+.trash {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  margin: -10px -10px 0 0;
+  border: 0;
+  background: none;
+  color: var(--c-muted, #8a8a8a);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.off-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px 0;
+  font-size: 13px;
+  color: var(--c-muted, #8a8a8a);
+}
+.clear {
+  min-height: 44px;
+  padding: 0 4px;
+  border: 0;
+  background: none;
+  color: var(--c-price);
+  font: inherit;
+  cursor: pointer;
+}
+.lines-off {
+  padding-top: 4px;
+}
+.stale {
+  margin: 4px 0 8px;
 }
 </style>

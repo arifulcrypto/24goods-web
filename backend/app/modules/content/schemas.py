@@ -3,7 +3,21 @@ from __future__ import annotations
 import re
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from app.modules.content.schemas_v5 import (
+    AuditIn,
+    DefaultsIn,
+    DeliveryIn,
+    EmailIn,
+    EmailTemplatesIn,
+    FeaturesIn,
+    GeneralIn,
+    ImportIn,
+    LegalIn,
+    ResellersIn,
+    SecurityIn,
+)
 
 LOCALES = ("en", "zh-CN")
 _SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
@@ -166,6 +180,20 @@ class RateLimitIn(BaseModel):
 
 
 class SiteIn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    # v5 sections (review-v5 §3); each is a partial update stored via settings_v5.merge
+    general: GeneralIn | None = None
+    legal: LegalIn | None = None
+    features: FeaturesIn | None = None
+    security: SecurityIn | None = None
+    defaults: DefaultsIn | None = None
+    email: EmailIn | None = None
+    email_templates: EmailTemplatesIn | None = None
+    delivery: DeliveryIn | None = None
+    import_: ImportIn | None = Field(None, alias="import")
+    resellers: ResellersIn | None = None
+    audit: AuditIn | None = None
     announcement: AnnouncementIn | None = None
     payments: PaymentsIn | None = None
     support: SupportIn | None = None

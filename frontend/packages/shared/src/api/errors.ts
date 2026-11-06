@@ -24,6 +24,24 @@ export const API_ERROR_CODES = [
   'pay_via_checkout',
   'already_paid',
   'buyer_input_required',
+  // v5
+  'feature_disabled',
+  'turnstile_failed',
+  'email_code_required',
+  'email_code_invalid',
+  'terms_required',
+  'promo_invalid',
+  'promo_not_started',
+  'promo_expired',
+  'promo_exhausted',
+  'promo_user_limit',
+  'promo_min_subtotal',
+  'promo_not_applicable',
+  'slug_taken',
+  'slug_invalid',
+  'payout_below_min',
+  'payout_exceeds_available',
+  'payout_open',
 ] as const
 export const CLIENT_ERROR_CODES = ['network', 'server_error', 'timeout', 'unknown'] as const
 export type ContractErrorCode = (typeof API_ERROR_CODES)[number]

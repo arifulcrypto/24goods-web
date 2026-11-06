@@ -12,8 +12,10 @@ from app.core.audit import audit
 from app.core.config import Settings
 from app.core.db import tenant_session
 from app.core.resources import Resources
+from app.core.settings_v5 import section
 from app.models import AfterSales, Order, Tenant, User
 from app.modules.chat.messages import post_system
+from app.modules.content.site import tenant_settings
 from app.modules.inventory.service import void_expired
 from app.modules.me.service import anonymize, remove_files
 from app.modules.orders.events import add_event, snapshot
@@ -148,6 +150,21 @@ async def void_expired_cards(maker: async_sessionmaker[AsyncSession]) -> int:
     for tid in await _tenant_ids(maker):
         async with tenant_session(maker, tid) as db:
             total += await void_expired(db, tid)
+    return total
+
+
+async def purge_audit(maker: async_sessionmaker[AsyncSession]) -> int:
+    """Delete audit rows older than each tenant's ``audit.retention_days`` (default 365).
+    Money-state history also lives in ledger/order_events, so this is safe."""
+    total = 0
+    for tid in await _tenant_ids(maker):
+        async with tenant_session(maker, tid) as db:
+            days = section(await tenant_settings(db, tid), "audit")["retention_days"]
+            n = await db.scalar(
+                select(func.purge_audit_log(tid, datetime.now(timezone.utc) - timedelta(days=days)))
+            )
+            await db.commit()
+            total += int(n or 0)
     return total
 
 

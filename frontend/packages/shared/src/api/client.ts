@@ -11,6 +11,8 @@ export interface RequestOptions {
   signal?: AbortSignal
   /** Do not invoke the global onUnauthorized hook for a 401 (e.g. login, /auth/me probe). */
   skipAuthHandler?: boolean
+  /** Extra request headers (e.g. `X-Turnstile-Token`). Cannot override the built-in ones. */
+  headers?: Record<string, string>
 }
 
 export interface ApiClientOptions {
@@ -18,6 +20,8 @@ export interface ApiClientOptions {
   baseUrl?: string
   /** Current UI locale; sent as Accept-Language. */
   getLocale?: () => string
+  /** v5 §7: extra headers on EVERY request (e.g. `X-Storefront`). Empty/undefined values are skipped. */
+  getHeaders?: () => Record<string, string | null | undefined>
   /** Called on any 401 unless the request opted out. */
   onUnauthorized?: (err: ApiError) => void
   /**
@@ -72,6 +76,9 @@ export class ApiClient {
       Accept: 'application/json',
       // CSRF: the API rejects non-GET requests without this header (403 csrf). Always send it.
       'X-Requested-With': 'fetch',
+    }
+    for (const [k, v] of Object.entries({ ...(this.opts.getHeaders?.() ?? {}), ...(o.headers ?? {}) })) {
+      if (v && !(k in headers)) headers[k] = v
     }
     const locale = this.opts.getLocale?.()
     if (locale) headers['Accept-Language'] = locale

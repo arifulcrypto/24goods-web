@@ -6,6 +6,8 @@ Update this file in every PR. Phases are defined in [review-v2.md §8](review-v2
 
 ## Done
 
+- v5 product import backend: `core/safefetch.py` (SSRF-safe, IP-pinned), `catalog/importer/` parsers + gmailbuy/maitg/ka8 adapters, `admin/importer.py` endpoints, offline fixture tests.
+
 ### 2026-11-05: M0 bootstrap
 - Research by four parallel agents; evaluation in `docs/analysis.md`.
 - Card vault, EPay verifier, CI security gates, AGENTS.md, project review agents.
@@ -164,3 +166,8 @@ Update this file in every PR. Phases are defined in [review-v2.md §8](review-v2
   - buyer cancel and staff close
   - staff product card
   - global limiter, checking the exact 429 body
+
+### v5 backend core (2026-11-06)
+- Done: product archive/hard delete/restore/bulk; DB-backed categories with admin CRUD; settings sections + encrypted secrets (`APP_SETTINGS_KEY`, added to dev.sh and bootstrap.sh; prod.sh does not generate api.env); feature toggles; Turnstile; SMTP mailer, email codes, password reset, configurable email templates, order emails; Google sign-in; audit filters/CSV/retention; manual delivery ETA + overdue filter; tenant `defaults` applied to pending-order cap and timeout.
+- Migration 0005 (`0005_v5_core_grants`): API may update its outbox rows; bounded `purge_audit_log()` function. Rebase note: the commerce agent may add its own 0005; renumber on merge.
+- Next: frontend settings UI/consumers; production DNS/Turnstile hostnames; independent review (M1 gate) still open.

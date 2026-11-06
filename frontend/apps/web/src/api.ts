@@ -1,4 +1,4 @@
-import { ApiClient, createBuyerApi, createRateLimitNotifier, type ApiError } from '@24goods/shared'
+import { ApiClient, createBuyerApi, createRateLimitNotifier, storefrontHeaders, type ApiError } from '@24goods/shared'
 import { currentLocale, i18n } from './i18n'
 import { showFailToast } from './ui'
 
@@ -11,6 +11,8 @@ export function setUnauthorizedHandler(fn: UnauthorizedHandler): void {
 export const client = new ApiClient({
   baseUrl: '/api/v1',
   getLocale: () => currentLocale(),
+  // v5 §7: `?store=slug` (remembered in sessionStorage) is sent as X-Storefront on every request
+  getHeaders: () => storefrontHeaders(),
   onUnauthorized: (e) => onUnauthorized(e),
   // v4 §10: global access-frequency limit → one toast per few seconds
   onRateLimited: createRateLimitNotifier(() =>
