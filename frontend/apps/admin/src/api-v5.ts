@@ -147,6 +147,11 @@ export type SiteSectionPatch = Partial<{ [K in keyof SiteSections]: Partial<Site
     rate_limit: RateLimitCfg
   }>
 
+/** `error` codes of POST /admin/site/email/test (ok:false); anything else is shown as sent. */
+export const EMAIL_TEST_ERRORS = ['connect_failed', 'blocked_host', 'auth_failed', 'rejected', 'send_failed'] as const
+export const emailTestErrorKey = (code: string | undefined): string | null =>
+  code && (EMAIL_TEST_ERRORS as readonly string[]).includes(code) ? `v5.email.err.${code}` : null
+
 // ---------------- categories (§2) ----------------
 export interface AdminCategory {
   id: string
@@ -156,6 +161,12 @@ export interface AdminCategory {
   sort: number
   enabled: boolean
   product_count?: number
+}
+/** Raw shape of GET /admin/categories (`products` is the product count). */
+type RawCategory = Omit<AdminCategory, 'product_count'> & { products?: number; product_count?: number }
+const catOf = (c: RawCategory): AdminCategory => {
+  const { products, ...rest } = c
+  return { ...rest, product_count: c.product_count ?? products }
 }
 export type AdminCategoryInput = Pick<AdminCategory, 'name_i18n' | 'icon' | 'sort' | 'enabled'> & { slug?: string }
 
@@ -176,6 +187,8 @@ export interface ProductPrefill {
   price_minor: number | null
   cost_minor: number | null
   source_url: string | null
+  /** Our own /api/v1/files URLs (already fetched through the SSRF-safe importer); the first becomes the cover. */
+  images?: string[]
 }
 export type BulkAction = 'publish' | 'unpublish' | 'archive' | 'restore' | 'set_category'
 export interface ImportImage {
@@ -289,7 +302,7 @@ export interface OrderV5Fields {
   kind: string
   discount_minor: number
   promo_code: string | null
-  reseller: { slug: string; store_name: string } | null
+  reseller: { slug?: string; store_name: string } | null
   reseller_markup_minor: number
   cost_minor: number | null
   overdue_manual?: boolean
@@ -298,6 +311,50 @@ export interface OrderV5Fields {
 }
 export type AdminOrderV5 = AdminOrder & Partial<OrderV5Fields>
 export type OrderDetailV5 = Order & Partial<OrderV5Fields>
+
+// ---- adapters: the backend nests some fields the console reads flat ----
+interface RawStats {
+  total?: { orders?: number; earnings_minor?: number }
+  balances?: { pending_minor?: number; available_minor?: number; paid_minor?: number }
+}
+type RawReseller = Omit<AdminReseller, 'stats'> & { user?: { id?: string; email?: string } | null; stats?: RawStats | AdminReseller['stats'] }
+const resellerOf = (r: RawReseller): AdminReseller => {
+  const st = r.stats as RawStats | undefined
+  const flat: AdminReseller['stats'] = st
+    ? {
+        orders: st.total?.orders,
+        markup_minor: st.total?.earnings_minor,
+        pending_minor: st.balances?.pending_minor,
+        available_minor: st.balances?.available_minor,
+        paid_minor: st.balances?.paid_minor,
+      }
+    : undefined
+  const { user, stats: _s, ...rest } = r
+  void _s
+  return { ...rest, user_email: r.user_email ?? user?.email ?? null, stats: flat }
+}
+type RawPayout = Omit<AdminPayout, 'reseller_id' | 'account_snapshot'> & {
+  reseller_id?: string
+  reseller?: { id: string; slug: string; store_name: string }
+  account?: AdminPayout['account_snapshot']
+  account_snapshot?: AdminPayout['account_snapshot']
+}
+const payoutOf = (p: RawPayout): AdminPayout => {
+  const { reseller, account, ...rest } = p
+  return {
+    ...rest,
+    reseller_id: p.reseller_id ?? reseller?.id ?? '',
+    store_name: p.store_name ?? reseller?.store_name ?? null,
+    slug: p.slug ?? reseller?.slug ?? null,
+    account_snapshot: p.account_snapshot ?? account ?? null,
+  }
+}
+type RawRedemption = Omit<PromoRedemption, 'user'> & { user: string | { id?: string; email?: string } | null }
+const redemptionOf = (r: RawRedemption): PromoRedemption => ({
+  ...r,
+  user: typeof r.user === 'string' || r.user == null ? (r.user ?? null) : r.user.email || r.user.id || null,
+})
+const mapPage = <A, B>(p: Paginated<A>, f: (a: A) => B): Paginated<B> => ({ ...p, items: p.items.map(f) })
 
 function clean(q: object): Record<string, string | number | boolean | undefined> {
   const out: Record<string, string | number | boolean | undefined> = {}
@@ -316,9 +373,9 @@ export function createAdminV5Api(c: ApiClient) {
         c.post<{ ok: boolean; error?: string }>('/admin/site/email/test', template ? { to, template } : { to }),
     },
     categories: {
-      list: () => c.get<AdminCategory[] | { items: AdminCategory[] }>('/admin/categories').then((r) => (Array.isArray(r) ? r : r.items)),
-      create: (b: AdminCategoryInput & { slug: string }) => c.post<AdminCategory>('/admin/categories', b),
-      update: (id: string, b: Partial<AdminCategoryInput>) => c.patch<AdminCategory>(`/admin/categories/${seg(id)}`, b),
+      list: () => c.get<RawCategory[] | { items: RawCategory[] }>('/admin/categories').then((r) => (Array.isArray(r) ? r : r.items).map(catOf)),
+      create: (b: AdminCategoryInput & { slug: string }) => c.post<RawCategory>('/admin/categories', b).then(catOf),
+      update: (id: string, b: Partial<AdminCategoryInput>) => c.patch<RawCategory>(`/admin/categories/${seg(id)}`, b).then(catOf),
       remove: (id: string) => c.delete<void>(`/admin/categories/${seg(id)}`),
     },
     products: {
@@ -341,20 +398,20 @@ export function createAdminV5Api(c: ApiClient) {
       create: (b: AdminPromoInput) => c.post<AdminPromo>('/admin/promo-codes', b),
       update: (id: string, b: Partial<AdminPromoInput>) => c.patch<AdminPromo>(`/admin/promo-codes/${seg(id)}`, b),
       redemptions: (id: string, q: { page?: number; page_size?: number }) =>
-        c.get<Paginated<PromoRedemption>>(`/admin/promo-codes/${seg(id)}/redemptions`, q),
+        c.get<Paginated<RawRedemption>>(`/admin/promo-codes/${seg(id)}/redemptions`, q).then((r) => mapPage(r, redemptionOf)),
     },
     resellers: {
       list: (q: { status?: string; q?: string; page?: number; page_size?: number }) =>
-        c.get<Paginated<AdminReseller>>('/admin/resellers', clean(q)),
-      get: (id: string) => c.get<AdminReseller>(`/admin/resellers/${seg(id)}`),
+        c.get<Paginated<RawReseller>>('/admin/resellers', clean(q)).then((r) => mapPage(r, resellerOf)),
+      get: (id: string) => c.get<RawReseller>(`/admin/resellers/${seg(id)}`).then(resellerOf),
       update: (id: string, b: { status?: ResellerStatus; markup_kind?: 'percent' | 'fixed'; markup_value?: number }) =>
-        c.patch<AdminReseller>(`/admin/resellers/${seg(id)}`, b),
+        c.patch<RawReseller>(`/admin/resellers/${seg(id)}`, b).then(resellerOf),
     },
     payouts: {
       list: (q: { status?: string; page?: number; page_size?: number }) =>
-        c.get<Paginated<AdminPayout>>('/admin/payouts', clean(q)),
+        c.get<Paginated<RawPayout>>('/admin/payouts', clean(q)).then((r) => mapPage(r, payoutOf)),
       decide: (id: string, b: { action: 'paid' | 'rejected'; note: string }) =>
-        c.post<AdminPayout>(`/admin/payouts/${seg(id)}/decide`, b),
+        c.post<RawPayout>(`/admin/payouts/${seg(id)}/decide`, b).then(payoutOf),
     },
     audit: {
       list: (q: AuditFilters & { page?: number; page_size?: number }) =>

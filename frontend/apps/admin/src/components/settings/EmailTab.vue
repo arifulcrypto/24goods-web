@@ -2,7 +2,7 @@
 import { reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { apiV5 } from '../../api'
-import type { AdminSiteV5 } from '../../api-v5'
+import { emailTestErrorKey, type AdminSiteV5 } from '../../api-v5'
 import { secretChange, secretFromServer, type SecretField } from '../../lib/secret'
 import { useSave } from '../../composables/useSave'
 import { toastError, toastOk } from '../../ui'
@@ -67,7 +67,7 @@ async function sendTest() {
   try {
     const r = await apiV5.site.testEmail(testTo.value.trim())
     if (r.ok) toastOk(t('v5.email.testOk'))
-    else ElMessage.error({ message: `${t('v5.email.testFailed')}${r.error ? `: ${r.error}` : ''}`, grouping: true })
+    else ElMessage.error({ message: `${t('v5.email.testFailed')}${r.error ? `: ${emailTestErrorKey(r.error) ? t(emailTestErrorKey(r.error)!) : r.error}` : ''}`, grouping: true })
   } catch (err) {
     toastError(err)
   } finally {

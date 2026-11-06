@@ -162,6 +162,13 @@ export default {
     sendTest: "Send test",
     testOk: "Test email sent",
     testFailed: "Test failed",
+    err: {
+      connect_failed: "Could not connect to the SMTP server",
+      blocked_host: "This SMTP host is not allowed (private or internal address)",
+      auth_failed: "SMTP login failed: check the username and password",
+      rejected: "The server rejected the sender or recipient",
+      send_failed: "Sending failed",
+    },
     toInvalid: "Enter a valid email",
   },
   tpl: {
@@ -257,6 +264,13 @@ export default {
     useImage: "Use this image",
     alt: "Image description",
     imagesNote: "Selected images are downloaded to our storage; others are dropped.",
+    warn: {
+      no_title: "No title found; enter one",
+      no_price: "No price found; enter the cost or price",
+      no_description: "No description found",
+      no_images: "No images found",
+      paste_page: "Looks like the pasted text is the whole page; check the result",
+    },
     imagesFailed: "{n} image(s) could not be fetched",
     createDraft: "Create draft",
   },

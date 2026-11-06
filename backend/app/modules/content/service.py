@@ -140,6 +140,7 @@ async def _public_v5(
             "site_name": pick(gen["site_name_i18n"], lang) if gen["site_name_i18n"] else "",
             "subtitle": pick(gen["subtitle_i18n"], lang) if gen["subtitle_i18n"] else "",
             "site_name_i18n": gen["site_name_i18n"],
+            "subtitle_i18n": gen["subtitle_i18n"],
             "logo_url": gen["logo_url"],
             "contact": pick(gen["contact_i18n"], lang) if gen["contact_i18n"] else "",
             "footer": pick(gen["footer_i18n"], lang) if gen["footer_i18n"] else "",
@@ -168,6 +169,7 @@ async def _public_v5(
             "manual_eta_hours": delivery["manual_eta_hours"],
             "manual_note": pick(delivery["manual_note_i18n"], lang),
         },
+        "email_verify_on_register": bool(sec["email_verify_on_register"]),
         # storefront: added by the reseller work (review-v5 §7)
     }
 

@@ -162,6 +162,13 @@ export default {
     sendTest: "发送测试",
     testOk: "测试邮件已发送",
     testFailed: "测试失败",
+    err: {
+      connect_failed: "无法连接 SMTP 服务器",
+      blocked_host: "该 SMTP 主机不被允许（内网或私有地址）",
+      auth_failed: "SMTP 登录失败：请检查用户名和密码",
+      rejected: "服务器拒绝了发件人或收件人",
+      send_failed: "发送失败",
+    },
     toInvalid: "请输入有效邮箱",
   },
   tpl: {
@@ -257,6 +264,13 @@ export default {
     useImage: "使用此图片",
     alt: "图片描述",
     imagesNote: "选中的图片会下载到本站存储，未选中的将被丢弃。",
+    warn: {
+      no_title: "未找到标题，请手动填写",
+      no_price: "未找到价格，请填写成本或售价",
+      no_description: "未找到描述",
+      no_images: "未找到图片",
+      paste_page: "粘贴内容似乎是整个页面，请检查结果",
+    },
     imagesFailed: "{n} 张图片获取失败",
     createDraft: "创建草稿",
   },

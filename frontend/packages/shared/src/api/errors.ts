@@ -42,6 +42,19 @@ export const API_ERROR_CODES = [
   'payout_below_min',
   'payout_exceeds_available',
   'payout_open',
+  'oauth_failed',
+  'product_in_use',
+  'category_in_use',
+  'insufficient_balance',
+  'invalid_code',
+  'payout_below_minimum',
+  'payout_account_required',
+  'markup_too_high',
+  'slug_reserved',
+  'reseller_exists',
+  'fetch_failed',
+  'unsafe_url',
+  'unavailable',
 ] as const
 export const CLIENT_ERROR_CODES = ['network', 'server_error', 'timeout', 'unknown'] as const
 export type ContractErrorCode = (typeof API_ERROR_CODES)[number]

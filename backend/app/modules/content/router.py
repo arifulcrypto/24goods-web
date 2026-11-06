@@ -37,9 +37,11 @@ async def site(
     out["storefront"] = sf.public(lang) if sf is not None else None  # review-v5 s7
     ts = await tenant_settings(db, tenant_id)
     if feature_on(ts, "resellers"):
-        out["resellers"] = {
-            "base_domain": section(ts, "resellers")["base_domain"]
-        }  # slug preview in the apply form
+        rcfg = section(ts, "resellers")
+        out["resellers"] = {  # slug preview + sign-up fee in the apply form
+            "base_domain": rcfg["base_domain"],
+            "signup_fee_minor": rcfg["signup_fee_minor"],
+        }
     if sf is not None:
         out["brand"] = sf.store_name  # white label: never the platform brand on a storefront
     return out

@@ -104,7 +104,8 @@ export function createBuyerApi(c: ApiClient) {
       passwordReset: (b: { email: string; code: string; new_password: string; turnstile_token?: string }) =>
         c.post<void>('/auth/password-reset', b, { skipAuthHandler: true }),
       /** v5 §5.3: full-page navigation target (302 to Google). `next` must be a relative path. */
-      googleStartUrl: (next: string) => c.url('/auth/oauth/google/start', { next }),
+      googleStartUrl: (next: string, agree = false) =>
+        c.url('/auth/oauth/google/start', agree ? { next, agree: 1 } : { next }),
       /** v3: one-tap instant account; the credentials are returned once. */
       instant: (b: { pow: PowSolution; turnstile_token?: string }) =>
         c.post<InstantResult>('/auth/instant', b, { skipAuthHandler: true }),

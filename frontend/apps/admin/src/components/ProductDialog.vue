@@ -98,7 +98,7 @@ watch(
     form.delivery_mode = p?.delivery_mode ?? (d ? 'manual' : 'auto_card')
     form.category = p?.category ?? props.categories[0]?.key ?? ''
     form.status = p && p.status !== 'archived' ? p.status : 'draft'
-    form.images = [...(p?.images ?? [])]
+    form.images = [...(p?.images ?? d?.images ?? [])]
     form.separator = p?.delivery_separator && isSeparator(p.delivery_separator) ? p.delivery_separator : DEFAULT_SEPARATOR
     const labels = formatLabels(p?.delivery_format, form.separator)
     preset.value = p?.delivery_format ? presetFor(labels) : 'card'
@@ -215,7 +215,7 @@ async function save() {
       toastOk(t('products.saved'))
       emit('update:modelValue', false)
     } else {
-      const p = await apiV3.products.create({ ...payload(), images: [] })
+      const p = await apiV3.products.create({ ...payload(), images: [...form.images] })
       current.value = p
       form.images = [...p.images]
       emit('saved', p)

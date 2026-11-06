@@ -25,7 +25,16 @@ const password = ref('')
 const show = ref(false)
 const busy = ref(false)
 /** v5 §5.3: full-page redirect to Google; `next` is a relative path only. */
-const googleUrl = computed(() => api.auth.googleStartUrl(safeRedirect(route.query.redirect, '/')))
+const agree = ref(false)
+const legal = computed(() => site.legal)
+const googleUrl = computed(() =>
+  api.auth.googleStartUrl(safeRedirect(route.query.redirect, '/'), !legal.value || agree.value),
+)
+/** The Google callback redirects here with ?error=<code> (query is data, so only known codes are shown). */
+const oauthError = computed(() => {
+  const e = route.query.error
+  return e === 'terms_required' || e === 'oauth_failed' || e === 'feature_disabled' ? `errors.${e}` : null
+})
 
 async function submit() {
   if (busy.value) return
@@ -55,6 +64,7 @@ async function submit() {
 
 <template>
   <AuthShell :title="t('auth.loginTitle')" :subtitle="t('auth.loginSubtitle')">
+    <div v-if="oauthError" class="oauth-err" role="alert">{{ t(oauthError) }}</div>
     <van-form @submit="submit">
       <van-field
         v-model="email"
@@ -87,7 +97,19 @@ async function submit() {
       <RouterLink :to="{ name: 'forgot' }" class="link-sm">{{ t('auth.forgot') }}</RouterLink>
     </div>
     <div v-if="site.googleLogin" class="submit">
-      <van-button round block plain :url="googleUrl" class="g-btn">{{ t('auth.google') }}</van-button>
+      <div v-if="legal" class="terms">
+        <van-checkbox v-model="agree" shape="square" icon-size="20">
+          <i18n-t keypath="auth.agreeTerms" tag="span">
+            <template #terms>
+              <template v-for="(pg, i) in legal.pages" :key="pg.slug">
+                <span v-if="i">, </span>
+                <RouterLink :to="`/a/${encodeURIComponent(pg.slug)}`" target="_blank" class="tlink" @click.stop>{{ pg.title }}</RouterLink>
+              </template>
+            </template>
+          </i18n-t>
+        </van-checkbox>
+      </div>
+      <van-button round block plain :url="googleUrl" :disabled="!!legal && !agree" class="g-btn">{{ t('auth.google') }}</van-button>
     </div>
     <template #foot>
       <template v-if="site.features.registration">
@@ -121,6 +143,21 @@ async function submit() {
   padding: 12px 4px;
   font-size: 13px;
   text-decoration: none;
+}
+.oauth-err {
+  margin: 12px 16px 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--van-danger-color);
+  background: color-mix(in srgb, var(--van-danger-color) 10%, transparent);
+}
+.terms {
+  padding-bottom: 12px;
+  font-size: 13px;
+}
+.tlink {
+  text-decoration: underline;
 }
 .g-btn {
   min-height: 44px;
