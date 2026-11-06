@@ -24,9 +24,11 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 # ---------------------------------------------------------------- site
 @router.get("/site")
 async def get_site(
-    admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+    res: Resources = Depends(get_res),
 ) -> dict:
-    return await content.admin_site(db, admin.tenant_id)
+    return await content.admin_site(db, admin.tenant_id, res.settings)
 
 
 @router.put("/site")
@@ -37,7 +39,7 @@ async def put_site(
     db: AsyncSession = Depends(get_db),
     res: Resources = Depends(get_res),
 ) -> dict:
-    return await content.update_site(db, admin, body, client_ip(request), res.redis)
+    return await content.update_site(db, admin, body, client_ip(request), res.redis, res.settings)
 
 
 # ---------------------------------------------------------------- articles

@@ -69,10 +69,11 @@ write_env() {
   (cd "$ROOT/backend" && "$PY" -m app.devtools.keygen --out-dir "$KEYS" >/dev/null)
   # shellcheck disable=SC1091
   source "$KEYS/secrets.env"
-  local pg_su app_owner db_api db_del redis_pw zpay pow lookup admin agent buyer
+  local pg_su app_owner db_api db_del redis_pw zpay pow lookup settings_key admin agent buyer
   pg_su=$(rnd); app_owner=$(rnd); db_api=$(rnd); db_del=$(rnd); redis_pw=$(rnd)
   zpay=$(rnd 16); pow=$(head -c 32 /dev/urandom | base64 | tr -d '\n')
   lookup=$(head -c 32 /dev/urandom | base64 | tr -d '\n')
+  settings_key=$(head -c 32 /dev/urandom | base64 | tr -d '\n')
   admin=$(rnd 6); agent=$(rnd 6); buyer=$(rnd 6)
   local redis="redis://default:$redis_pw@127.0.0.1:$REDIS_PORT"
   local pg="127.0.0.1:$PG_PORT/goods24"
@@ -118,6 +119,7 @@ APP_INTERNAL_TOKEN=$APP_INTERNAL_TOKEN
 APP_DELIVERY_URL=http://127.0.0.1:$DELIVERY_PORT
 APP_POW_KEY=$pow
 APP_LOOKUP_KEY=$lookup
+APP_SETTINGS_KEY=$settings_key
 APP_ZPAY_PID=1001
 APP_ZPAY_KEY=$zpay
 APP_ZPAY_GATEWAY=/mockpay

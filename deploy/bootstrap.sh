@@ -79,6 +79,8 @@ ZPAY_KEY=$(rnd 16)
 # proof-of-work signing key + order access-code HMAC key (base64, 32 random bytes each)
 APP_POW_KEY=$(head -c 32 /dev/urandom | base64 | tr -d '\n')
 APP_LOOKUP_KEY=$(head -c 32 /dev/urandom | base64 | tr -d '\n')
+# AES-256-GCM key for tenant_secrets (SMTP / Turnstile / Google secrets), api only
+APP_SETTINGS_KEY=$(head -c 32 /dev/urandom | base64 | tr -d '\n')
 ADMIN_PW=$(rnd 9); AGENT_PW=$(rnd 9); BUYER_PW=$(rnd 9)
 if [[ "$MODE" == "prod" ]]; then ADMIN_PW=$(rnd 16); fi   # strong: internet-facing
 
@@ -151,6 +153,7 @@ APP_QUOTE_HMAC_KEY=$APP_QUOTE_HMAC_KEY
 APP_INTERNAL_TOKEN=$APP_INTERNAL_TOKEN
 APP_POW_KEY=$APP_POW_KEY
 APP_LOOKUP_KEY=$APP_LOOKUP_KEY
+APP_SETTINGS_KEY=$APP_SETTINGS_KEY
 APP_DELIVERY_URL=http://delivery:8001
 EOF
 if [[ "$MODE" == "prod" ]]; then
