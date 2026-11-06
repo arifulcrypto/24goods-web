@@ -46,6 +46,16 @@ import type {
   SendMessageBody,
   User,
   LedgerRow,
+  MarkupKind,
+  PayoutAccount,
+  PromoPreview,
+  ResellerApplyResult,
+  ResellerMe,
+  ResellerOrder,
+  ResellerPayout,
+  ResellerProduct,
+  ResellerStats,
+  I18nText,
 } from '../types'
 
 export const DEFAULT_PAY_CHANNEL = 'zpay_alipay'
@@ -78,14 +88,25 @@ export function createBuyerApi(c: ApiClient) {
         display_name: string
         locale: Locale
         pow?: PowSolution
+        /** v5 */
+        email_code?: string
+        agree_terms?: boolean
+        turnstile_token?: string
       }) => c.post<User>('/auth/register', b, { skipAuthHandler: true }),
       /** `email` also accepts an instant-account login handle (`u-xxxxxxx`). */
-      login: (b: { email: string; password: string; pow?: PowSolution }) =>
+      login: (b: { email: string; password: string; pow?: PowSolution; turnstile_token?: string }) =>
         c.post<User>('/auth/login', b, { skipAuthHandler: true }),
       logout: () => c.post<void>('/auth/logout', undefined, { skipAuthHandler: true }),
       me: () => c.get<User>('/auth/me', undefined, { skipAuthHandler: true }),
+      /** v5 §5.2: 204 always (no user enumeration). */
+      emailCode: (b: { email: string; purpose: 'register' | 'reset'; turnstile_token?: string }) =>
+        c.post<void>('/auth/email-code', b, { skipAuthHandler: true }),
+      passwordReset: (b: { email: string; code: string; new_password: string; turnstile_token?: string }) =>
+        c.post<void>('/auth/password-reset', b, { skipAuthHandler: true }),
+      /** v5 §5.3: full-page navigation target (302 to Google). `next` must be a relative path. */
+      googleStartUrl: (next: string) => c.url('/auth/oauth/google/start', { next }),
       /** v3: one-tap instant account; the credentials are returned once. */
-      instant: (b: { pow: PowSolution }) =>
+      instant: (b: { pow: PowSolution; turnstile_token?: string }) =>
         c.post<InstantResult>('/auth/instant', b, { skipAuthHandler: true }),
     },
     /** v3: brand, announcement, defaults, fixed pages. */
@@ -118,8 +139,11 @@ export function createBuyerApi(c: ApiClient) {
       get: (slug: string) => c.get<Article>(`/articles/${seg(slug)}`),
     },
     lookup: {
-      find: (b: { order_no: string; access_code: string; pow: PowSolution }) =>
-        c.post<LookupOrder>('/lookup', b, { skipAuthHandler: true }),
+      find: (b: { order_no: string; access_code: string; pow: PowSolution }, turnstileToken?: string) =>
+        c.post<LookupOrder>('/lookup', b, {
+          skipAuthHandler: true,
+          ...(turnstileToken ? { headers: { 'X-Turnstile-Token': turnstileToken } } : {}),
+        }),
       reveal: (b: { order_no: string; access_code: string }) =>
         c.post<{ cards: { id: string; code: string }[] }>('/lookup/reveal', b, { skipAuthHandler: true }),
     },
@@ -141,10 +165,17 @@ export function createBuyerApi(c: ApiClient) {
     },
     orders: {
       /** `src` = traffic attribution tag from a direct buy link (`[a-z0-9_-]{0,32}`). */
-      create: (product_id: string, qty: number, src?: string | null, buyer_input?: string | null) =>
+      create: (
+        product_id: string,
+        qty: number,
+        src?: string | null,
+        buyer_input?: string | null,
+        promo_code?: string | null,
+      ) =>
         c.post<Order>('/orders', {
           product_id,
           qty,
+          ...(promo_code ? { promo_code } : {}),
           ...(src ? { src } : {}),
           ...(buyer_input ? { buyer_input } : {}),
         }),
@@ -165,15 +196,51 @@ export function createBuyerApi(c: ApiClient) {
     /** v4 §1 */
     paymentChannels: () => c.get<PaymentChannel[]>('/site/payment-channels'),
     /** v4 §2: server truth for cart lines (no login needed). */
-    cartQuote: (items: readonly CheckoutLineInput[]) => c.post<CartQuote>('/cart/quote', { items }),
+    cartQuote: (items: readonly CheckoutLineInput[], promo_code?: string | null) =>
+      c.post<CartQuote>('/cart/quote', promo_code ? { items, promo_code } : { items }),
+    /** v5 §6: preview only; the server recomputes at order creation. */
+    promoValidate: (
+      b: { code: string; items: { product_id: string; qty: number }[] },
+      turnstileToken?: string,
+    ) =>
+      c.post<PromoPreview>('/promo/validate', b, {
+        ...(turnstileToken ? { headers: { 'X-Turnstile-Token': turnstileToken } } : {}),
+      }),
     checkout: {
-      create: (items: readonly CheckoutLineInput[], source?: string | null) =>
-        c.post<CheckoutResult>('/checkout', source ? { items, source } : { items }),
+      create: (items: readonly CheckoutLineInput[], source?: string | null, promo_code?: string | null) =>
+        c.post<CheckoutResult>('/checkout', {
+          items,
+          ...(source ? { source } : {}),
+          ...(promo_code ? { promo_code } : {}),
+        }),
       get: (no: string) => c.get<CheckoutView>(`/checkouts/${seg(no)}`),
       pay: (no: string, channel: string = DEFAULT_PAY_CHANNEL) =>
         c.post<{ pay_url: string }>(`/checkouts/${seg(no)}/pay`, { channel }),
       cancel: (no: string, reason?: string) =>
         c.post<CheckoutView>(`/checkouts/${seg(no)}/cancel`, reason ? { reason } : {}),
+    },
+    reseller: {
+      me: () => c.get<ResellerMe | null>('/reseller/me'),
+      apply: (b: { slug: string; store_name: string; contact?: string; turnstile_token?: string }) =>
+        c.post<ResellerApplyResult>('/reseller/apply', b),
+      update: (b: {
+        store_name?: string
+        logo_url?: string | null
+        welcome_i18n?: Partial<I18nText>
+        contact?: string | null
+        markup_kind?: MarkupKind
+        markup_value?: number
+        payout_account?: PayoutAccount | null
+      }) => c.patch<ResellerMe>('/reseller/me', b),
+      products: (q: { q?: string; page?: number; page_size?: number } = {}) =>
+        c.get<Paginated<ResellerProduct>>('/reseller/products', q),
+      setProduct: (id: string, b: { markup_kind?: MarkupKind; markup_value?: number; hidden?: boolean }) =>
+        c.put<ResellerProduct>(`/reseller/products/${seg(id)}`, b),
+      resetProduct: (id: string) => c.delete<void>(`/reseller/products/${seg(id)}`),
+      orders: (q: { page?: number; page_size?: number } = {}) => c.get<Paginated<ResellerOrder>>('/reseller/orders', q),
+      stats: () => c.get<ResellerStats>('/reseller/stats'),
+      payouts: () => c.get<ResellerPayout[] | Paginated<ResellerPayout>>('/reseller/payouts'),
+      requestPayout: (amount_minor: number) => c.post<ResellerPayout>('/reseller/payouts', { amount_minor }),
     },
     streamUrl: () => c.url('/stream'),
   }
