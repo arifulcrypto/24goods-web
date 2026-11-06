@@ -458,6 +458,53 @@ def v3_file_message(buyer: Client, agent: Client, conv: dict) -> None:
     step(f"long text sent as file message ({pl['bytes']} bytes, preview {len(pl['preview'])} chars), safe download")
 
 
+def v5_commerce(base: str, anon: Client, admin: Client, manual: dict) -> None:
+    """review-v5: promo code (quote -> checkout -> paid), reseller sign-up -> storefront markup.
+    Needs the v5 settings API (features/resellers sections of PUT /admin/site)."""
+    admin.j("PUT", "admin/site", json={"features": {"resellers": True, "promo_codes": True},
+                                        "resellers": {"signup_fee_minor": 500}})
+    # ---- promo: admin creates, quote shows the discount, checkout paid via the simulator
+    code = admin.j("GET", "admin/promo-codes/generate")["code"]
+    admin.j("POST", "admin/promo-codes", json={"code": code, "kind": "percent", "value": 100,
+                                               "per_user_limit": 5})
+    b = Client(base)
+    b.j("POST", "auth/register", json={"email": f"v5-{uuid.uuid4().hex[:8]}@demo.local",
+                                      "password": "correct-horse-battery", "display_name": "V5",
+                                      "locale": "en", "pow": solve_pow(b, "register")})
+    items = [{"product_id": manual["id"], "qty": 2}]
+    q = b.j("POST", "cart/quote", json={"items": items, "promo_code": code.lower()})
+    check(q["discount_minor"] > 0 and q["promo"]["code"] == code, f"quote has no discount: {q}")
+    ck = b.j("POST", "checkout", json={"items": items, "promo_code": code})
+    check(ck["checkout"]["discount_minor"] == q["discount_minor"], "checkout discount != quote")
+    check(ck["checkout"]["amount"] == q["total"], "checkout amount != quote total")
+    pay_with_simulator(b, "", path=f"checkouts/{ck['checkout']['checkout_no']}/pay")
+    check(b.j("GET", f"checkouts/{ck['checkout']['checkout_no']}")["status"] == "paid",
+          "promo checkout not paid")
+    v = b.j("POST", "promo/validate", json={"code": code, "items": items})
+    check(v["discount_minor"] > 0, "validate must still work (per-user limit 5)")
+    step("v5 promo: quote shows discount, checkout paid at the discounted amount")
+
+    # ---- reseller: apply -> pay sign-up -> active -> storefront order carries markup
+    slug = f"s{uuid.uuid4().hex[:8]}"
+    me = b.j("POST", "reseller/apply", json={"slug": slug, "store_name": "E2E Store"})
+    check(me["status"] == "pending_payment" and me["signup_order"], f"apply: {me}")
+    pay_with_simulator(b, me["signup_order"]["id"])
+    me = b.j("GET", "reseller/me")
+    check(me["status"] == "active", f"reseller not active after sign-up payment: {me}")
+    c = Client(base)
+    c.j("POST", "auth/register", json={"email": f"v5c-{uuid.uuid4().hex[:8]}@demo.local",
+                                      "password": "correct-horse-battery", "display_name": "C",
+                                      "locale": "en", "pow": solve_pow(c, "register")})
+    c.h.headers["X-Storefront"] = slug
+    site = c.j("GET", "site")
+    check(site["storefront"] and site["storefront"]["slug"] == slug, "storefront not resolved")
+    o = c.j("POST", "orders", json={"product_id": manual["id"], "qty": 1})
+    check(o["reseller"] and o["subtotal"] != manual["price"], f"no markup on storefront: {o}")
+    ro = b.j("GET", "reseller/orders")
+    check(ro["total"] == 1 and ro["items"][0]["markup_minor"] > 0, f"reseller orders: {ro}")
+    step("v5 reseller: sign-up paid -> active -> storefront order has markup")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--base", required=True)
@@ -601,6 +648,7 @@ def main() -> None:
     v3_cards(agent, admin, multi)
     v3_file_message(buyer, agent, conv)
     v4_commerce(base, anon, buyer, agent, admin, auto, manual, conv)
+    v5_commerce(base, anon, admin, manual)
 
     # ---- ledger balance -------------------------------------------------------------
     rows, page = [], 1

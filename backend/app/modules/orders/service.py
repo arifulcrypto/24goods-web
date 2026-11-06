@@ -28,10 +28,13 @@ from app.core.errors import (
     Unavailable,
     Validation,
 )
+from app.core.features import require_feature
 from app.core.i18n import pick
 from app.core.money import to_decimal
 from app.core.ratelimit import release, reserve
 from app.core.resources import Resources
+from app.core.settings_v5 import section
+from app.core.storefront import Storefront
 from app.models import (
     CardStock,
     Checkout,
@@ -57,7 +60,10 @@ from app.modules.common.views import REVEALABLE, order_card_payload
 from app.modules.content.site import tenant_settings
 from app.modules.orders.events import add_event, snapshot
 from app.modules.payments.channels import channel_cfg, split_amount
+from app.modules.promo import service as promo_svc
+from app.modules.promo.service import PromoError, PromoLine
 from app.modules.realtime.publish import publish_order
+from app.modules.reseller.pricing import Pricer
 
 log = logging.getLogger("app.orders")
 
@@ -96,10 +102,29 @@ async def count_payables(db: AsyncSession, buyer_id: uuid.UUID) -> int:
     return int(singles or 0) + int(checkouts or 0)
 
 
+async def tenant_order_limits(
+    db: AsyncSession, settings: Settings, tenant_id: uuid.UUID
+) -> tuple[int, int]:
+    """(max pending orders, order timeout minutes): the tenant's Settings -> User defaults
+    when it set them, else the process settings."""
+    ts = await tenant_settings(db, tenant_id)
+    explicit = ts.get("defaults") if isinstance(ts.get("defaults"), dict) else {}
+    d = section(ts, "defaults")
+    return (
+        d["max_pending_orders"]
+        if "max_pending_orders" in explicit
+        else settings.max_pending_orders,
+        d["order_timeout_minutes"]
+        if "order_timeout_minutes" in explicit
+        else settings.order_ttl_minutes,
+    )
+
+
 async def enforce_payables_cap(db: AsyncSession, settings: Settings, buyer: User) -> None:
     """Serialize creation per buyer (row lock), then cap open unpaid payables."""
     await db.execute(select(User.id).where(User.id == buyer.id).with_for_update())
-    cap = settings.max_pending_orders_instant if buyer.is_instant else settings.max_pending_orders
+    max_pending, _ttl = await tenant_order_limits(db, settings, buyer.tenant_id)
+    cap = settings.max_pending_orders_instant if buyer.is_instant else max_pending
     if await count_payables(db, buyer.id) >= cap:
         raise Conflict(f"At most {cap} unpaid orders; pay or wait for one to expire")
 
@@ -124,10 +149,16 @@ async def create_order(
     checkout_id: uuid.UUID | None = None,
     expires_at: datetime | None = None,
     enforce_cap: bool = True,
+    kind: str = "goods",
+    discount_minor: int = 0,
+    promo_code_id: uuid.UUID | None = None,
+    reseller_id: uuid.UUID | None = None,
+    reseller_markup_minor: int = 0,
 ) -> tuple[Order, Message | None]:
-    """Create a pending order. ``amount_minor`` is the SUBTOTAL: the channel fee is added
-    here, server-side (``fee = ceil(subtotal * permille / 1000)``) and the order stores the
-    applied rate. The one-time plaintext access code is left on ``order.access_code_plain``
+    """Create a pending order. ``amount_minor`` is the SUBTOTAL (storefront markup included):
+    the promo discount is subtracted and the channel fee added here, server-side
+    (``fee = ceil((subtotal - discount) * permille / 1000)``); the order stores the applied
+    rate. The one-time plaintext access code is left on ``order.access_code_plain``
     (never persisted, never logged)."""
     if enforce_cap:
         await enforce_payables_cap(db, settings, buyer)
@@ -136,7 +167,12 @@ async def create_order(
         if not cfg.enabled:
             raise Unavailable("Payment channel is not available")
         fee_permille = cfg.permille
-    fee, total = split_amount(amount_minor, fee_permille)
+    # MONEY: amount (gateway charge) = subtotal - discount + fee == DB CHECK ck_orders_amount_split
+    fee, total = split_amount(amount_minor, fee_permille, discount_minor)
+    if expires_at is None:
+        expires_at = utcnow() + timedelta(
+            minutes=(await tenant_order_limits(db, settings, buyer.tenant_id))[1]
+        )
     order_no = new_order_no()
     code = accesscode.generate()
     order = Order(
@@ -160,7 +196,12 @@ async def create_order(
         status="pending_payment",
         version=1,
         delivery_mode=delivery_mode,
-        expires_at=expires_at or utcnow() + timedelta(minutes=settings.order_ttl_minutes),
+        expires_at=expires_at,
+        kind=kind,
+        discount_minor=discount_minor,
+        promo_code_id=promo_code_id,
+        reseller_id=reseller_id,
+        reseller_markup_minor=reseller_markup_minor,
     )
     db.add(order)
     await db.flush()
@@ -180,6 +221,10 @@ async def create_order(
             "source": source,
             "checkout_id": str(checkout_id) if checkout_id else None,
             "fee_permille": fee_permille,
+            "kind": kind,
+            "discount_minor": discount_minor,
+            "reseller_id": str(reseller_id) if reseller_id else None,
+            "reseller_markup_minor": reseller_markup_minor,
             **({"buyer_input": True} if buyer_input else {}),  # never the value
         },
     )
@@ -206,18 +251,45 @@ async def buy_now(
     ip: str | None,
     source: str | None = None,
     buyer_input: str | None = None,
+    promo_code: str | None = None,
+    storefront: Storefront | None = None,
 ) -> tuple[Order, Message | None]:
     product = await get_active_product(db, product_id)
+    pricer = await Pricer.load(db, storefront)
+    if pricer is not None and pricer.is_hidden(product.id):
+        raise NotFound("Product not found")
+    # MONEY: the unit price is the server's (base + storefront markup); never the client's.
+    unit = pricer.unit(product) if pricer else product.price_minor
+    markup = pricer.markup(product) * qty if pricer else 0
+    subtotal = unit * qty
     value = normalize_value(product.buyer_input, buyer_input)
     if product.delivery_mode == "auto_card" and await available_stock(db, product.id) < qty:
         raise OutOfStock("Not enough stock", extra={"product_id": str(product.id)})
+    # lock order everywhere: buyer row (payables cap) BEFORE the promo row (no deadlock between
+    # a buy-now and a checkout of the same buyer)
+    await enforce_payables_cap(db, settings, buyer)
+    ev = None
+    if promo_code and promo_code.strip():
+        ts = await tenant_settings(db, buyer.tenant_id)
+        require_feature(ts, "promo_codes")
+        if storefront is not None:  # v5: no promo on reseller storefronts
+            raise PromoError("promo_not_applicable")
+        ev = await promo_svc.evaluate(
+            db,
+            tenant_id=buyer.tenant_id,
+            user=buyer,
+            code=promo_code,
+            lines=[PromoLine(product.id, product.category, subtotal)],
+            currency=product.currency,
+            lock=True,  # promo row FOR UPDATE until commit: limits + reserve are atomic
+        )
     conv = await chat.open_conversation_for(db, buyer)
     order, msg = await create_order(
         db,
         settings=settings,
         buyer=buyer,
         title=pick(product.title_i18n, buyer.locale),
-        amount_minor=product.price_minor * qty,
+        amount_minor=subtotal,
         currency=product.currency,
         qty=qty,
         delivery_mode=product.delivery_mode,
@@ -227,7 +299,14 @@ async def buy_now(
         ip=ip,
         source=source,
         buyer_input=value,
+        discount_minor=ev.discount_minor if ev else 0,
+        promo_code_id=ev.promo.id if ev else None,
+        reseller_id=storefront.id if storefront else None,
+        reseller_markup_minor=markup,
+        enforce_cap=False,  # done above, before the promo lock
     )
+    if ev is not None:
+        await promo_svc.reserve(db, ev, buyer, order_id=order.id, ip=ip)
     await db.commit()
     return order, msg
 
@@ -322,7 +401,7 @@ async def pay_url(db: AsyncSession, res: Resources, ref: str, user: User, channe
             raise FeeChannelMismatch("The payment fee changed; please recreate the order")
         # no URL issued yet (also covers pre-v4 pending orders): re-apply the current rate
         before = snapshot(order)
-        fee, total = split_amount(order.subtotal_minor, permille)
+        fee, total = split_amount(order.subtotal_minor, permille, order.discount_minor)
         order.fee_minor, order.fee_permille, order.amount_minor = fee, permille, total
         order.version += 1
         await audit(
@@ -560,6 +639,12 @@ async def expire_pending(
                     )
                 )
                 co.status = "expired"
+                await promo_svc.release(  # reserved -> released
+                    db,
+                    checkout_id=co.id,
+                    tenant_id=tid,
+                    expect=co.promo_code_id is not None,
+                )
                 await audit(
                     db,
                     tenant_id=tid,
@@ -584,6 +669,12 @@ async def expire_pending(
                 )
             )
             for order in singles:
+                await promo_svc.release(  # reserved -> released
+                    db,
+                    order_id=order.id,
+                    tenant_id=tid,
+                    expect=order.promo_code_id is not None,
+                )
                 msgs[order.id] = await _expire_order(db, tid, order)
                 rows.append(order)
             expired_quotes = (

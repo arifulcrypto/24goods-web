@@ -81,12 +81,12 @@ async def test_admin_product_crud_and_stats(env):
     stats = (await admin.get("/api/v1/admin/stats")).json()
     assert stats["low_stock"][0]["id"] == p["id"] and stats["revenue_today"] == "0.00"
     assert (await admin.delete(f"/api/v1/admin/products/{p['id']}")).status_code == 204
-    listing = (await admin.get("/api/v1/admin/products", params={"status": "draft"})).json()
+    listing = (await admin.get("/api/v1/admin/products", params={"status": "archived"})).json()
     assert listing["total"] == 1
     assert (await env.client().get(f"/api/v1/products/{p['id']}")).status_code == 404
     audit = (await admin.get("/api/v1/admin/audit")).json()
     actions = {a["action"] for a in audit["items"]}
-    assert {"product.created", "product.updated", "product.deleted"} <= actions
+    assert {"product.created", "product.updated", "product.archived"} <= actions
 
 
 async def test_product_image_upload_is_public(env):

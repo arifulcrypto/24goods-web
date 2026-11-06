@@ -292,6 +292,25 @@ Spec: [review-v4.md](review-v4.md). These rows extend or override the tables abo
 
 **Global access-frequency limit** (default OFF): per-IP fixed window on `/api/*`, except the notify path, `/api/v1/realtime/*`, `/api/v1/admin/*` and non-`/api` paths (`/healthz`). Over the limit: HTTP 429, `Retry-After`, body exactly `{"code":429,"msg":"Access is too frequent. Please try again later."}` (not the error envelope). Fails open on Redis errors; config cached in-process 5 s.
 
+## Product import (v5, admin only, 30 req/min per admin)
+
+- `POST /admin/products/import/fetch` `{url}` -> `ImportDraft`. Server-side SSRF-safe fetch
+  (`app/core/safefetch.py`: http/https, ports 80/443/8080/8443, every resolved IP must be public,
+  connection pinned to the vetted IP, redirects <= 3 re-vetted, 10 s, 3 MB). Audited as
+  `product.import_fetch` with `target = host:<hostname>` only. Refusals: 422 `unsafe_url` /
+  `fetch_failed`; 429 when rate limited.
+- `POST /admin/products/import/parse` `{text?, html?, base_url?}` -> `ImportDraft` (422 when both empty).
+- `POST /admin/content/images/fetch` `{url}` -> `{id, url}` (same as `POST /admin/content/images`;
+  8 MB cap, then the normal magic-byte / re-encode / EXIF-strip pipeline).
+- `ImportDraft = {title, description_md, images:[{url, alt}], price_minor|null, currency, source_url|null,
+  site|null, suggested_price_minor|null, warnings:[code]}`. `suggested_price_minor` =
+  round-up(cost + markup, `import.round_to_minor`) from settings section `import`.
+  Warning codes: `no_title`, `no_price`, `no_description`, `no_images`, `paste_page` (client-rendered
+  site: ask the admin to paste the page instead). Image URLs in the draft are remote; the UI
+  uploads the chosen ones via `images/fetch` and rewrites the description.
+- Adapters: gmailbuy.com, maitg.com (server-rendered), go.ka8.ai (public JSON API
+  `/api/v1/public/products/<slug>`; falls back to `paste_page` if the site blocks the server).
+
 ## Internal (never routed by Caddy)
 
 | Service | Endpoint | Purpose |
@@ -334,3 +353,84 @@ data: {…Order}
 | `APP_MAX_PENDING_ORDERS_INSTANT` | 2 | unpaid orders per instant account (registered: `APP_MAX_PENDING_ORDERS`=5) |
 | `APP_INSTANT_PURGE_DAYS` | 7 | purge window for unpaid instant accounts |
 | `APP_LOOKUP_PER_IP_HOUR` | 10 | `/lookup` attempts per IP |
+
+## v5 core additions (settings center, categories, archive, security)
+
+Errors as always `{error:{code,message}}`. New codes: `feature_disabled` (403), `turnstile_failed` (400), `invalid_code` (400), `terms_required` (422), `category_in_use` (409), `product_in_use` (409), `oauth_failed` (400).
+
+**Public**
+- `GET /site` adds `features{registration,guest_checkout,cart,promo_codes,resellers,voice_messages,lookup,google_login}`, `general{site_name,subtitle,site_name_i18n,logo_url,contact,footer}`, `legal{enabled,mode,updated_at,pages[{slug,title}]}`, `turnstile{enabled,site_key,actions}` (enabled only when a secret is configured), `google_login:bool`, `delivery{manual_eta_hours,manual_note}` (`{hours}` substituted client-side). `storefront` is added by the reseller work.
+- `GET /catalog/categories` (alias `/categories`) -> `[{slug,key,name,icon}]`, enabled only. Products of a disabled category are hidden from list/search/recommended; their page still loads.
+- Product payloads: `delivery_eta_hours` (manual only; product value else site default). Never `cost_minor`/`source_url`.
+- Order payloads: `delivery_eta_hours`, `delivery_deadline` (manual; `paid_at + eta`, null until paid).
+- `POST /cart/quote` lines add `unavailable_reason: archived|unpublished|out_of_stock|null`.
+- `POST /auth/login|register|instant` accept `turnstile_token`; `POST /lookup` takes header `X-Turnstile-Token` (each token is single use; request a fresh one per call).
+- `POST /auth/register` also `email_code` (required when `security.email_verify_on_register`) and `agree_terms` (required when `legal.enabled`); 403 `feature_disabled` when registration is off.
+- `POST /auth/email-code` `{email, purpose: register|reset, turnstile_token?}` -> 204 always (403 `feature_disabled` when email is not enabled). Turnstile action: `register` / `password_reset`.
+- `POST /auth/password-reset` `{email, code, new_password}` -> 204; revokes all sessions. Buyers only. No Turnstile on this step (the code is the proof).
+- `GET /auth/oauth/google/start?next=/path` -> 302 Google; `GET /auth/oauth/google/callback` -> 302 `next` (relative only) with session cookie. Staff accounts: 403.
+
+**Admin** (admin role unless noted)
+- `GET/POST /admin/categories`, `PATCH/DELETE /admin/categories/{id}`; body `{slug, name_i18n{en,zh-CN}, icon?, sort?, enabled?}`; slug immutable; list is staff-readable and includes `products` count.
+- `DELETE /admin/products/{id}` archives (204); `?hard=true` deletes if unreferenced else 409 `product_in_use`; `POST /admin/products/{id}/restore` -> draft view; `POST /admin/products/bulk` `{ids<=200, action: publish|unpublish|archive|restore|set_category, category?}` -> `{updated}`. List `status=archived`; default list excludes archived. Product create/patch/views add `delivery_eta_hours` (1-720, null = site default), `cost_minor`, `source_url` (http/https), view also `archived_at`.
+- `GET /admin/site` returns every section: `general, legal, features, security, defaults, email, delivery, import, resellers, audit, email_templates`, plus `secrets{turnstile_secret|google_client_secret|smtp_password: {configured, last4}}` and `zpay{configured, pid_last4}`. `defaults` = v5 user defaults (`locale, max_pending_orders, order_timeout_minutes`) plus the legacy factory-default keys. `PUT /admin/site` takes any subset of the sections (each field optional; `import` is the JSON key of the import section).
+- `PUT /admin/site/secrets` `{name, value|null}` -> `{secrets}`; write-only.
+- `POST /admin/site/email/test` `{to, template?: verify_code|password_reset|order_paid|order_delivered, locale?}` -> `{ok, error?}` (`error` in connect_failed|auth_failed|rejected|send_failed).
+- Email templates: `email_templates.<kind> = {subject_i18n:{en,zh-CN}, body_i18n:{en,zh-CN}}`; `PUT` partial; an empty string resets that locale to the built-in default. Placeholders `{site_name} {code} {minutes} {order_no} {order_url} {title} {amount}`; unknown ones stay literal. Bodies are plain text/markdown (HTML part sanitized).
+- `GET /admin/audit` + `action` (prefix), `actor` (email substring), `target`, `severity`, `since`, `until`; items add `id, severity, before, after`. `GET /admin/audit.csv` (same filters, <= 10 000 rows).
+- `GET /admin/orders?overdue_manual=true`.
+
+**Jobs:** order emails (`email.order` outbox rows, paid + delivered, verified non-instant buyers, never card secrets) and the daily audit retention purge run in the API jobs loop.
+
+
+## Commerce v5 additions (promo codes, resellers) — backend `feat/v5-be-com`
+
+Authoritative spec: [review-v5.md](review-v5.md) §6, §7, §12. Errors use the usual envelope.
+
+**Promo codes.** `POST /promo/validate` `{code, items:[{product_id, qty}], turnstile_token?}` ->
+`{code, discount_minor, eligible_subtotal_minor, description}`; 20/min per user/IP. 422 codes:
+`promo_invalid | promo_not_started | promo_expired | promo_exhausted | promo_user_limit |
+promo_min_subtotal | promo_not_applicable`. `promo_code?` is accepted by `POST /orders`,
+`POST /cart/quote` (never errors: result in `promo: null | {code, discount_minor} | {error}`) and
+`POST /checkout`. Quote adds `discount`, `discount_minor`, per-line `discount_minor`, `promo`;
+`total = subtotal - discount + fee` (fee per line on the discounted line). Order and checkout
+views add `kind`, `discount`, `discount_minor`, `promo_code`, `reseller` (`null | {store_name}`;
+staff also `slug`); checkout view adds `discount`, `discount_minor`. Promo is `promo_not_applicable`
+on reseller storefronts and quote orders. Toggles: `features.promo_codes`, `features.cart`
+(403 `feature_disabled`).
+
+Admin (admin role): `GET/POST /admin/promo-codes`, `GET /admin/promo-codes/generate` -> `{code}`,
+`PATCH /admin/promo-codes/{id}` (code immutable), `GET /admin/promo-codes/{id}/redemptions`.
+Create body: `{code?, kind: percent|fixed, value (percent = permille), min_subtotal_minor,
+max_discount_minor?, starts_at?, ends_at?, usage_limit?, per_user_limit, product_ids,
+category_slugs, enabled, note?}`.
+
+**Storefront.** Resolved from Host `{slug}.{resellers.base_domain}` else `X-Storefront: {slug}`
+(only when `features.resellers`; non-active slug = main store). Catalog list/detail/ids/
+recommended, cart quote, `POST /orders`, `POST /checkout` use storefront prices (base + markup;
+hidden products 404). `GET /site` adds `storefront: null | {slug, store_name, logo_url, welcome,
+white_label: true}`, overrides `brand` with the store name, and `resellers: {base_domain}` when the
+feature is on. New conversations record `reseller_id`.
+
+**Reseller center** (`features.resellers`, else 403): `GET /reseller/me` (`null` if none),
+`POST /reseller/apply` `{slug, store_name, contact?, turnstile_token?}` -> me view +
+`signup_order` (order view; pay with `POST /orders/{no}/pay`) + `order_no`; errors `slug_taken`,
+`slug_reserved`, `reseller_exists`. `PATCH /reseller/me`; `GET /reseller/products?q&page` (items
+`{id, product_id, title, cover, base_price(_minor), markup_kind, markup_value, markup_minor,
+price(_minor), hidden, custom}`); `PUT /reseller/products/{id}` `{markup_kind?, markup_value?,
+hidden?}` and `DELETE` (204; 422 `markup_too_high`); `GET /reseller/orders?page`
+(`{order_no, title, qty, amount, amount_minor, markup_minor, status, created_at, buyer(masked)}`);
+`GET /reseller/stats` (`today/last_7_days/total {orders, earnings_minor}`, `balances`, plus flat
+`today_orders, today_earnings_minor, week_orders, week_earnings_minor`); `GET/POST
+/reseller/payouts` (`{amount_minor}`; errors `payout_account_required`, `payout_below_minimum`,
+`payout_open`, `insufficient_balance`).
+
+Admin: `GET /admin/resellers?status&q&page`, `GET/PATCH /admin/resellers/{id}` `{status?:
+active|suspended, markup_kind?, markup_value?}`, `GET /admin/payouts?status`, `POST
+/admin/payouts/{id}/decide` `{action: paid|rejected, note}`; `GET /admin/orders?reseller_id=` and
+admin order views gain `reseller_markup_minor`, `kind`, `discount_minor`, `promo_code`, `reseller`.
+
+**Ledger accounts.** payment: `gateway_clearing:zpay +amount`, `sales_revenue -(subtotal - markup)`,
+`reseller_payable:{id} -markup`, `promo_discount +discount`, `surcharge_revenue -fee`; sign-up:
+`reseller_signup_revenue -subtotal`; refund = exact mirror; payout paid: `reseller_payable:{id}
++amount`, `cash:payouts -amount`.

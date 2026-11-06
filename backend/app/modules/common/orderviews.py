@@ -8,8 +8,10 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import AfterSales, Attachment, Checkout, Order, Product
+from app.core.settings_v5 import section
+from app.models import AfterSales, Attachment, Checkout, Order, Product, PromoCode, Reseller
 from app.modules.common.views import after_sales_view, order_view
+from app.modules.content.site import tenant_settings
 
 
 async def latest_tickets(db: AsyncSession, order_ids: list[uuid.UUID]) -> dict[uuid.UUID, dict]:
@@ -51,6 +53,11 @@ async def order_views(
     products: dict[uuid.UUID, Product] = {}
     if pids:
         products = {p.id: p for p in await db.scalars(select(Product).where(Product.id.in_(pids)))}
+    eta_default = 24
+    if any(o.delivery_mode == "manual" for o in orders):
+        eta_default = section(await tenant_settings(db, orders[0].tenant_id), "delivery")[
+            "manual_eta_hours"
+        ]
     tickets = await latest_tickets(db, [o.id for o in orders])
     co_ids = {o.checkout_id for o in orders if o.checkout_id}
     checkout_nos: dict[uuid.UUID, str] = {}
@@ -63,9 +70,39 @@ async def order_views(
                 )
             ).all()
         }
+    rs_ids = {o.reseller_id for o in orders if o.reseller_id}
+    resellers: dict[uuid.UUID, tuple[str, str]] = {}
+    if rs_ids:
+        resellers = {
+            rid: (slug, name)
+            for rid, slug, name in (
+                await db.execute(
+                    select(Reseller.id, Reseller.slug, Reseller.store_name).where(
+                        Reseller.id.in_(rs_ids),
+                        Reseller.tenant_id.in_({o.tenant_id for o in orders}),
+                    )
+                )
+            ).all()
+        }
+    promo_ids = {o.promo_code_id for o in orders if o.promo_code_id}
+    promos: dict[uuid.UUID, str] = {}
+    if promo_ids:
+        promos = {
+            pid: code
+            for pid, code in (
+                await db.execute(
+                    select(PromoCode.id, PromoCode.code).where(
+                        PromoCode.id.in_(promo_ids),
+                        PromoCode.tenant_id.in_({o.tenant_id for o in orders}),
+                    )
+                )
+            ).all()
+        }
     return [
         order_view(
             o,
+            reseller=resellers.get(o.reseller_id) if o.reseller_id else None,
+            promo_code=promos.get(o.promo_code_id) if o.promo_code_id else None,
             viewer_is_owner=owner_id is not None and o.buyer_id == owner_id,
             attachment=atts.get(o.manual_delivery_attachment_id)
             if o.manual_delivery_attachment_id
@@ -75,6 +112,7 @@ async def order_views(
             lang=lang,
             viewer_is_staff=owner_id is None,
             checkout_no=checkout_nos.get(o.checkout_id) if o.checkout_id else None,
+            manual_eta_default=eta_default,
         )
         for o in orders
     ]

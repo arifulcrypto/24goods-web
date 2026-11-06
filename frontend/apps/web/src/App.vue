@@ -4,10 +4,12 @@ import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import TabBar from './components/TabBar.vue'
 import CsBubble from './components/CsBubble.vue'
+import { safeAssetUrl } from '@24goods/shared'
 import { useAuthStore } from './stores/auth'
 import { useRealtimeStore } from './stores/realtime'
 import { useConversationsStore } from './stores/conversations'
 import { useSupportStore } from './stores/support'
+import { useSiteStore } from './stores/site'
 
 const route = useRoute()
 const { t } = useI18n()
@@ -15,6 +17,39 @@ const auth = useAuthStore()
 const rt = useRealtimeStore()
 const convs = useConversationsStore()
 const support = useSupportStore()
+const site = useSiteStore()
+
+// v5 §4/§7: document title = storefront name / Settings → General name / brand.ts
+// White-label storefronts (owner rule): no platform brand in title, meta tags or favicon.
+watch(
+  () => [site.headerName, site.whiteLabel, site.storefront?.welcome, site.storefront?.logo_url] as const,
+  ([n, wl, welcome, logo]) => {
+    document.title = n
+    if (!wl) return
+    const setMeta = (sel: string, attr: string, key: string, val: string) => {
+      let el = document.head.querySelector<HTMLMetaElement>(sel)
+      if (!el) {
+        el = document.createElement('meta')
+        el.setAttribute(attr, key)
+        document.head.appendChild(el)
+      }
+      el.content = val
+    }
+    setMeta('meta[name="description"]', 'name', 'description', welcome ?? n)
+    setMeta('meta[property="og:site_name"]', 'property', 'og:site_name', n)
+    setMeta('meta[property="og:title"]', 'property', 'og:title', n)
+    setMeta('meta[property="og:description"]', 'property', 'og:description', welcome ?? n)
+    const icon = document.head.querySelector<HTMLLinkElement>('link[rel="icon"]')
+    const safe = safeAssetUrl(logo)
+    if (icon) {
+      if (safe) {
+        icon.type = ''
+        icon.href = safe
+      } else icon.remove() // never show the platform favicon on a white-label store
+    }
+  },
+  { immediate: true },
+)
 
 const wide = computed(() => !!route.meta.wide)
 const showTabbar = computed(() => !!route.meta.tab)

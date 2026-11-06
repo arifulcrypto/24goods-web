@@ -73,6 +73,7 @@ class Settings(BaseSettings):
     vault_fingerprint_key: str = ""  # base64, >= 32 bytes
     quote_hmac_key: str = ""  # base64, >= 32 bytes
     pow_key: str = ""  # base64, >= 32 bytes: signs proof-of-work challenges
+    settings_key: str = ""  # base64, 32 bytes: AES-256-GCM key for tenant_secrets (api only)
     lookup_key: str = (
         ""  # base64, >= 32 bytes: HMAC for order access codes (dev: derived; required in prod)
     )
@@ -176,6 +177,17 @@ class Settings(BaseSettings):
         if self.is_prod:
             raise ValueError("APP_POW_KEY is required in prod")
         return hashlib.sha256(b"dev-pow\x00" + self.quote_key()).digest()
+
+    def settings_secret(self) -> bytes:
+        """32-byte AES-GCM key for ``tenant_secrets`` (required in prod; derived in dev/test)."""
+        if self.settings_key.strip():
+            key = decode_key(self.settings_key)
+            if len(key) != 32:
+                raise ValueError("APP_SETTINGS_KEY must decode to exactly 32 bytes")
+            return key
+        if self.is_prod:
+            raise ValueError("APP_SETTINGS_KEY is required in prod")
+        return hmac.new(self.pow_secret(), b"settings-secretbox/v1", hashlib.sha256).digest()
 
     def lookup_secret(self) -> bytes:
         if self.lookup_key.strip():

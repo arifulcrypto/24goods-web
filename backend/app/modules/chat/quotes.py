@@ -221,6 +221,9 @@ async def accept_quote(
         quote_id=q.id,
         conversation_id=conv.id,
         ip=ip,
+        # attribution only: a quote is a negotiated price, no markup and no promo (v5)
+        reseller_id=conv.reseller_id,
+        reseller_markup_minor=0,
     )
     q.status = "accepted"
     q.order_id = order.id

@@ -1,3 +1,4 @@
+import v5 from './v5.en'
 /** Admin console EN messages (source). zh-CN.ts must have every key (test/i18n.test.ts). */
 export default {
   app: {
@@ -493,4 +494,5 @@ export default {
     uploaded: 'Image uploaded',
     hint: 'Markdown. Paste or drop an image (JPEG / PNG / WebP) to upload it.',
   },
+  v5,
 } as const

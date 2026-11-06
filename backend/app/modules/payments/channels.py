@@ -32,10 +32,16 @@ def fee_minor(subtotal_minor: int, permille: int) -> int:
     return (subtotal_minor * permille + 999) // 1000
 
 
-def split_amount(subtotal_minor: int, permille: int) -> tuple[int, int]:
-    """``(fee_minor, total_minor)`` for a subtotal."""
-    fee = fee_minor(subtotal_minor, permille)
-    return fee, subtotal_minor + fee
+def split_amount(subtotal_minor: int, permille: int, discount_minor: int = 0) -> tuple[int, int]:
+    """``(fee_minor, total_minor)`` for a subtotal.
+
+    MONEY (review-v5 s6): the fee is charged on the DISCOUNTED subtotal, per order:
+    ``fee = ceil((subtotal - discount) * permille / 1000)`` and
+    ``total = subtotal - discount + fee`` (== the DB CHECK ``ck_orders_amount_split``).
+    """
+    net = subtotal_minor - discount_minor
+    fee = fee_minor(net, permille)
+    return fee, net + fee
 
 
 def fee_rate(permille: int) -> str:

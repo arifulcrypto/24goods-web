@@ -22,7 +22,7 @@ const emit = defineEmits<{
   sendVoice: [blob: Blob, durationMs: number, filename: string]
   focus: []
 }>()
-defineProps<{ disabled?: boolean }>()
+withDefaults(defineProps<{ disabled?: boolean; voice?: boolean }>(), { voice: true })
 const { t } = useI18n()
 
 const mode = ref<'text' | 'voice'>('text')
@@ -222,6 +222,7 @@ onBeforeUnmount(() => {
   <div class="composer" :class="{ disabled }">
     <div class="row">
       <button
+        v-if="voice"
         type="button"
         class="icon-btn"
         :aria-label="mode === 'text' ? t('chat.voiceMode') : t('chat.keyboard')"

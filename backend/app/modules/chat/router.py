@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import client_ip, current_user, get_db, get_lang, get_res
 from app.core.ratelimit import enforce
 from app.core.resources import Resources
+from app.core.storefront import Storefront, get_storefront
 from app.models import Conversation, User
 from app.modules.chat import quotes as quote_svc
 from app.modules.chat import service
@@ -27,8 +28,11 @@ async def create_conversation(
     lang: str = Depends(get_lang),
     db: AsyncSession = Depends(get_db),
     res: Resources = Depends(get_res),
+    sf: Storefront | None = Depends(get_storefront),
 ) -> dict:
-    conv, msgs = await service.find_or_create(db, user, body.product_id)
+    conv, msgs = await service.find_or_create(
+        db, user, body.product_id, sf.id if sf is not None else None
+    )
     if msgs:
         await service.broadcast(res, db, conv, msgs)
     (view,) = await service.conversation_views(db, [conv], viewer="buyer", lang=lang)

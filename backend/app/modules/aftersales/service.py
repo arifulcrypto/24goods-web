@@ -22,6 +22,7 @@ from app.modules.common.views import after_sales_view, iso
 from app.modules.orders.events import add_event, snapshot
 from app.modules.orders.service import get_owned
 from app.modules.payments.ledger import Line, post_txn
+from app.modules.payments.settle import payment_lines
 
 ELIGIBLE = ("delivered", "completed")
 # From the Nth replacement on (3rd), replacing needs an admin (agents can't loop replacements).
@@ -73,7 +74,7 @@ async def open_ticket(
     db: AsyncSession, buyer: User, ref: str, body: OpenIn, ip: str | None
 ) -> tuple[AfterSales, Order, Message | None]:
     order = await get_owned(db, ref, buyer, lock=True)
-    if order.status not in ELIGIBLE:
+    if order.status not in ELIGIBLE or order.kind != "goods":
         raise InvalidState("After-sales is only available for delivered orders")
     if order.after_sales_until is None or order.after_sales_until <= utcnow():
         raise AfterSalesClosed("The after-sales period for this order has ended")
@@ -295,7 +296,7 @@ async def act(
     else:
         t.status = _TARGET[body.action]
         if body.action == "refund":
-            if order.status not in ELIGIBLE:
+            if order.status not in ELIGIBLE or order.kind != "goods":
                 raise InvalidState("Only delivered or completed orders can be refunded")
             await _refund(db, order, staff, ip)
             event = "after_sales_refunded"
@@ -351,11 +352,10 @@ async def _refund(db: AsyncSession, order: Order, staff: User, ip: str | None) -
         currency=order.currency,
         order_id=order.id,
         memo=f"refund {order.order_no}",
-        lines=[
-            Line("sales_revenue", order.subtotal_minor),
-            *([Line("surcharge_revenue", order.fee_minor)] if order.fee_minor > 0 else []),
-            Line("gateway_clearing:zpay", -order.amount_minor),
-        ],
+        # MONEY: the exact mirror of the payment lines (sales_revenue, reseller_payable,
+        # promo_discount, surcharge_revenue, gateway_clearing), so a refund can never leave a
+        # residue on any account. A paid-out reseller balance may go negative (clawback).
+        lines=[Line(ln.account, -ln.amount_minor) for ln in reversed(payment_lines(order))],
     )
     await audit(
         db,

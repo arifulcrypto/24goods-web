@@ -24,6 +24,7 @@ import { isPowAbort } from '../composables/usePow'
 import { useAuthStore } from '../stores/auth'
 import { useSiteStore } from '../stores/site'
 import { stashAccessCode } from '../lib/attribution'
+import TurnstileBox from '../components/TurnstileBox.vue'
 import { useConversationsStore } from '../stores/conversations'
 import { useRealtimeStore } from '../stores/realtime'
 import { useSupportStore } from '../stores/support'
@@ -365,12 +366,17 @@ function deliveredOrderId(it: { kind: string; message?: { type: string; payload:
     <div v-if="!closed && quick.length" class="quick" role="group" :aria-label="t('chat.chips.label')">
       <button v-for="q in quick" :key="q" type="button" class="chip" @click="onSendText(q)">{{ q }}</button>
     </div>
+    <div v-if="!closed && !auth.loggedIn && account.tsNeeded.value" class="ts-gate">
+      <p class="muted small">{{ t('cs.verify') }}</p>
+      <TurnstileBox :ts="account.ts" />
+    </div>
     <div v-if="closed" class="closed-bar">
       <span>{{ t('chat.closed') }}</span>
       <van-button size="small" round type="primary" @click="startNew">{{ t('chat.startNew') }}</van-button>
     </div>
     <ChatComposer
       v-else
+      :voice="site.features.voice_messages"
       :disabled="connecting"
       @send-text="onSendText"
       @send-file="onSendFile"
@@ -384,6 +390,9 @@ function deliveredOrderId(it: { kind: string; message?: { type: string; payload:
 </template>
 
 <style scoped>
+.ts-gate {
+  padding: 4px 12px;
+}
 .chat-page {
   display: flex;
   flex-direction: column;

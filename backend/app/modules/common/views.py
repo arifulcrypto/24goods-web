@@ -3,12 +3,13 @@ API and the delivery service emit identical shapes."""
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from app.core.i18n import pick
 from app.core.markdown import render
 from app.core.money import fmt
+from app.core.settings_v5 import manual_eta_hours
 from app.models import AfterSales, Attachment, Message, Order, Product, User
 from app.modules.common.buyerinput import admin_config, public_config
 from app.modules.common.sitedefaults import resolve_after_sales_hours
@@ -76,6 +77,10 @@ def product_summary(
         "category": p.category,
         "sold": p.sold,
         "after_sales_hours": resolve_after_sales_hours(p.after_sales_hours, tenant_settings),
+        # manual delivery promise (hours); never cost/source (staff-only)
+        "delivery_eta_hours": manual_eta_hours(tenant_settings, p.delivery_eta_hours)
+        if p.delivery_mode == "manual"
+        else None,
     }
 
 
@@ -143,6 +148,11 @@ def admin_product_view(p: Product, stock: int | None) -> dict[str, Any]:
         "after_sales_hours": p.after_sales_hours,
         "group_sort": p.group_sort,
         "buyer_input": admin_config(p.buyer_input),
+        # v5, staff-only: never part of buyer payloads
+        "delivery_eta_hours": p.delivery_eta_hours,
+        "cost_minor": p.cost_minor,
+        "source_url": p.source_url,
+        "archived_at": iso(p.archived_at),
     }
 
 
@@ -196,8 +206,16 @@ def order_view(
     lang: str = "en",
     viewer_is_staff: bool = False,
     checkout_no: str | None = None,
+    reseller: tuple[str, str] | None = None,  # (slug, store_name) of the storefront
+    promo_code: str | None = None,
+    manual_eta_default: int = 24,
 ) -> dict[str, Any]:
     manual = None
+    eta = deadline = None
+    if o.delivery_mode == "manual":  # the manual-delivery promise (review-v5 §11)
+        eta = (product.delivery_eta_hours if product else None) or manual_eta_default
+        if o.paid_at is not None:
+            deadline = iso(o.paid_at + timedelta(hours=eta))
     if o.delivery_mode == "manual" and (o.manual_delivery_text or attachment is not None):
         manual = {"text": o.manual_delivery_text, "attachment": attachment_view(attachment)}
     return {
@@ -209,6 +227,16 @@ def order_view(
         "qty": o.qty,
         "amount": fmt(o.amount_minor),
         "subtotal": fmt(o.subtotal_minor),
+        "kind": o.kind,
+        "discount": fmt(o.discount_minor),
+        "discount_minor": o.discount_minor,
+        "promo_code": promo_code if (viewer_is_owner or viewer_is_staff) else None,
+        # buyer view: store name only; staff also get the slug (reseller internals stay hidden)
+        "reseller": (
+            None
+            if reseller is None
+            else {"store_name": reseller[1], **({"slug": reseller[0]} if viewer_is_staff else {})}
+        ),
         "fee": fmt(o.fee_minor),
         "fee_rate": fee_rate(o.fee_permille),
         "checkout_no": checkout_no,
@@ -218,6 +246,8 @@ def order_view(
         "currency": o.currency,
         "status": o.status,
         "delivery_mode": o.delivery_mode,
+        "delivery_eta_hours": eta,
+        "delivery_deadline": deadline,
         "channel": o.channel,
         "created_at": iso(o.created_at),
         "paid_at": iso(o.paid_at),

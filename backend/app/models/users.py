@@ -23,6 +23,7 @@ class User(Base):
     is_instant: Mapped[bool] = mapped_column(default=False)
     email_verified: Mapped[bool] = mapped_column(default=False)
     handle: Mapped[str | None] = mapped_column(String(16))
+    google_sub: Mapped[str | None] = mapped_column(String(64))
     last_login_at: Mapped[datetime | None]
     created_at: Mapped[datetime] = created_at()
 

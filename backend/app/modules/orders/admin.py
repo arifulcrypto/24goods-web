@@ -14,6 +14,7 @@ from app.core.deps import Page
 from app.core.errors import InvalidState, NotFound, Validation
 from app.core.money import MoneyError, fmt, parse_amount
 from app.core.resources import Resources
+from app.core.settings_v5 import section
 from app.models import Attachment, Checkout, Message, Order, OrderEvent, Product, User
 from app.modules.catalog.service import escape_like
 from app.modules.chat.messages import post_system
@@ -48,6 +49,10 @@ async def change_price(
         raise InvalidState("Price can only change while awaiting payment")
     if order.checkout_id is not None:
         raise InvalidState("This order is part of a cart checkout; close the checkout instead")
+    if order.kind != "goods" or order.discount_minor > 0 or order.reseller_markup_minor > 0:
+        # promo allocation, reseller markup and the sign-up fee are server-set records (the
+        # markup/settlement split would silently change): close the order and re-quote
+        raise InvalidState("This order's price cannot be changed")
     if order.product_id is not None:
         product = await db.get(Product, order.product_id)
         if product is not None and new_minor < product.floor_price_minor * order.qty:
@@ -182,6 +187,7 @@ async def admin_views(db: AsyncSession, orders: list[Order]) -> list[dict[str, A
             "display_name": b.display_name if b else "",
         }
         v["source"] = o.source
+        v["reseller_markup_minor"] = o.reseller_markup_minor
     return views
 
 
@@ -192,10 +198,28 @@ async def list_orders(
     q: str | None,
     tenant_id: uuid.UUID,
     buyer_id: uuid.UUID | None = None,
+    reseller_id: uuid.UUID | None = None,
+    overdue_manual: bool = False,
 ) -> dict[str, Any]:
     stmt = select(Order).where(Order.tenant_id == tenant_id)
+    if overdue_manual:  # manual orders still awaiting delivery past paid_at + ETA
+        default_eta = section(await tenant_settings(db, tenant_id), "delivery")["manual_eta_hours"]
+        eta = func.coalesce(
+            select(Product.delivery_eta_hours)
+            .where(Product.id == Order.product_id, Product.tenant_id == tenant_id)
+            .scalar_subquery(),
+            default_eta,
+        )
+        stmt = stmt.where(
+            Order.delivery_mode == "manual",
+            Order.status == "paid",
+            Order.paid_at.is_not(None),
+            Order.paid_at + func.make_interval(0, 0, 0, 0, eta, 0, 0) < func.now(),
+        )
     if buyer_id is not None:
         stmt = stmt.where(Order.buyer_id == buyer_id)
+    if reseller_id is not None:
+        stmt = stmt.where(Order.reseller_id == reseller_id)
     if status:
         stmt = stmt.where(Order.status == status)
     if q and q.strip():

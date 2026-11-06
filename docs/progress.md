@@ -2,9 +2,39 @@
 
 Update this file in every PR. Phases are defined in [review-v2.md §8](review-v2.md#8-revised-plan-and-timeline-solo-developer--agents-honest-estimate).
 
+## Current state — hand-off (read this first in a new session)
+
+_Last updated 2026-11-06 (v5 integration)._
+
+- **Prod** https://shop.kesiv.com runs **v4** (c4 /opt/kesiv). `scripts/prod.sh deploy` is run by the owner.
+- **Demo** https://demo.kesiv.com (= http://107.173.10.79:18888) runs `:main` images (v4 until v5 merges).
+  Logins: `/opt/24goods-demo/deploy/secrets/demo-credentials.txt`; dev: `scripts/dev.sh creds`.
+- **v5** (spec `docs/review-v5.md`) is complete on branch **`feat/v5`** → PR to main. Built + reviewed
+  (security-reviewer, payment-auditor fixes merged), contract-checked against the live dev API, dev
+  E2E smoke passed. Gate: GitHub CI green on the PR.
+- **Next steps, in order:**
+  1. CI green on the v5 PR → merge → demo pulls `:main` (`/opt/24goods-demo/deploy/demo-update.sh`).
+     Demo needs `APP_SETTINGS_KEY` in `/opt/24goods-demo/deploy/env/api.env` (32 random bytes,
+     base64) **before** the new image starts; prod c4 the same before its deploy.
+  2. Demo settings (Admin → Settings): Turnstile = Cloudflare test keys on the demo (real keys in
+     `/root/.secrets/sub2api-reuse.env` for prod); Google = `DEMO_GOOGLE_*` from
+     `/root/.secrets/google-oauth.env`; Email = Gmail SMTP from `sub2api-reuse.env`; enable
+     Resellers; announcement on.
+  3. Small backend follow-ups (commerce files): admin order view `cost_minor` (unit cost × qty
+     snapshot), promo redemptions `order_no`, admin reseller `store_url` + revenue total.
+  4. Dev DB cleanup of contract-probe data (category `probe-cat`, promo `PROBE10`, reseller
+     `probestore`; move "ChatGPT Plus" back to its category).
+  5. v5.1 backlog: reseller custom domains (Cloudflare for SaaS), reseller open API + balance,
+     upstream API delivery (sub2api redeem codes), backup tab, `index.html` neutral meta for
+     white-label hosts, prod wildcard `*.kesiv.com` DNS/rules (review-v5 §7).
+- **Working rules:** AGENTS.md §7 (2 GB box: full suite in CI only, ≤ 2 agents, dev stack down when
+  idle, never run servers under `flock`).
+
 ## Current phase: **MVP-0: local demo with mock data** (finishing) → next: **M1 production MVP**
 
 ## Done
+
+- v5 product import backend: `core/safefetch.py` (SSRF-safe, IP-pinned), `catalog/importer/` parsers + gmailbuy/maitg/ka8 adapters, `admin/importer.py` endpoints, offline fixture tests.
 
 ### 2026-11-05: M0 bootstrap
 - Research by four parallel agents; evaluation in `docs/analysis.md`.
@@ -106,6 +136,10 @@ Update this file in every PR. Phases are defined in [review-v2.md §8](review-v2
   - Tests: `backend/tests/test_commerce_v4.py` (27 tests). Legacy tests run with a 0 permille surcharge configured in the `env` fixture.
 - **Follow-ups:** file a GitHub issue to encrypt `orders.buyer_input` at rest; payment-auditor and security-reviewer passes on `payments/settle.py`, `orders/cancel.py`, `orders/checkout.py`; reconcile ledger vs gateway for surcharge.
 
+### 2026-11-06: v5 commerce backend (branch `feat/v5-be-com`)
+- Promo codes (percent/fixed, limits under row lock, reserved/used/released lifecycle, largest-remainder allocation), reseller storefronts (host/header resolution in `app/core/storefront.py`, markup pricing, sign-up order, payouts, admin), ledger lines for discount/markup/sign-up/payout. Tests: `backend/tests/test_commerce_v5.py`; E2E `v5_commerce`.
+- **Follow-ups:** payment-auditor pass; reseller custom domains slot into `storefront.candidate_slug`; refund after payout makes `reseller_payable` negative (clawback, no automation).
+
 ## Next
 
 ### v3 follow-up
@@ -160,3 +194,8 @@ Update this file in every PR. Phases are defined in [review-v2.md §8](review-v2
   - buyer cancel and staff close
   - staff product card
   - global limiter, checking the exact 429 body
+
+### v5 backend core (2026-11-06)
+- Done: product archive/hard delete/restore/bulk; DB-backed categories with admin CRUD; settings sections + encrypted secrets (`APP_SETTINGS_KEY`, added to dev.sh and bootstrap.sh; prod.sh does not generate api.env); feature toggles; Turnstile; SMTP mailer, email codes, password reset, configurable email templates, order emails; Google sign-in; audit filters/CSV/retention; manual delivery ETA + overdue filter; tenant `defaults` applied to pending-order cap and timeout.
+- Migration 0005 (`0005_v5_core_grants`): API may update its outbox rows; bounded `purge_audit_log()` function. Rebase note: the commerce agent may add its own 0005; renumber on merge.
+- Next: frontend settings UI/consumers; production DNS/Turnstile hostnames; independent review (M1 gate) still open.

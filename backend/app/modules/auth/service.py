@@ -63,6 +63,7 @@ async def register(
     tenant_id: uuid.UUID,
     body: RegisterIn,
     ip: str | None,
+    email_verified: bool = False,
 ) -> User:
     await powmod.verify(settings, redis, "register", body.pow)
     await enforce(redis, "register:ip", ip or "-", 5, 60)
@@ -73,6 +74,7 @@ async def register(
         role="buyer",
         display_name=body.display_name,
         locale=body.locale,
+        email_verified=email_verified,
     )
     db.add(user)
     try:

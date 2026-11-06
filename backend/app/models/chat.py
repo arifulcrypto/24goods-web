@@ -42,6 +42,7 @@ class Conversation(Base):
     last_message_id: Mapped[int | None] = mapped_column(BigInteger)
     buyer_last_read_id: Mapped[int] = mapped_column(BigInteger, default=0)
     staff_last_read_id: Mapped[int] = mapped_column(BigInteger, default=0)
+    reseller_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("resellers.id"))
     created_at: Mapped[datetime] = created_at()
     updated_at: Mapped[datetime] = updated_at()
 

@@ -36,6 +36,7 @@ from app.devtools.seed_content import (
 )
 from app.models import AgentStatus, Article, CardStock, Conversation, Product, Tenant, User
 from app.modules.admin.service import set_agent_status
+from app.modules.catalog.categories import seed_default_categories
 from app.modules.chat import quotes as quote_svc
 from app.modules.chat import service as chat
 from app.modules.chat.schemas import QuoteIn
@@ -437,6 +438,8 @@ async def _run_prod(settings: Settings, database_url: str, admin_pw: str) -> Non
     try:
         tid = await _tenant(maker, settings)
         async with tenant_session(maker, tid) as db:
+            await seed_default_categories(db, tid)
+            await db.commit()
             email = settings.seed_admin_email.strip().lower()
             existing = await db.scalar(select(User).where(User.email == email))
             if existing is None:
@@ -464,6 +467,8 @@ async def run(settings: Settings, database_url: str) -> None:
     try:
         tid = await _tenant(maker, settings)
         async with tenant_session(maker, tid) as db:
+            await seed_default_categories(db, tid)
+            await db.commit()
             admin = await _user(db, tid, "admin@demo.local", "admin", "Admin", "en", admin_pw)
             agent = await _user(
                 db, tid, "agent@demo.local", "agent", "Lily (Support)", "en", agent_pw

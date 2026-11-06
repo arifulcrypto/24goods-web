@@ -1,18 +1,20 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import audit
 from app.core.deps import Page
-from app.core.errors import NotFound, Validation
+from app.core.errors import Conflict, InvalidState, NotFound, Validation
 from app.core.markdown import render_i18n
 from app.core.money import MoneyError, parse_amount
 from app.models import Attachment, Product, User
-from app.modules.admin.schemas import ProductIn, ProductPatch
+from app.modules.admin.schemas import BulkProductsIn, ProductIn, ProductPatch
+from app.modules.catalog.categories import category_slugs
 from app.modules.catalog.service import apply_search, prepare_search, stock_counts
 from app.modules.common.views import admin_product_view
 
@@ -47,6 +49,12 @@ async def _check_images(db: AsyncSession, urls: list[str], admin: User) -> None:
         att.purpose, att.is_public = "product", True
 
 
+async def ensure_category(db: AsyncSession, tenant_id: uuid.UUID, slug: str) -> None:
+    """Products may only use a category of their own tenant (any enabled state)."""
+    if slug not in await category_slugs(db, tenant_id):
+        raise Validation("unknown category")
+
+
 def _summary(p: Product) -> dict[str, Any]:
     return {
         "price_minor": p.price_minor,
@@ -54,6 +62,7 @@ def _summary(p: Product) -> dict[str, Any]:
         "status": p.status,
         "delivery_mode": p.delivery_mode,
         "after_sales_hours": p.after_sales_hours,
+        "archived_at": p.archived_at.isoformat() if p.archived_at else None,
     }
 
 
@@ -66,6 +75,8 @@ async def list_products(db: AsyncSession, page: Page, q: str | None, status: str
     stmt = select(Product)
     if status:
         stmt = stmt.where(Product.status == status)
+    else:  # archived products only show under the explicit "archived" filter
+        stmt = stmt.where(Product.status != "archived")
     stmt = apply_search(stmt, q)
     await prepare_search(db, q)
     total = await db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
@@ -89,6 +100,7 @@ async def create(db: AsyncSession, body: ProductIn, admin: User, ip: str | None)
     if floor > price:
         raise Validation("floor_price must not exceed price")
     await _check_images(db, body.images, admin)
+    await ensure_category(db, admin.tenant_id, body.category)
     p = Product(
         tenant_id=admin.tenant_id,
         title_i18n=body.title_i18n,
@@ -111,6 +123,9 @@ async def create(db: AsyncSession, body: ProductIn, admin: User, ip: str | None)
         usage_html_i18n=render_i18n(body.usage_i18n),
         after_sales_hours=body.after_sales_hours,
         group_sort=body.group_sort,
+        delivery_eta_hours=body.delivery_eta_hours,
+        cost_minor=body.cost_minor,
+        source_url=body.source_url,
     )
     db.add(p)
     await db.flush()
@@ -159,6 +174,8 @@ async def patch(
     if data.get("images") is not None:
         await _check_images(db, data["images"], admin)
         p.images = data["images"]
+    if data.get("category") is not None:
+        await ensure_category(db, p.tenant_id, data["category"])
     if data.get("title_i18n") is not None:
         p.title_i18n = data["title_i18n"]
     if data.get("description_i18n") is not None:
@@ -168,7 +185,14 @@ async def patch(
         if data.get(key) is not None:
             setattr(p, key, data[key])
     # nullable fields: an explicit null clears them (site default / no format / no link)
-    for key in ("delivery_format", "redeem_url", "after_sales_hours"):
+    for key in (
+        "delivery_format",
+        "redeem_url",
+        "after_sales_hours",
+        "delivery_eta_hours",
+        "cost_minor",
+        "source_url",
+    ):
         if key in data:
             setattr(p, key, data[key])
     if "buyer_input" in data:  # explicit null clears the popup
@@ -195,14 +219,81 @@ async def patch(
     return p
 
 
-async def soft_delete(db: AsyncSession, product_id: uuid.UUID, admin: User, ip: str | None) -> None:
+async def _in_use(db: AsyncSession, p: Product) -> bool:
+    """Any row that references the product (hard delete would orphan or violate an FK)."""
+    row = await db.scalar(
+        text(
+            """SELECT
+                 EXISTS (SELECT 1 FROM orders WHERE product_id = :pid)
+              OR EXISTS (SELECT 1 FROM card_stock WHERE product_id = :pid)
+              OR EXISTS (SELECT 1 FROM card_batches WHERE product_id = :pid)
+              OR EXISTS (SELECT 1 FROM conversations WHERE product_id = :pid)
+              OR EXISTS (SELECT 1 FROM quotes WHERE product_id = :pid)
+              OR EXISTS (SELECT 1 FROM reseller_prices WHERE product_id = :pid)
+              OR EXISTS (SELECT 1 FROM promo_codes WHERE :pid = ANY(product_ids))"""
+        ),
+        {"pid": p.id},
+    )
+    return bool(row)
+
+
+def _archive(p: Product) -> None:
+    p.status = "archived"
+    p.archived_at = datetime.now(timezone.utc)
+
+
+async def archive(
+    db: AsyncSession, product_id: uuid.UUID, admin: User, ip: str | None, *, hard: bool = False
+) -> None:
+    """DELETE /admin/products/{id}: archive (hidden everywhere), or ``hard`` delete the row
+    when nothing references it (409 ``product_in_use`` otherwise)."""
     p = await get(db, product_id, lock=True)
     before = _summary(p)
-    p.status = "draft"
+    if hard:
+        if await _in_use(db, p):
+            raise Conflict(
+                "Product is referenced by orders, stock or other records; archive it",
+                code="product_in_use",
+            )
+        await db.execute(
+            delete(Product).where(Product.id == p.id, Product.tenant_id == p.tenant_id)
+        )
+        await audit(
+            db,
+            tenant_id=p.tenant_id,
+            action="product.hard_deleted",
+            actor_id=admin.id,
+            actor_role=admin.role,
+            target=f"product:{product_id}",
+            before=before,
+            ip=ip,
+        )
+    else:
+        _archive(p)
+        await audit(
+            db,
+            tenant_id=p.tenant_id,
+            action="product.archived",
+            actor_id=admin.id,
+            actor_role=admin.role,
+            target=f"product:{p.id}",
+            before=before,
+            after=_summary(p),
+            ip=ip,
+        )
+    await db.commit()
+
+
+async def restore(db: AsyncSession, product_id: uuid.UUID, admin: User, ip: str | None) -> Product:
+    p = await get(db, product_id, lock=True)
+    if p.status != "archived":
+        raise InvalidState("Product is not archived")
+    before = _summary(p)
+    p.status, p.archived_at = "draft", None
     await audit(
         db,
         tenant_id=p.tenant_id,
-        action="product.deleted",
+        action="product.restored",
         actor_id=admin.id,
         actor_role=admin.role,
         target=f"product:{p.id}",
@@ -211,3 +302,50 @@ async def soft_delete(db: AsyncSession, product_id: uuid.UUID, admin: User, ip: 
         ip=ip,
     )
     await db.commit()
+    await db.refresh(p)
+    return p
+
+
+async def bulk(db: AsyncSession, body: BulkProductsIn, admin: User, ip: str | None) -> int:
+    """publish | unpublish | archive | restore | set_category over up to 200 products.
+    Rows that cannot take the action (e.g. restore of a non-archived product) are skipped."""
+    ids = list(dict.fromkeys(body.ids))
+    if body.action == "set_category":
+        if not body.category:
+            raise Validation("category is required")
+        await ensure_category(db, admin.tenant_id, body.category)
+    rows = list(
+        await db.scalars(
+            select(Product)
+            .where(Product.id.in_(ids), Product.tenant_id == admin.tenant_id)
+            .order_by(Product.id)
+            .with_for_update()
+        )
+    )
+    changed: list[str] = []
+    for p in rows:
+        if body.action == "publish" and p.status == "draft":
+            p.status = "active"
+        elif body.action == "unpublish" and p.status == "active":
+            p.status = "draft"
+        elif body.action == "archive" and p.status != "archived":
+            _archive(p)
+        elif body.action == "restore" and p.status == "archived":
+            p.status, p.archived_at = "draft", None
+        elif body.action == "set_category" and p.category != body.category:
+            p.category = body.category  # type: ignore[assignment]
+        else:
+            continue
+        changed.append(str(p.id))
+    await audit(
+        db,
+        tenant_id=admin.tenant_id,
+        action="product.bulk",
+        actor_id=admin.id,
+        actor_role=admin.role,
+        target=f"products:{len(changed)}",
+        ip=ip,
+        detail={"action": body.action, "category": body.category, "ids": changed},
+    )
+    await db.commit()
+    return len(changed)

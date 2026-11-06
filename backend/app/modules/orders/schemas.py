@@ -14,6 +14,7 @@ class BuyNowIn(BaseModel):
     qty: int = Field(1, ge=1, le=10)
     src: str | None = Field(None, max_length=200)
     buyer_input: str | None = Field(None, max_length=4000)
+    promo_code: str | None = Field(None, max_length=40)
 
     @field_validator("src")
     @classmethod
@@ -58,11 +59,13 @@ class CartItemIn(BaseModel):
 
 class CartQuoteIn(BaseModel):
     items: list[CartItemIn] = Field(min_length=1, max_length=20)
+    promo_code: str | None = Field(None, max_length=40)
 
 
 class CheckoutIn(BaseModel):
     items: list[CartItemIn] = Field(min_length=1, max_length=20)
     source: str | None = Field(None, max_length=200)
+    promo_code: str | None = Field(None, max_length=40)
 
     @field_validator("source")
     @classmethod

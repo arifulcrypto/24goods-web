@@ -55,23 +55,43 @@ function link() {
   })
 }
 
+let seq = 0
 async function uploadFile(file: File) {
   if (!ACCEPT.includes(file.type)) {
     toastError(new Error('upload_rejected'))
     return
   }
+  // Placeholder at the cursor while uploading; replaced by the final `![alt](url)` (or removed on failure).
+  const ph = `![${t('v5.md.uploading')} #${++seq}]()`
+  apply((x, s) => insertAt(x, s, `${ph}\n`))
   uploading.value = true
+  const drop = () => emit('update:modelValue', props.modelValue.replace(`${ph}\n`, '').replace(ph, ''))
   try {
     const c = await compressImage(file)
     if (c.blob.size > IMAGE_MAX_BYTES) {
+      drop()
       toastError(new Error('upload_rejected'))
       return
     }
     const r = await apiV4.content.uploadImage(c.blob, `image.${imageExtension(c.blob.type || file.type)}`)
     if (!safeUrl(r.url)) throw new Error('bad_url')
-    apply((x, s) => insertAt(x, s, `![](${r.url})\n`))
+    const alt = t('v5.md.altDefault')
+    const final = `![${alt}](${r.url})`
+    const next = props.modelValue.replace(ph, final)
+    if (next === props.modelValue) throw new Error('placeholder_lost')
+    emit('update:modelValue', next)
+    // select the alt text so it can be typed over ("image description")
+    void nextTick(() => {
+      const el = ta()
+      const i = next.indexOf(final)
+      if (el && i >= 0) {
+        el.focus()
+        el.setSelectionRange(i + 2, i + 2 + alt.length)
+      }
+    })
     toastOk(t('md.uploaded'))
   } catch (e) {
+    drop()
     toastError(e)
   } finally {
     uploading.value = false

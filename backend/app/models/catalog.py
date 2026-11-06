@@ -36,6 +36,11 @@ class Product(Base):
     # v4: per-product "order information" popup config (review-v4 §4) and markdown render
     buyer_input: Mapped[dict[str, Any] | None]
     description_html_i18n: Mapped[dict[str, Any]] = mapped_column(default=dict)
+    # v5: archive, manual-delivery ETA, import/middleman fields (staff-only)
+    delivery_eta_hours: Mapped[int | None] = mapped_column(Integer)
+    source_url: Mapped[str | None] = mapped_column(String(1000))
+    cost_minor: Mapped[int | None] = mapped_column(BigInteger)
+    archived_at: Mapped[datetime | None]
     created_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = created_at()
     updated_at: Mapped[datetime] = updated_at()
@@ -46,3 +51,19 @@ class Product(Base):
     search_tsv: Mapped[str | None] = mapped_column(
         TSVECTOR, Computed("see migration", persisted=True), deferred=True
     )
+
+
+class Category(Base):
+    """v5: tenant-managed categories (was a hard-coded dict)."""
+
+    __tablename__ = "categories"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id"))
+    slug: Mapped[str] = mapped_column(String(32))
+    name_i18n: Mapped[dict[str, Any]]
+    icon: Mapped[str | None] = mapped_column(String(32))
+    sort: Mapped[int] = mapped_column(Integer, default=0)
+    enabled: Mapped[bool] = mapped_column(default=True)
+    created_at: Mapped[datetime] = created_at()
+    updated_at: Mapped[datetime] = updated_at()

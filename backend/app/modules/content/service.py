@@ -12,12 +12,14 @@ from sqlalchemy import Text, cast, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core import globallimit
+from app.core import email_templates, globallimit, secretbox
 from app.core.audit import audit
+from app.core.config import Settings
 from app.core.deps import Page
 from app.core.errors import Conflict, NotFound, Validation
 from app.core.i18n import pick
 from app.core.markdown import render_i18n
+from app.core.settings_v5 import merge, section
 from app.models import Article, Tenant, User
 from app.modules.common.sitedefaults import (
     DEFAULT_AFTER_SALES_HOURS,
@@ -32,6 +34,18 @@ from app.modules.payments.channels import admin_channels
 
 LOCALES = ("en", "zh-CN")
 log = logging.getLogger("app.content")
+V5_SECTIONS = (
+    "general",
+    "legal",
+    "features",
+    "security",
+    "defaults",
+    "email",
+    "delivery",
+    "import",
+    "resellers",
+    "audit",
+)
 
 
 def _full(values: dict[str, str] | None) -> dict[str, str]:
@@ -89,8 +103,10 @@ async def public_site(
             .order_by(Article.slug)
         )
     ).all()
+    v5 = await _public_v5(db, tenant_id, ts, lang, pages)
     return {
         "brand": brand,
+        **v5,
         "announcement": announcement,
         "after_sales_default_hours": after_sales_default_hours(ts),
         "support_hours": pick(_support_hours(ts.get("support_hours")), lang),
@@ -103,9 +119,72 @@ async def public_site(
     }
 
 
-async def admin_site(db: AsyncSession, tenant_id: uuid.UUID) -> dict[str, Any]:
-    ts = await tenant_settings(db, tenant_id)
+async def _public_v5(
+    db: AsyncSession, tenant_id: uuid.UUID, ts: dict[str, Any], lang: str, pages: list
+) -> dict[str, Any]:
+    """v5 public blocks of ``GET /site``. Never secrets: only whether one is configured."""
+    sec = section(ts, "security")
+    gen = section(ts, "general")
+    legal = section(ts, "legal")
+    delivery = section(ts, "delivery")
+    configured = await secretbox.status(db, tenant_id)
+    ts_ready = bool(
+        sec["turnstile_enabled"]
+        and sec["turnstile_site_key"]
+        and configured["turnstile_secret"]["configured"]
+    )
+    by_slug = {slug: title for slug, title in pages}
     return {
+        "features": section(ts, "features"),
+        "general": {
+            "site_name": pick(gen["site_name_i18n"], lang) if gen["site_name_i18n"] else "",
+            "subtitle": pick(gen["subtitle_i18n"], lang) if gen["subtitle_i18n"] else "",
+            "site_name_i18n": gen["site_name_i18n"],
+            "subtitle_i18n": gen["subtitle_i18n"],
+            "logo_url": gen["logo_url"],
+            "contact": pick(gen["contact_i18n"], lang) if gen["contact_i18n"] else "",
+            "footer": pick(gen["footer_i18n"], lang) if gen["footer_i18n"] else "",
+        },
+        "legal": {
+            "enabled": legal["enabled"],
+            "mode": legal["mode"],
+            "updated_at": legal["updated_at"],
+            "pages": [
+                {"slug": sl, "title": pick(by_slug[sl], lang)}
+                for sl in legal["page_slugs"]
+                if sl in by_slug
+            ],
+        },
+        "turnstile": {
+            "enabled": ts_ready,
+            "site_key": sec["turnstile_site_key"] if ts_ready else "",
+            "actions": sec["turnstile_actions"] if ts_ready else [],
+        },
+        "google_login": bool(
+            section(ts, "features")["google_login"]
+            and sec["google_client_id"]
+            and configured["google_client_secret"]["configured"]
+        ),
+        "delivery": {
+            "manual_eta_hours": delivery["manual_eta_hours"],
+            "manual_note": pick(delivery["manual_note_i18n"], lang),
+        },
+        "email_verify_on_register": bool(sec["email_verify_on_register"]),
+        # storefront: added by the reseller work (review-v5 §7)
+    }
+
+
+async def admin_site(
+    db: AsyncSession, tenant_id: uuid.UUID, settings: Settings | None = None
+) -> dict[str, Any]:
+    ts = await tenant_settings(db, tenant_id)
+    v5: dict[str, Any] = {name: section(ts, name) for name in V5_SECTIONS}
+    v5["email_templates"] = email_templates.normalize(ts)
+    zpay_pid = settings.zpay_pid if settings is not None else ""
+    return {
+        **{k: v for k, v in v5.items() if k != "defaults"},
+        "secrets": await secretbox.status(db, tenant_id),
+        "zpay": {"configured": bool(zpay_pid), "pid_last4": zpay_pid[-4:] if zpay_pid else None},
         "announcement": _announcement_admin(ts.get("announcement")),
         "after_sales_default_hours": after_sales_default_hours(ts),
         "auto_confirm_hours": {
@@ -116,7 +195,9 @@ async def admin_site(db: AsyncSession, tenant_id: uuid.UUID) -> dict[str, Any]:
         "payments": {"channels": admin_channels(ts)},
         "support": _support_cfg(ts),
         "rate_limit": globallimit.normalize(ts.get("rate_limit")),
+        # v5 "user defaults" section + the pre-v5 factory defaults (kept for old clients)
         "defaults": {
+            **v5["defaults"],
             "after_sales_default_hours": DEFAULT_AFTER_SALES_HOURS,
             "auto_confirm_hours": dict(DEFAULT_AUTO_CONFIRM_HOURS),
             "rate_limit": dict(globallimit.DEFAULTS),
@@ -125,13 +206,18 @@ async def admin_site(db: AsyncSession, tenant_id: uuid.UUID) -> dict[str, Any]:
 
 
 async def update_site(
-    db: AsyncSession, admin: User, body: SiteIn, ip: str | None, redis: Redis | None = None
+    db: AsyncSession,
+    admin: User,
+    body: SiteIn,
+    ip: str | None,
+    redis: Redis | None = None,
+    settings: Settings | None = None,
 ) -> dict[str, Any]:
     tenant = await db.scalar(select(Tenant).where(Tenant.id == admin.tenant_id).with_for_update())
     if tenant is None:
         raise NotFound("Tenant not found")
     cur = dict(tenant.settings or {})
-    before = await admin_site(db, admin.tenant_id)
+    before = await admin_site(db, admin.tenant_id, settings)
     new = dict(cur)
     if body.announcement is not None:
         old = _announcement_admin(cur.get("announcement"))
@@ -190,9 +276,30 @@ async def update_site(
         old_r = globallimit.normalize(cur.get("rate_limit"))
         inc_r = body.rate_limit.model_dump(exclude_none=True)
         new["rate_limit"] = globallimit.normalize({**old_r, **inc_r})
+    v5_changed: dict[str, dict[str, Any]] = {}
+    for name in V5_SECTIONS:
+        inc = getattr(body, "import_" if name == "import" else name)
+        if inc is None:
+            continue
+        old_sec = section(cur, name)
+        new_sec = merge(new, name, inc.model_dump(exclude_unset=True, exclude_none=True))
+        if name == "legal" and any(
+            new_sec[k] != old_sec[k] for k in ("enabled", "mode", "page_slugs")
+        ):
+            new_sec["updated_at"] = datetime.now(timezone.utc).isoformat()
+        new[name] = new_sec
+        if new_sec != old_sec:
+            v5_changed[name] = {"before": old_sec, "after": new_sec}
+    if body.email_templates is not None:
+        old_t = email_templates.normalize(cur)
+        new["email_templates"] = email_templates.stored_after_patch(
+            new, body.email_templates.model_dump(exclude_unset=True, exclude_none=True)
+        )
+        if new["email_templates"] != old_t:
+            v5_changed["email_templates"] = {"before": old_t, "after": new["email_templates"]}
     tenant.settings = new
     await db.flush()
-    after = await admin_site(db, admin.tenant_id)
+    after = await admin_site(db, admin.tenant_id, settings)
     await audit(
         db,
         tenant_id=admin.tenant_id,
@@ -213,6 +320,19 @@ async def update_site(
         ip=ip,
         detail={"fields": sorted(body.model_dump(exclude_unset=True))},
     )
+    if v5_changed:  # section names + non-secret values (secrets never live in settings)
+        await audit(
+            db,
+            tenant_id=admin.tenant_id,
+            action="settings.updated",
+            actor_id=admin.id,
+            actor_role=admin.role,
+            target=f"tenant:{admin.tenant_id}",
+            before={k: v["before"] for k, v in v5_changed.items()},
+            after={k: v["after"] for k, v in v5_changed.items()},
+            ip=ip,
+            detail={"sections": sorted(v5_changed)},
+        )
     await db.commit()
     if body.rate_limit is not None and redis is not None:
         try:  # mirror for the middleware (fail open: a Redis error never fails the save)

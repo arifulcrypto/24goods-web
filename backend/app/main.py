@@ -23,10 +23,14 @@ from app.core.middleware import (
     CSRFMiddleware,
 )
 from app.core.resources import Resources, build_resources
-from app.modules import jobs
+from app.modules import emails, jobs
+from app.modules.admin.categories import router as admin_categories_router
+from app.modules.admin.importer import router as admin_import_router
 from app.modules.admin.router import router as admin_router
+from app.modules.admin.settings import router as admin_settings_router
 from app.modules.admin.v3 import router as admin_v3_router
 from app.modules.aftersales.router import router as aftersales_router
+from app.modules.auth.oauth import router as oauth_router
 from app.modules.auth.router import router as auth_router
 from app.modules.catalog.router import router as catalog_router
 from app.modules.chat.router import router as chat_router
@@ -38,7 +42,11 @@ from app.modules.orders.router import router as orders_router
 from app.modules.orders.service import expire_pending
 from app.modules.payments.router import NOTIFY_PATH
 from app.modules.payments.router import router as payments_router
+from app.modules.promo.router import admin as promo_admin_router
+from app.modules.promo.router import router as promo_router
 from app.modules.realtime.router import router as realtime_router
+from app.modules.reseller.router import admin as reseller_admin_router
+from app.modules.reseller.router import router as reseller_router
 from app.modules.uploads.router import router as uploads_router
 
 log = logging.getLogger("app.main")
@@ -65,10 +73,13 @@ async def _job(name: str, coro) -> None:  # type: ignore[no-untyped-def]
 async def run_jobs_once(res: Resources, *, hourly: bool) -> None:
     await _job("order expiry", expire_pending(res.maker, res))
     await _job("auto confirm", jobs.auto_confirm(res.maker, res))
+    await _job("order emails", emails.enqueue_order_emails(res.maker))
+    await _job("order emails sent", emails.process_email_outbox(res.maker, res.settings))
     if hourly:
         await _job("card expiry", jobs.void_expired_cards(res.maker))
         await _job("instant purge", jobs.purge_instant_accounts(res.maker, res.settings))
         await _job("buyer input purge", jobs.purge_buyer_input(res.maker))
+        await _job("audit purge", jobs.purge_audit(res.maker))
 
 
 async def _expiry_loop(res: Resources) -> None:
@@ -86,6 +97,7 @@ def api_router() -> APIRouter:
     r = APIRouter(prefix="/api/v1")
     for sub in (
         auth_router,
+        oauth_router,
         me_router,
         content_router,
         lookup_router,
@@ -99,6 +111,13 @@ def api_router() -> APIRouter:
         realtime_router,
         admin_router,
         admin_v3_router,
+        promo_router,
+        promo_admin_router,
+        reseller_router,
+        reseller_admin_router,
+        admin_import_router,
+        admin_categories_router,
+        admin_settings_router,
     ):
         r.include_router(sub)
     return r

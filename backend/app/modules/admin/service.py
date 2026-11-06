@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import csv
+import io
+import json
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
-from sqlalchemy import and_, func, or_, select
+from fastapi import Query
+from sqlalchemy import Select, and_, func, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,7 +31,7 @@ from app.models import (
     Product,
     User,
 )
-from app.modules.catalog.service import claimable
+from app.modules.catalog.service import claimable, escape_like
 from app.modules.chat.messages import post_system
 from app.modules.chat.service import conversation_views
 from app.modules.common.views import iso, product_summary
@@ -237,38 +242,142 @@ async def ledger(db: AsyncSession, page: Page) -> dict[str, Any]:
     return page.wrap(items, int(total))
 
 
-async def audit_page(db: AsyncSession, page: Page) -> dict[str, Any]:
-    total = await db.scalar(select(func.count(AuditLog.id))) or 0
+@dataclass(frozen=True)
+class AuditFilter:
+    action: str | None = None  # prefix, e.g. "product." or "auth.login"
+    actor: str | None = None  # email substring
+    target: str | None = None  # substring
+    severity: str | None = None
+    since: datetime | None = None
+    until: datetime | None = None
+
+
+def audit_filter(
+    action: str | None = Query(None, max_length=64),
+    actor: str | None = Query(None, max_length=100),
+    target: str | None = Query(None, max_length=128),
+    severity: Literal["info", "warning", "critical"] | None = None,
+    since: datetime | None = None,
+    until: datetime | None = None,
+) -> AuditFilter:
+    def clean(v: str | None) -> str | None:
+        return (v or "").strip() or None
+
+    return AuditFilter(clean(action), clean(actor), clean(target), severity, since, until)
+
+
+def _audit_stmt(flt: AuditFilter) -> Select:
+    stmt = select(AuditLog, User.email).outerjoin(User, User.id == AuditLog.actor_id)
+    if flt.action:
+        stmt = stmt.where(AuditLog.action.like(escape_like(flt.action) + "%", escape="\\"))
+    if flt.actor:
+        stmt = stmt.where(
+            func.lower(User.email).like(f"%{escape_like(flt.actor.lower())}%", escape="\\")
+        )
+    if flt.target:
+        stmt = stmt.where(AuditLog.target.like(f"%{escape_like(flt.target)}%", escape="\\"))
+    if flt.severity:
+        stmt = stmt.where(AuditLog.severity == flt.severity)
+    if flt.since:
+        stmt = stmt.where(AuditLog.created_at >= flt.since)
+    if flt.until:
+        stmt = stmt.where(AuditLog.created_at <= flt.until)
+    return stmt
+
+
+def _audit_item(a: AuditLog, email: str | None) -> dict[str, Any]:
+    return {
+        "id": a.id,
+        "at": iso(a.created_at),
+        "actor": email or a.actor_role,
+        "action": a.action,
+        "target": a.target,
+        "ip": a.ip,
+        "severity": a.severity,
+        "before": a.before,
+        "after": a.after,
+        "detail": {
+            k: v
+            for k, v in {
+                **(a.detail or {}),
+                "before": a.before,
+                "after": a.after,
+                "severity": a.severity,
+            }.items()
+            if v is not None
+        },
+    }
+
+
+async def audit_page(
+    db: AsyncSession, page: Page, flt: AuditFilter | None = None
+) -> dict[str, Any]:
+    stmt = _audit_stmt(flt or AuditFilter())
+    total = await db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     rows = (
         await db.execute(
-            select(AuditLog, User.email)
-            .outerjoin(User, User.id == AuditLog.actor_id)
-            .order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
+            stmt.order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
             .offset(page.offset)
             .limit(page.page_size)
         )
     ).all()
-    items = [
-        {
-            "at": iso(a.created_at),
-            "actor": email or a.actor_role,
-            "action": a.action,
-            "target": a.target,
-            "ip": a.ip,
-            "detail": {
-                k: v
-                for k, v in {
-                    **(a.detail or {}),
-                    "before": a.before,
-                    "after": a.after,
-                    "severity": a.severity,
-                }.items()
-                if v is not None
-            },
-        }
-        for a, email in rows
-    ]
-    return page.wrap(items, int(total))
+    return page.wrap([_audit_item(a, email) for a, email in rows], int(total))
+
+
+CSV_MAX_ROWS = 10_000
+
+
+def _csv_cell(v: object) -> str:
+    text = "" if v is None else str(v)
+    # spreadsheet formula injection: neutralise cells that start like a formula
+    return "'" + text if text[:1] in ("=", "+", "-", "@", "\t", "\r") else text
+
+
+async def audit_csv(db: AsyncSession, flt: AuditFilter) -> str:
+    rows = (
+        await db.execute(
+            _audit_stmt(flt)
+            .order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
+            .limit(CSV_MAX_ROWS)
+        )
+    ).all()
+    out = io.StringIO()
+    w = csv.writer(out)
+    w.writerow(
+        [
+            "id",
+            "at",
+            "actor",
+            "role",
+            "action",
+            "target",
+            "severity",
+            "ip",
+            "before",
+            "after",
+            "detail",
+        ]
+    )
+    for a, email in rows:
+        w.writerow(
+            [
+                _csv_cell(x)
+                for x in (
+                    a.id,
+                    iso(a.created_at),
+                    email or "",
+                    a.actor_role,
+                    a.action,
+                    a.target,
+                    a.severity,
+                    a.ip,
+                    json.dumps(a.before, ensure_ascii=False, default=str) if a.before else "",
+                    json.dumps(a.after, ensure_ascii=False, default=str) if a.after else "",
+                    json.dumps(a.detail, ensure_ascii=False, default=str) if a.detail else "",
+                )
+            ]
+        )
+    return out.getvalue()
 
 
 async def ensure_conversation(db: AsyncSession, conv_id: uuid.UUID) -> Conversation:

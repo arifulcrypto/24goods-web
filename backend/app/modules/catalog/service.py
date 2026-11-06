@@ -7,16 +7,19 @@ from collections.abc import Iterable
 from datetime import datetime, timezone
 
 from redis.asyncio import Redis
-from sqlalchemy import Select, bindparam, func, or_, select, text
+from sqlalchemy import Select, Text, bindparam, func, or_, select, text
 from sqlalchemy.dialects.postgresql import ARRAY as PGARRAY
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import Page
 from app.core.errors import NotFound, Validation
+from app.core.storefront import Storefront
 from app.models import AgentStatus, CardStock, Product, User
+from app.modules.catalog.categories import disabled_slugs
 from app.modules.common.views import iso, product_summary, product_view
 from app.modules.content.site import tenant_settings
+from app.modules.reseller.pricing import Pricer, reprice
 
 STATUS_RANK = {"online": 0, "on_hold": 1, "away": 2, "offline": 3}
 
@@ -82,9 +85,16 @@ async def list_products(
     q: str | None,
     category: str | None,
     tenant_id: uuid.UUID,
+    storefront: Storefront | None = None,
 ) -> dict:
     stmt = select(Product).where(Product.status == "active")
     ts = await tenant_settings(db, tenant_id)
+    pricer = await Pricer.load(db, storefront)
+    if pricer is not None and pricer.hidden_ids():  # products this reseller hides
+        stmt = stmt.where(Product.id.not_in(pricer.hidden_ids()))
+    hidden = await disabled_slugs(db, tenant_id)  # products of disabled categories are unlisted
+    if hidden:
+        stmt = stmt.where(Product.category.not_in(hidden))
     if category:
         stmt = stmt.where(Product.category == category)
     stmt = apply_search(stmt, q)
@@ -95,7 +105,10 @@ async def list_products(
         order.insert(0, func.word_similarity(q.strip().lower(), Product.search_text).desc())
     rows = (await db.scalars(stmt.order_by(*order).offset(page.offset).limit(page.page_size))).all()
     stock = await stock_counts(db, [p.id for p in rows if p.delivery_mode == "auto_card"])
-    return page.wrap([product_summary(p, lang, stock.get(p.id), ts) for p in rows], int(total))
+    return page.wrap(
+        [reprice(product_summary(p, lang, stock.get(p.id), ts), p, pricer) for p in rows],
+        int(total),
+    )
 
 
 async def get_active_product(db: AsyncSession, product_id: uuid.UUID) -> Product:
@@ -106,11 +119,18 @@ async def get_active_product(db: AsyncSession, product_id: uuid.UUID) -> Product
 
 
 async def product_detail(
-    db: AsyncSession, lang: str, product_id: uuid.UUID, tenant_id: uuid.UUID
+    db: AsyncSession,
+    lang: str,
+    product_id: uuid.UUID,
+    tenant_id: uuid.UUID,
+    storefront: Storefront | None = None,
 ) -> dict:
     p = await get_active_product(db, product_id)
+    pricer = await Pricer.load(db, storefront)
+    if pricer is not None and pricer.is_hidden(p.id):
+        raise NotFound("Product not found")
     stock = (await stock_counts(db, [p.id])).get(p.id) if p.delivery_mode == "auto_card" else None
-    return product_view(p, lang, stock, await tenant_settings(db, tenant_id))
+    return reprice(product_view(p, lang, stock, await tenant_settings(db, tenant_id)), p, pricer)
 
 
 MAX_IDS = 20
@@ -140,6 +160,7 @@ LEFT JOIN co ON co.product_id = p.id
 LEFT JOIN s30 ON s30.product_id = p.id
 WHERE p.tenant_id = :tid AND p.status = 'active'
   AND NOT (p.id = ANY(:excl))
+  AND NOT (p.category = ANY(:dis))
   AND (p.delivery_mode = 'manual' OR EXISTS (
         SELECT 1 FROM card_stock cs WHERE cs.product_id = p.id AND cs.status = 'available'
           AND (cs.expires_at IS NULL OR cs.expires_at > now())))
@@ -153,6 +174,7 @@ LIMIT :lim
 ).bindparams(
     bindparam("ctx", type_=PGARRAY(PGUUID(as_uuid=True))),
     bindparam("excl", type_=PGARRAY(PGUUID(as_uuid=True))),
+    bindparam("dis", type_=PGARRAY(Text)),
 )
 
 
@@ -174,20 +196,31 @@ def parse_ids(raw: str | None, limit: int = MAX_IDS) -> list[uuid.UUID]:
 
 
 async def products_by_ids(
-    db: AsyncSession, lang: str, ids: list[uuid.UUID], tenant_id: uuid.UUID
+    db: AsyncSession,
+    lang: str,
+    ids: list[uuid.UUID],
+    tenant_id: uuid.UUID,
+    storefront: Storefront | None = None,
+    *,
+    hide_disabled: bool = False,
 ) -> list[dict]:
-    """Active products in the order of ``ids`` (unknown / draft ids are skipped)."""
+    """Active products in the order of ``ids`` (unknown / draft / archived ids are skipped)."""
     if not ids:
         return []
-    rows = {
-        p.id: p
-        for p in await db.scalars(
-            select(Product).where(Product.id.in_(ids), Product.status == "active")
-        )
-    }
+    stmt = select(Product).where(Product.id.in_(ids), Product.status == "active")
+    if hide_disabled and (hidden := await disabled_slugs(db, tenant_id)):
+        stmt = stmt.where(Product.category.not_in(hidden))
+    rows = {p.id: p for p in await db.scalars(stmt)}
+    pricer = await Pricer.load(db, storefront)
+    if pricer is not None:
+        rows = {i: p for i, p in rows.items() if not pricer.is_hidden(i)}
     stock = await stock_counts(db, [p.id for p in rows.values() if p.delivery_mode == "auto_card"])
     ts = await tenant_settings(db, tenant_id)
-    return [product_summary(rows[i], lang, stock.get(i), ts) for i in ids if i in rows]
+    return [
+        reprice(product_summary(rows[i], lang, stock.get(i), ts), rows[i], pricer)
+        for i in ids
+        if i in rows
+    ]
 
 
 async def recommended(
@@ -198,6 +231,7 @@ async def recommended(
     for_id: uuid.UUID | None,
     recent: list[uuid.UUID],
     limit: int,
+    storefront: Storefront | None = None,
 ) -> list[dict]:
     ctx = list(dict.fromkeys(([for_id] if for_id else []) + recent))
     key = "rec:{}:{}:{}:{}".format(
@@ -213,11 +247,17 @@ async def recommended(
     else:
         rows = await db.execute(
             _RECOMMEND_SQL,
-            {"tid": tenant_id, "ctx": ctx, "excl": [for_id] if for_id else [], "lim": limit},
+            {
+                "tid": tenant_id,
+                "ctx": ctx,
+                "excl": [for_id] if for_id else [],
+                "dis": await disabled_slugs(db, tenant_id),
+                "lim": limit,
+            },
         )
         ids = [r[0] for r in rows.all()]
         await redis.set(key, json.dumps([str(i) for i in ids]), ex=REC_TTL_S)
-    return await products_by_ids(db, lang, ids, tenant_id)
+    return await products_by_ids(db, lang, ids, tenant_id, storefront, hide_disabled=True)
 
 
 async def support_status(db: AsyncSession) -> dict:
