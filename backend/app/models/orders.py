@@ -47,6 +47,12 @@ class Order(Base):
     fee_permille: Mapped[int] = mapped_column(Integer, default=0)
     buyer_input: Mapped[str | None] = mapped_column(Text)
     cancel_reason: Mapped[str | None] = mapped_column(String(200))
+    # v5: amount = subtotal - discount + fee; reseller markup is part of subtotal
+    kind: Mapped[str] = mapped_column(String(24), default="goods")
+    discount_minor: Mapped[int] = mapped_column(BigInteger, default=0)
+    promo_code_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("promo_codes.id"))
+    reseller_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("resellers.id"))
+    reseller_markup_minor: Mapped[int] = mapped_column(BigInteger, default=0)
     created_at: Mapped[datetime] = created_at()
     updated_at: Mapped[datetime] = updated_at()
 
@@ -66,6 +72,8 @@ class Checkout(Base):
     channel: Mapped[str | None] = mapped_column(String(32))
     expires_at: Mapped[datetime | None]
     paid_at: Mapped[datetime | None]
+    reseller_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("resellers.id"))
+    promo_code_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("promo_codes.id"))
     created_at: Mapped[datetime] = created_at()
     updated_at: Mapped[datetime] = updated_at()
 

@@ -1,9 +1,17 @@
 """SQLAlchemy 2 typed models. Schema DDL lives in ``migrations/`` (hand-written SQL)."""
 
 from app.models.base import Base
-from app.models.catalog import Product
+from app.models.catalog import Category, Product
 from app.models.chat import Attachment, Conversation, Message, Quote
 from app.models.content import AfterSales, Article
+from app.models.growth import (
+    PromoCode,
+    PromoRedemption,
+    Reseller,
+    ResellerPayout,
+    ResellerPrice,
+    TenantSecret,
+)
 from app.models.inventory import CardBatch, CardStock, Delivery
 from app.models.ledger import LedgerEntry
 from app.models.orders import Checkout, Order, OrderEvent, Payment
@@ -20,6 +28,7 @@ __all__ = [
     "Base",
     "CardBatch",
     "CardStock",
+    "Category",
     "Checkout",
     "Conversation",
     "CustomDomain",
@@ -31,7 +40,13 @@ __all__ = [
     "Outbox",
     "Payment",
     "Product",
+    "PromoCode",
+    "PromoRedemption",
     "Quote",
+    "Reseller",
+    "ResellerPayout",
+    "ResellerPrice",
     "Tenant",
+    "TenantSecret",
     "User",
 ]

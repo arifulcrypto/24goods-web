@@ -5,7 +5,7 @@
 export const BRAND = {
   name: 'Kesiv',
   /** Chinese name shown next to / instead of the wordmark in zh-CN. */
-  nameZh: '可信',
+  nameZh: '客思维',
   domain: 'kesiv.com',
   tagline: {
     en: 'Accounts, gift cards & digital services — delivered fast',
@@ -16,5 +16,5 @@ export const BRAND = {
 export type BrandLocale = keyof typeof BRAND.tagline
 
 export function brandName(locale: string): string {
-  return locale === 'zh-CN' ? `${BRAND.nameZh} ${BRAND.name}` : BRAND.name
+  return locale === 'zh-CN' ? BRAND.nameZh : BRAND.name
 }

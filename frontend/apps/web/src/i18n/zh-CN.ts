@@ -203,7 +203,7 @@ const zhCN: WebMessages = {
     deleteBlocked: '您还有待支付、审核中或售后未结束的订单，请先处理完成或取消。',
     typeDelete: '请输入 DELETE',
     deleteConfirm: '注销我的账号',
-    safetyText: '请只在可信 Kesiv 站内付款，切勿转账或在聊天中透露卡密。',
+    safetyText: '请只在客思维 站内付款，切勿转账或在聊天中透露卡密。',
   },
   auth: {
     email: '邮箱',

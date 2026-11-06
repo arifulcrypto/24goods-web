@@ -2,7 +2,7 @@ import type { AdminMessages } from './index'
 
 const zhCN: AdminMessages = {
   app: {
-    title: '可信 Kesiv 控制台',
+    title: '客思维 控制台',
     short: '后台',
   },
   lang: {
