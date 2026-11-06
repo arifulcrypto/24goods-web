@@ -9,7 +9,7 @@ _Last updated 2026-11-06 (v5 integration)._
 - **Prod** https://shop.kesiv.com runs **v4** (c4 /opt/kesiv). `scripts/prod.sh deploy` is run by the owner.
 - **Demo** https://demo.kesiv.com (= http://107.173.10.79:18888) runs `:main` images (v4 until v5 merges).
   Logins: `/opt/24goods-demo/deploy/secrets/demo-credentials.txt`; dev: `scripts/dev.sh creds`.
-- **v5** (spec `docs/review-v5.md`) is complete on branch **`feat/v5`** → PR to main. Built + reviewed
+- **v5** merged (PR #10, cc3e8f6) and live on the demo; demo settings filled (Turnstile test keys, off; demo Google client; Gmail SMTP; resellers on, fee ¥99). Built + reviewed
   (security-reviewer, payment-auditor fixes merged), contract-checked against the live dev API, dev
   E2E smoke passed. Gate: GitHub CI green on the PR.
 - **Next steps, in order:**
