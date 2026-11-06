@@ -57,8 +57,8 @@ def _status(co: Checkout | None, orders: list[Order]) -> str:
 async def _settle_if_paid(
     db: AsyncSession,
     res: Resources,
-    co: Checkout | None,
-    order: Order | None,
+    checkout_id: uuid.UUID | None,
+    order_id: uuid.UUID | None,
     out_trade_no: str,
     amount_minor: int,
 ) -> NotifyOutcome | None:
@@ -72,10 +72,12 @@ async def _settle_if_paid(
         return None
     paid: Decimal = q.money if q.money is not None else Decimal(amount_minor) / 100
     raw = {"out_trade_no": out_trade_no, "money": str(paid), "trade_no": q.trade_no}
-    if co is not None:
-        return await apply_checkout_payment(db, res.settings, co.id, q.trade_no, paid, raw, None)
-    assert order is not None
-    return await apply_order_payment(db, res.settings, order.id, q.trade_no, paid, raw, None)
+    if checkout_id is not None:
+        return await apply_checkout_payment(
+            db, res.settings, checkout_id, q.trade_no, paid, raw, None
+        )
+    assert order_id is not None
+    return await apply_order_payment(db, res.settings, order_id, q.trade_no, paid, raw, None)
 
 
 async def cancel_group(
@@ -89,6 +91,7 @@ async def cancel_group(
     reason: str | None,
     ip: str | None,
 ) -> tuple[Checkout | None, list[Order]]:
+    actor_id, actor_role = actor.id, actor.role  # a rollback below expires ORM instances
     co, orders = await _load_group(db, order_id, checkout_id)
     if _status(co, orders) != "pending_payment":
         raise InvalidState("Only orders awaiting payment can be cancelled")
@@ -97,10 +100,11 @@ async def cancel_group(
     if issued and res.settings.zpay_pid and res.settings.zpay_key:
         no = co.checkout_no if co is not None else orders[0].order_no
         amount = co.amount_minor if co is not None else orders[0].amount_minor
-        first_order = orders[0] if co is None else None
-        co_ref, oid, cid = co, order_id, checkout_id
+        oid, cid = order_id, checkout_id
+        co_id = co.id if co is not None else None
+        single_id = orders[0].id if co is None else None
         await db.rollback()  # never hold row locks across the network call
-        outcome = await _settle_if_paid(db, res, co_ref, first_order, no, amount)
+        outcome = await _settle_if_paid(db, res, co_id, single_id, no, amount)
         if outcome is not None:
             for o in outcome.orders or ([outcome.order] if outcome.order else []):
                 await broadcast_order(
@@ -129,15 +133,15 @@ async def cancel_group(
             o,
             "pending_payment",
             "cancelled",
-            actor_id=actor.id,
+            actor_id=actor_id,
             reason=(clean or f"{by}_cancelled")[:500],
         )
         await audit(
             db,
             tenant_id=o.tenant_id,
             action="order.cancelled",
-            actor_id=actor.id,
-            actor_role=actor.role,
+            actor_id=actor_id,
+            actor_role=actor_role,
             target=f"order:{o.id}",
             before=before,
             after=snapshot(o),
@@ -173,8 +177,8 @@ async def cancel_group(
             db,
             tenant_id=co.tenant_id,
             action="checkout.cancelled",
-            actor_id=actor.id,
-            actor_role=actor.role,
+            actor_id=actor_id,
+            actor_role=actor_role,
             target=f"checkout:{co.id}",
             before={"status": "pending_payment"},
             after={"status": "cancelled"},

@@ -134,7 +134,8 @@ async def cancel(
     res: Resources = Depends(get_res),
 ) -> dict:
     """Buyer cancels a pending order; inside a checkout this cancels the whole checkout."""
-    await enforce(res.redis, "order:cancel", str(user.id), *ORDER_ACTIONS)
+    uid = user.id  # the re-query path rolls back, which expires ORM instances
+    await enforce(res.redis, "order:cancel", str(uid), *ORDER_ACTIONS)
     order = await service.get_owned(db, ref, user)
     await cancel_svc.cancel_group(
         db,
@@ -146,7 +147,7 @@ async def cancel(
         ip=client_ip(request),
     )
     await db.refresh(order)
-    return await service.one_view(db, order, user.id, lang)
+    return await service.one_view(db, order, uid, lang)
 
 
 @router.patch("/{ref}/input")
