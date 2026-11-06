@@ -48,6 +48,9 @@ async def change_price(
         raise InvalidState("Price can only change while awaiting payment")
     if order.checkout_id is not None:
         raise InvalidState("This order is part of a cart checkout; close the checkout instead")
+    if order.kind != "goods" or order.discount_minor > 0:
+        # promo allocation / sign-up fee are server-set records: close the order and re-quote
+        raise InvalidState("This order's price cannot be changed")
     if order.product_id is not None:
         product = await db.get(Product, order.product_id)
         if product is not None and new_minor < product.floor_price_minor * order.qty:
@@ -57,6 +60,8 @@ async def change_price(
     # staff set the new SUBTOTAL; the channel fee is recomputed at the rate the order carries
     fee, total = split_amount(new_minor, order.fee_permille)
     order.subtotal_minor = new_minor
+    # reseller attribution: the markup can never exceed the (new) subtotal (DB CHECK)
+    order.reseller_markup_minor = min(order.reseller_markup_minor, new_minor)
     order.fee_minor = fee
     order.amount_minor = total
     order.version += 1
@@ -182,6 +187,7 @@ async def admin_views(db: AsyncSession, orders: list[Order]) -> list[dict[str, A
             "display_name": b.display_name if b else "",
         }
         v["source"] = o.source
+        v["reseller_markup_minor"] = o.reseller_markup_minor
     return views
 
 
@@ -192,10 +198,13 @@ async def list_orders(
     q: str | None,
     tenant_id: uuid.UUID,
     buyer_id: uuid.UUID | None = None,
+    reseller_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
     stmt = select(Order).where(Order.tenant_id == tenant_id)
     if buyer_id is not None:
         stmt = stmt.where(Order.buyer_id == buyer_id)
+    if reseller_id is not None:
+        stmt = stmt.where(Order.reseller_id == reseller_id)
     if status:
         stmt = stmt.where(Order.status == status)
     if q and q.strip():

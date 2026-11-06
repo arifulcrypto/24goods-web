@@ -14,6 +14,7 @@ from app.core import pow as powmod
 from app.core.deps import Page, client_ip, get_db, get_lang, get_page, get_res, get_tenant_id
 from app.core.ratelimit import count, enforce
 from app.core.resources import Resources
+from app.core.storefront import Storefront, get_storefront
 from app.modules.auth.service import net_of
 from app.modules.content import service
 from app.modules.content.site import tenant_settings
@@ -28,8 +29,13 @@ async def site(
     tenant_id: uuid.UUID = Depends(get_tenant_id),
     db: AsyncSession = Depends(get_db),
     res: Resources = Depends(get_res),
+    sf: Storefront | None = Depends(get_storefront),
 ) -> dict:
-    return await service.public_site(db, tenant_id, lang, res.settings.brand_name)
+    out = await service.public_site(db, tenant_id, lang, res.settings.brand_name)
+    out["storefront"] = sf.public(lang) if sf is not None else None  # review-v5 s7
+    if sf is not None:
+        out["brand"] = sf.store_name  # white label: never the platform brand on a storefront
+    return out
 
 
 @router.get("/site/payment-channels")

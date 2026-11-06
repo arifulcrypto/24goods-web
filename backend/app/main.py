@@ -38,7 +38,11 @@ from app.modules.orders.router import router as orders_router
 from app.modules.orders.service import expire_pending
 from app.modules.payments.router import NOTIFY_PATH
 from app.modules.payments.router import router as payments_router
+from app.modules.promo.router import admin as promo_admin_router
+from app.modules.promo.router import router as promo_router
 from app.modules.realtime.router import router as realtime_router
+from app.modules.reseller.router import admin as reseller_admin_router
+from app.modules.reseller.router import router as reseller_router
 from app.modules.uploads.router import router as uploads_router
 
 log = logging.getLogger("app.main")
@@ -99,6 +103,10 @@ def api_router() -> APIRouter:
         realtime_router,
         admin_router,
         admin_v3_router,
+        promo_router,
+        promo_admin_router,
+        reseller_router,
+        reseller_admin_router,
     ):
         r.include_router(sub)
     return r

@@ -179,14 +179,22 @@ async def open_conversation_for(db: AsyncSession, buyer: User) -> Conversation |
 
 
 async def find_or_create(
-    db: AsyncSession, buyer: User, product_id: uuid.UUID | None
+    db: AsyncSession,
+    buyer: User,
+    product_id: uuid.UUID | None,
+    reseller_id: uuid.UUID | None = None,
 ) -> tuple[Conversation, list[Message]]:
     if buyer.role in STAFF_ROLES:
         raise Validation("Staff accounts cannot open buyer conversations")
     product = await get_active_product(db, product_id) if product_id else None
     await db.execute(
         insert(Conversation)
-        .values(tenant_id=buyer.tenant_id, buyer_id=buyer.id, status="open")
+        .values(
+            tenant_id=buyer.tenant_id,
+            buyer_id=buyer.id,
+            status="open",
+            reseller_id=reseller_id,  # storefront the buyer came from (CS context); new rows only
+        )
         .on_conflict_do_nothing(
             # Literal predicate: a bound parameter breaks index inference under generic plans.
             index_elements=["tenant_id", "buyer_id"],

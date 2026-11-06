@@ -29,6 +29,7 @@ from app.modules.payments.settle import (
     apply_order_payment,
     lock_checkout,
 )
+from app.modules.promo import service as promo_svc
 from app.payments.zpay import ZPayQueryError
 
 
@@ -192,6 +193,11 @@ async def cancel_group(
                 by=by,
             )
         )
+    # promo: reserved -> released (-used_count), buyer and staff cancel alike
+    if co is not None:
+        await promo_svc.release(db, checkout_id=co.id)
+    else:
+        await promo_svc.release(db, order_id=orders[0].id)
     if co is not None:
         co.status = "cancelled"
         await audit(

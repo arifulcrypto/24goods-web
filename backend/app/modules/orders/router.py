@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import Page, client_ip, current_user, get_db, get_lang, get_page, get_res
 from app.core.ratelimit import enforce
 from app.core.resources import Resources
+from app.core.storefront import Storefront, get_storefront
 from app.models import User
 from app.modules.orders import cancel as cancel_svc
 from app.modules.orders import service
@@ -25,6 +26,7 @@ async def buy_now(
     user: User = Depends(current_user),
     db: AsyncSession = Depends(get_db),
     res: Resources = Depends(get_res),
+    sf: Storefront | None = Depends(get_storefront),
 ) -> dict:
     await enforce(res.redis, "order:create", str(user.id), *ORDER_ACTIONS)
     order, msg = await service.buy_now(
@@ -36,6 +38,8 @@ async def buy_now(
         client_ip(request),
         body.src,
         body.buyer_input,
+        promo_code=body.promo_code,
+        storefront=sf,
     )
     code = getattr(order, "access_code_plain", None)  # shown exactly once
     await service.broadcast_order(res, db, order, [msg])

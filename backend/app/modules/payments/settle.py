@@ -32,6 +32,8 @@ from app.modules.chat.messages import (
 from app.modules.common.buyerinput import chat_text
 from app.modules.orders.events import add_event, snapshot
 from app.modules.payments.ledger import Line, post_txn
+from app.modules.promo import service as promo_svc
+from app.modules.reseller.signup import activate_signup
 from app.payments.zpay import CHANNEL
 
 log = logging.getLogger("app.payments.settle")
@@ -67,22 +69,41 @@ async def apply_sold(db: AsyncSession, sold: dict[uuid.UUID, int]) -> None:
         )
 
 
-async def post_payment_ledger(db: AsyncSession, settings: Settings, order: Order) -> None:
-    """gateway_clearing +amount / sales_revenue -subtotal / surcharge_revenue -fee, plus the
-    gateway cost entry (fees:zpay)."""
-    lines = [
-        Line("gateway_clearing:zpay", order.amount_minor),
-        Line("sales_revenue", -order.subtotal_minor),
-    ]
+def payment_lines(order: Order) -> list[Line]:
+    """Ledger lines of a successful payment (``txn`` sums to zero because
+    ``amount == subtotal - discount + fee``)::
+
+        gateway_clearing:zpay        +amount
+        sales_revenue                -(subtotal - markup)     goods
+        reseller_payable:{id}        -markup                  reseller storefront orders
+        promo_discount               +discount                promo orders
+        surcharge_revenue            -fee
+    sign-up orders instead book ``reseller_signup_revenue -subtotal``.
+    """
+    lines = [Line("gateway_clearing:zpay", order.amount_minor)]
+    if order.kind == "reseller_signup":
+        lines.append(Line("reseller_signup_revenue", -order.subtotal_minor))
+    else:
+        markup = order.reseller_markup_minor if order.reseller_id is not None else 0
+        lines.append(Line("sales_revenue", -(order.subtotal_minor - markup)))
+        if markup > 0:
+            lines.append(Line(f"reseller_payable:{order.reseller_id}", -markup))
+        if order.discount_minor > 0:
+            lines.append(Line("promo_discount", order.discount_minor))
     if order.fee_minor > 0:
         lines.append(Line("surcharge_revenue", -order.fee_minor))
+    return lines
+
+
+async def post_payment_ledger(db: AsyncSession, settings: Settings, order: Order) -> None:
+    """Payment ledger (see :func:`payment_lines`) plus the gateway cost entry (fees:zpay)."""
     await post_txn(
         db,
         tenant_id=order.tenant_id,
         currency=order.currency,
         order_id=order.id,
         memo=f"zpay payment {order.order_no}",
-        lines=lines,
+        lines=payment_lines(order),
     )
     gateway_cost = percent_of(order.amount_minor, settings.zpay_fee_permille)
     if gateway_cost > 0:
@@ -264,6 +285,10 @@ async def settle_member(
                 order_id=str(order.id),
             )
         )
+    elif order.kind == "reseller_signup":
+        # Not fulfilled by the delivery worker (no outbox, no stock): activate the store and
+        # complete the order here, in the same transaction as the payment.
+        msgs.append(await activate_signup(db, order))
     else:
         db.add(
             Outbox(
@@ -307,6 +332,8 @@ async def settle_member(
                 client_msg_id=f"order-input:{order.id}",
             )
             msgs.append(m)
+    if order.checkout_id is None:  # a checkout's redemption is settled by apply_checkout_payment
+        await promo_svc.mark_used(db, order_id=order.id)
     await audit(
         db,
         tenant_id=order.tenant_id,
@@ -652,6 +679,7 @@ async def apply_checkout_payment(
                 severity="critical",
             )
     await apply_sold(db, sold)
+    await promo_svc.mark_used(db, checkout_id=co.id)  # reserved (or released-late) -> used
     co.status = "manual_review" if co_late else "paid"
     co.paid_at = datetime.now(timezone.utc)
     co.channel = CHANNEL

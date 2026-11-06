@@ -196,6 +196,8 @@ def order_view(
     lang: str = "en",
     viewer_is_staff: bool = False,
     checkout_no: str | None = None,
+    reseller: tuple[str, str] | None = None,  # (slug, store_name) of the storefront
+    promo_code: str | None = None,
 ) -> dict[str, Any]:
     manual = None
     if o.delivery_mode == "manual" and (o.manual_delivery_text or attachment is not None):
@@ -209,6 +211,16 @@ def order_view(
         "qty": o.qty,
         "amount": fmt(o.amount_minor),
         "subtotal": fmt(o.subtotal_minor),
+        "kind": o.kind,
+        "discount": fmt(o.discount_minor),
+        "discount_minor": o.discount_minor,
+        "promo_code": promo_code if (viewer_is_owner or viewer_is_staff) else None,
+        # buyer view: store name only; staff also get the slug (reseller internals stay hidden)
+        "reseller": (
+            None
+            if reseller is None
+            else {"store_name": reseller[1], **({"slug": reseller[0]} if viewer_is_staff else {})}
+        ),
         "fee": fmt(o.fee_minor),
         "fee_rate": fee_rate(o.fee_permille),
         "checkout_no": checkout_no,

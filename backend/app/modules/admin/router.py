@@ -212,11 +212,14 @@ async def list_orders(
     status: OrderStatus | None = None,
     q: str | None = Query(None, max_length=100),
     buyer_id: uuid.UUID | None = None,
+    reseller_id: uuid.UUID | None = None,
     page: Page = Depends(get_page),
     staff: User = Depends(require_staff),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    return await order_admin.list_orders(db, page, status, q, staff.tenant_id, buyer_id)
+    return await order_admin.list_orders(
+        db, page, status, q, staff.tenant_id, buyer_id, reseller_id
+    )
 
 
 @router.get("/orders/{order_id}")

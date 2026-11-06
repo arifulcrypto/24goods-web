@@ -18,6 +18,7 @@ from app.core.deps import (
 )
 from app.core.ratelimit import enforce
 from app.core.resources import Resources
+from app.core.storefront import Storefront, get_storefront
 from app.models import User
 from app.modules.orders import cancel as cancel_svc
 from app.modules.orders import checkout as svc
@@ -37,11 +38,14 @@ async def cart_quote(
     user: User | None = Depends(optional_user),
     db: AsyncSession = Depends(get_db),
     res: Resources = Depends(get_res),
+    sf: Storefront | None = Depends(get_storefront),
 ) -> dict:
     ident = client_ip(request) or (str(user.id) if user is not None else None)
     if ident is not None:  # no IP and no session: no shared bucket
         await enforce(res.redis, "cart:quote", ident, 60, 60)
-    return await svc.quote_cart(db, tenant_id, body.items, lang)
+    return await svc.quote_cart(
+        db, tenant_id, body.items, lang, promo_code=body.promo_code, user=user, storefront=sf
+    )
 
 
 @router.post("/checkout")
@@ -52,10 +56,19 @@ async def checkout(
     user: User = Depends(current_user),
     db: AsyncSession = Depends(get_db),
     res: Resources = Depends(get_res),
+    sf: Storefront | None = Depends(get_storefront),
 ) -> dict:
     await enforce(res.redis, "order:create", str(user.id), *ACTIONS)
     out = await svc.create_checkout(
-        db, res.settings, user, body.items, body.source, client_ip(request), lang
+        db,
+        res.settings,
+        user,
+        body.items,
+        body.source,
+        client_ip(request),
+        lang,
+        promo_code=body.promo_code,
+        storefront=sf,
     )
     return out
 
