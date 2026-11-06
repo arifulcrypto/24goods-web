@@ -2,6 +2,34 @@
 
 Update this file in every PR. Phases are defined in [review-v2.md §8](review-v2.md#8-revised-plan-and-timeline-solo-developer--agents-honest-estimate).
 
+## Current state — hand-off (read this first in a new session)
+
+_Last updated 2026-11-06 (v5 integration)._
+
+- **Prod** https://shop.kesiv.com runs **v4** (c4 /opt/kesiv). `scripts/prod.sh deploy` is run by the owner.
+- **Demo** https://demo.kesiv.com (= http://107.173.10.79:18888) runs `:main` images (v4 until v5 merges).
+  Logins: `/opt/24goods-demo/deploy/secrets/demo-credentials.txt`; dev: `scripts/dev.sh creds`.
+- **v5** (spec `docs/review-v5.md`) is complete on branch **`feat/v5`** → PR to main. Built + reviewed
+  (security-reviewer, payment-auditor fixes merged), contract-checked against the live dev API, dev
+  E2E smoke passed. Gate: GitHub CI green on the PR.
+- **Next steps, in order:**
+  1. CI green on the v5 PR → merge → demo pulls `:main` (`/opt/24goods-demo/deploy/demo-update.sh`).
+     Demo needs `APP_SETTINGS_KEY` in `/opt/24goods-demo/deploy/env/api.env` (32 random bytes,
+     base64) **before** the new image starts; prod c4 the same before its deploy.
+  2. Demo settings (Admin → Settings): Turnstile = Cloudflare test keys on the demo (real keys in
+     `/root/.secrets/sub2api-reuse.env` for prod); Google = `DEMO_GOOGLE_*` from
+     `/root/.secrets/google-oauth.env`; Email = Gmail SMTP from `sub2api-reuse.env`; enable
+     Resellers; announcement on.
+  3. Small backend follow-ups (commerce files): admin order view `cost_minor` (unit cost × qty
+     snapshot), promo redemptions `order_no`, admin reseller `store_url` + revenue total.
+  4. Dev DB cleanup of contract-probe data (category `probe-cat`, promo `PROBE10`, reseller
+     `probestore`; move "ChatGPT Plus" back to its category).
+  5. v5.1 backlog: reseller custom domains (Cloudflare for SaaS), reseller open API + balance,
+     upstream API delivery (sub2api redeem codes), backup tab, `index.html` neutral meta for
+     white-label hosts, prod wildcard `*.kesiv.com` DNS/rules (review-v5 §7).
+- **Working rules:** AGENTS.md §7 (2 GB box: full suite in CI only, ≤ 2 agents, dev stack down when
+  idle, never run servers under `flock`).
+
 ## Current phase: **MVP-0: local demo with mock data** (finishing) → next: **M1 production MVP**
 
 ## Done

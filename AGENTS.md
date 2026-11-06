@@ -88,4 +88,28 @@ CI runs all of the above plus Semgrep, gitleaks, Trivy, and (when `ENABLE_CODEQL
 - **Research** (new library/vendor): spawn parallel research agents, require citations and a verified-vs-inferred legend, store output in `docs/research/<topic>.md`.
 - **Review**: run `.claude/agents/security-reviewer.md` on any PR touching §1 invariants; `payment-auditor` on `app/payments/**`; `i18n-mobile-reviewer` on frontend PRs.
 - **Implementation**: one `implementer` agent (Sonnet, `.claude/agents/implementer.md`) per independent module, in a git worktree; the orchestrator merges and runs §3.
+- **Low-resource rules (owner decision 2026-11-06; dev box = 2 vCPU / 2 GB):** see §7.
 - Agents must not: push to `main`, change CI permissions, weaken a security invariant, or add a dependency without noting it in the PR.
+
+## 7. Resource and token budget (dev box: 2 vCPU / 2 GB RAM / 2.5 GB swap)
+
+The full backend suite peaks at ~1 GB RSS and takes 7–8 min when the box swaps. Rules:
+
+1. **Full test suite runs in GitHub CI, not locally.** Push the branch / open the PR and let CI
+   (backend, frontend, E2E) be the gate. Locally run only the test files you touched:
+   `pytest -q tests/test_x.py` (+ `ruff`), and frontend checks only for the app you changed.
+2. **At most 2 agents at a time** (normally 1 implementer + the orchestrator). Reviews
+   (security-reviewer, payment-auditor) are read-only and may run while no tests are running.
+3. **Heavy finite commands only under the lock:** `flock .dev/heavy.lock <cmd>` for pytest,
+   vue-tsc, vitest, vite build. **Never start long-running servers under `flock`**: they inherit
+   the lock and block everyone (`scripts/dev.sh up` must run without it).
+4. **Dev stack only while needed:** `scripts/dev.sh down` when idle; view work on the demo
+   (https://demo.kesiv.com) instead. The demo stack is small (~70 MB) and stays up.
+5. Before starting heavy work check `free -m`; if available < 300 MB, wait or stop the dev stack.
+6. Keep worktrees only while an agent works in them (`git worktree remove` after merge); each
+   carries its own `node_modules`.
+
+Token/cache hygiene for sessions: start each new session from `docs/progress.md` → "Current state"
+(the hand-off), not from history; give agents short specs that point to docs instead of pasting
+context; avoid dumping long logs (use `tail`, `grep`); one topic per session, `/clear` between
+unrelated topics.
