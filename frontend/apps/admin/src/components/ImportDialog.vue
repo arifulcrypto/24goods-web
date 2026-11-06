@@ -11,7 +11,7 @@ import { toastError } from '../ui'
 
 const props = defineProps<{ modelValue: boolean }>()
 const emit = defineEmits<{ 'update:modelValue': [v: boolean]; create: [d: ProductPrefill] }>()
-const { t } = useI18n()
+const { t, te } = useI18n()
 
 const URL_HINT = 'https://'
 const tab = ref<'url' | 'paste'>('url')
@@ -148,6 +148,8 @@ async function create() {
       description_md: rewriteImages(f.desc, map, chosen),
       price_minor: f.price.trim() ? yuanToMinor(f.price) : suggested.value,
       cost_minor: costMinor.value,
+      // fetched copies on our own origin, in the order shown; the first becomes the cover
+      images: chosen.map((i) => map.get(i.url)).filter((u): u is string => !!u),
       source_url: draft.value.source_url ?? (tab.value === 'url' ? url.value.trim() : baseUrl.value.trim()) ?? null,
     })
   } finally {
@@ -181,7 +183,7 @@ async function create() {
 
     <template v-if="draft">
       <el-divider />
-      <el-alert v-for="(w, i) in draft.warnings" :key="i" type="warning" :closable="false" show-icon :title="w" class="gap" />
+      <el-alert v-for="(w, i) in draft.warnings" :key="i" type="warning" :closable="false" show-icon :title="te(`v5.import.warn.${w}`) ? t(`v5.import.warn.${w}`) : w" class="gap" />
       <el-form label-position="top" @submit.prevent>
         <el-form-item :label="t('products.form.title')"><el-input v-model="f.title" maxlength="120" show-word-limit /></el-form-item>
         <div class="grid">

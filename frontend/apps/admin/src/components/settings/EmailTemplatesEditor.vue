@@ -2,7 +2,7 @@
 import { nextTick, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { apiV5 } from '../../api'
-import type { AdminSiteV5 } from '../../api-v5'
+import { emailTestErrorKey, type AdminSiteV5 } from '../../api-v5'
 import { PLACEHOLDERS, TEMPLATE_NAMES, insertPlaceholder, type TemplateName } from '../../lib/emailTemplates'
 import { useSave } from '../../composables/useSave'
 import { confirmBox, toastError, toastOk } from '../../ui'
@@ -71,7 +71,7 @@ async function sendTest() {
     // Tests the saved template: save first if edited.
     const r = await apiV5.site.testEmail(testTo.value.trim(), name.value)
     if (r.ok) toastOk(t('v5.email.testOk'))
-    else ElMessage.error({ message: `${t('v5.email.testFailed')}${r.error ? `: ${r.error}` : ''}`, grouping: true })
+    else ElMessage.error({ message: `${t('v5.email.testFailed')}${r.error ? `: ${emailTestErrorKey(r.error) ? t(emailTestErrorKey(r.error)!) : r.error}` : ''}`, grouping: true })
   } catch (e) {
     toastError(e)
   } finally {
