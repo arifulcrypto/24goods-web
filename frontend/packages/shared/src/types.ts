@@ -62,7 +62,7 @@ export interface BuyerInputConfig {
   placeholder: string
 }
 export type I18nText = Record<Locale, string>
-export interface AdminProduct extends Omit<Product, 'title' | 'description'> {
+export interface AdminProduct extends Omit<Product, 'title' | 'description' | 'buyer_input'> {
   title_i18n: I18nText
   description_i18n: I18nText
   floor_price: string
