@@ -47,6 +47,7 @@ async def change_price(
     before = snapshot(order)
     old_minor = order.amount_minor
     order.amount_minor = new_minor
+    order.subtotal_minor = new_minor - order.fee_minor  # v4 base; backend agent recomputes the fee
     order.version += 1
     order.channel = None  # previously issued pay URLs no longer match (-> manual_review)
     await add_event(

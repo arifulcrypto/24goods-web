@@ -107,6 +107,7 @@ async def create_order(
         title=title[:200],
         qty=qty,
         amount_minor=amount_minor,
+        subtotal_minor=amount_minor,  # v4 base: fee split lands with the checkout module
         currency=currency,
         status="pending_payment",
         version=1,
