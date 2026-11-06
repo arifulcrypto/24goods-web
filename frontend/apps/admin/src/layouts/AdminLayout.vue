@@ -6,15 +6,19 @@ import {
   ChatDotRound,
   Coin,
   DataBoard,
+  Discount,
   Document,
   Expand,
   Fold,
   Goods,
   List,
+  Menu,
   Reading,
   Service,
   Setting,
+  Shop,
   Tickets,
+  Wallet,
 } from '@element-plus/icons-vue'
 import { LogoMark } from '@24goods/shared/ui'
 import NotifyPopover from '../components/NotifyPopover.vue'
@@ -37,24 +41,57 @@ const desk = useDeskStore()
 useCsNotifications()
 const narrow = ref(false)
 
-const menu = computed(() => {
-  const items = [
-    { path: '/', key: 'nav.dashboard', icon: DataBoard },
-    { path: '/inbox', key: 'nav.inbox', icon: ChatDotRound },
-    { path: '/orders', key: 'nav.orders', icon: List },
-    { path: '/after-sales', key: 'nav.afterSales', icon: Service },
-    { path: '/products', key: 'nav.products', icon: Goods },
+interface MenuItem {
+  path: string
+  key: string
+  icon: unknown
+}
+const groups = computed(() => {
+  const g: { key: string; items: MenuItem[] }[] = [
+    {
+      key: 'v5.nav.g.operations',
+      items: [
+        { path: '/', key: 'nav.dashboard', icon: DataBoard },
+        { path: '/inbox', key: 'nav.inbox', icon: ChatDotRound },
+        { path: '/orders', key: 'nav.orders', icon: List },
+        { path: '/after-sales', key: 'nav.afterSales', icon: Service },
+      ],
+    },
+    {
+      key: 'v5.nav.g.catalog',
+      items: [
+        { path: '/products', key: 'nav.products', icon: Goods },
+        ...(auth.isAdmin
+          ? [
+              { path: '/categories', key: 'v5.nav.categories', icon: Menu },
+              { path: '/inventory', key: 'nav.inventory', icon: Tickets },
+              { path: '/promo-codes', key: 'v5.nav.promos', icon: Discount },
+            ]
+          : []),
+      ],
+    },
   ]
   if (auth.isAdmin) {
-    items.push(
-      { path: '/articles', key: 'nav.articles', icon: Reading },
-      { path: '/inventory', key: 'nav.inventory', icon: Tickets },
-      { path: '/ledger', key: 'nav.ledger', icon: Coin },
-      { path: '/audit', key: 'nav.audit', icon: Document },
-      { path: '/site', key: 'nav.site', icon: Setting },
+    g.push(
+      { key: 'v5.nav.g.content', items: [{ path: '/articles', key: 'nav.articles', icon: Reading }] },
+      {
+        key: 'v5.nav.g.resellers',
+        items: [
+          { path: '/resellers', key: 'v5.nav.resellers', icon: Shop },
+          { path: '/payouts', key: 'v5.nav.payouts', icon: Wallet },
+        ],
+      },
+      {
+        key: 'v5.nav.g.system',
+        items: [
+          { path: '/settings', key: 'v5.nav.settings', icon: Setting },
+          { path: '/audit', key: 'v5.nav.logs', icon: Document },
+          { path: '/ledger', key: 'nav.ledger', icon: Coin },
+        ],
+      },
     )
   }
-  return items
+  return g
 })
 const active = computed(() => (route.path === '/' ? '/' : `/${route.path.split('/')[1]}`))
 const collapsed = computed(() => prefs.collapsed || narrow.value)
@@ -94,13 +131,16 @@ async function logout() {
         <span v-if="!collapsed" class="logo-text">{{ t('app.title') }}</span>
       </div>
       <el-menu :default-active="active" :collapse="collapsed" router class="menu" :collapse-transition="false">
-        <el-menu-item v-for="m in menu" :key="m.path" :index="m.path">
-          <el-icon><component :is="m.icon" /></el-icon>
-          <template #title>
-            {{ t(m.key) }}
-            <el-badge v-if="m.path === '/after-sales' && desk.afterSalesOpen > 0" :value="desk.afterSalesOpen" :max="99" class="nav-badge" />
-          </template>
-        </el-menu-item>
+        <el-menu-item-group v-for="g in groups" :key="g.key">
+          <template v-if="!collapsed" #title>{{ t(g.key) }}</template>
+          <el-menu-item v-for="m in g.items" :key="m.path" :index="m.path">
+            <el-icon><component :is="m.icon" /></el-icon>
+            <template #title>
+              {{ t(m.key) }}
+              <el-badge v-if="m.path === '/after-sales' && desk.afterSalesOpen > 0" :value="desk.afterSalesOpen" :max="99" class="nav-badge" />
+            </template>
+          </el-menu-item>
+        </el-menu-item-group>
       </el-menu>
       <button
         type="button"
@@ -196,7 +236,15 @@ async function logout() {
   --el-menu-text-color: var(--a-sidebar-text);
   --el-menu-hover-bg-color: #1f2937;
   --el-menu-active-color: var(--a-sidebar-active);
-  --el-menu-item-height: 46px;
+  --el-menu-item-height: 44px;
+  overflow-y: auto;
+}
+.menu :deep(.el-menu-item-group__title) {
+  color: #6b7280;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 10px 20px 4px;
 }
 .menu:not(.el-menu--collapse) {
   width: 208px;

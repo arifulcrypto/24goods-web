@@ -1,3 +1,4 @@
+import v5 from './v5.zh-CN'
 import type { AdminMessages } from './index'
 
 const zhCN: AdminMessages = {
@@ -494,5 +495,6 @@ const zhCN: AdminMessages = {
     uploaded: '图片已上传',
     hint: '支持 Markdown。可粘贴或拖入图片（JPEG / PNG / WebP）自动上传。',
   },
+  v5,
 }
 export default zhCN

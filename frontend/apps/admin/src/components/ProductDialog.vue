@@ -15,7 +15,9 @@ import {
 } from '@24goods/shared'
 import { api, apiV3 } from '../api'
 import type { AdminProductInputV3 } from '../api-v3'
-import { BUYER_INPUT_DEFAULT, type AdminProductV4 as AdminProduct, type BuyerInputForm } from '../api-v4'
+import { BUYER_INPUT_DEFAULT, type BuyerInputForm } from '../api-v4'
+import type { AdminProductV5 as AdminProduct, ProductPrefill } from '../api-v5'
+import { marginMinor, marginPct, minorToYuan, yuanToMinor } from '../lib/money'
 import MarkdownEditor from './MarkdownEditor.vue'
 import { promptChips, validateBuyerInput } from '../lib/buyerInput'
 import {
@@ -36,7 +38,7 @@ import {
 } from '../lib/delivery'
 import { toastError, toastOk } from '../ui'
 
-const props = defineProps<{ modelValue: boolean; product: AdminProduct | null; categories: Category[] }>()
+const props = defineProps<{ modelValue: boolean; product: AdminProduct | null; categories: Category[]; prefill?: ProductPrefill | null; defaultEtaHours?: number }>()
 const emit = defineEmits<{ 'update:modelValue': [v: boolean]; saved: [p: AdminProduct] }>()
 const { t } = useI18n()
 
@@ -69,6 +71,9 @@ const form = reactive({
   after_sales_hours: null as number | null,
   bi: structuredClone(BUYER_INPUT_DEFAULT) as BuyerInputForm,
 })
+const eta = ref<number | null>(null)
+const cost = ref('')
+const sourceUrl = ref('')
 const biTab = ref<'en' | 'zh-CN'>('en')
 const biPreviewPrompt = computed(() => promptChips(form.bi.prompt_i18n[biTab.value] || form.bi.prompt_i18n.en || ''))
 const biPreviewTitle = computed(() => form.bi.title_i18n[biTab.value] || form.bi.title_i18n.en || t('products.bi.defaultTitle'))
@@ -82,16 +87,17 @@ watch(
     current.value = p
     tab.value = 'en'
     errors.value = {}
-    form.title_en = p?.title_i18n.en ?? ''
+    const d = p ? null : (props.prefill ?? null)
+    form.title_en = p?.title_i18n.en ?? d?.title ?? ''
     form.title_zh = p?.title_i18n['zh-CN'] ?? ''
-    form.desc_en = p?.description_i18n.en ?? ''
+    form.desc_en = p?.description_i18n.en ?? d?.description_md ?? ''
     form.desc_zh = p?.description_i18n['zh-CN'] ?? ''
-    form.price = p?.price ?? ''
-    form.floor_price = p?.floor_price ?? ''
+    form.price = p?.price ?? (d?.price_minor != null ? minorToYuan(d.price_minor) : '')
+    form.floor_price = p?.floor_price ?? (d ? minorToYuan(d.cost_minor ?? d.price_minor) : '')
     form.currency = p?.currency ?? 'CNY'
-    form.delivery_mode = p?.delivery_mode ?? 'auto_card'
+    form.delivery_mode = p?.delivery_mode ?? (d ? 'manual' : 'auto_card')
     form.category = p?.category ?? props.categories[0]?.key ?? ''
-    form.status = p?.status ?? 'draft'
+    form.status = p && p.status !== 'archived' ? p.status : 'draft'
     form.images = [...(p?.images ?? [])]
     form.separator = p?.delivery_separator && isSeparator(p.delivery_separator) ? p.delivery_separator : DEFAULT_SEPARATOR
     const labels = formatLabels(p?.delivery_format, form.separator)
@@ -103,6 +109,9 @@ watch(
     form.usage_zh = p?.usage_i18n?.['zh-CN'] ?? ''
     usageTab.value = 'en'
     form.after_sales_hours = p?.after_sales_hours ?? null
+    eta.value = p ? (p.delivery_eta_hours ?? null) : d ? (props.defaultEtaHours ?? 24) : null
+    cost.value = p?.cost_minor != null ? minorToYuan(p.cost_minor) : d?.cost_minor != null ? minorToYuan(d.cost_minor) : ''
+    sourceUrl.value = p?.source_url ?? d?.source_url ?? ''
     asPreset.value = afterSalesPresetFor(form.after_sales_hours)
     const b = p?.buyer_input
     form.bi = {
@@ -119,6 +128,10 @@ watch(
 
 const URL_HINT = "https://example.com"
 const isNew = computed(() => !current.value)
+const margin = computed(() => marginMinor(isValidAmount(form.price) ? yuanToMinor(form.price) : null, cost.value.trim() ? yuanToMinor(cost.value) : null))
+const marginNeg = computed(() => (margin.value ?? 0) < 0)
+const marginText = computed(() => (margin.value === null ? '' : `¥${minorToYuan(margin.value)}${marginP.value !== null ? ` (${marginP.value}%)` : ''}`))
+const marginP = computed(() => marginPct(isValidAmount(form.price) ? yuanToMinor(form.price) : null, cost.value.trim() ? yuanToMinor(cost.value) : null))
 
 const labels = computed(() =>
   labelsText.value
@@ -126,6 +139,9 @@ const labels = computed(() =>
     .map((l) => l.trim())
     .filter(Boolean),
 )
+function resetEta() {
+  eta.value = null
+}
 function onPreset(k: FormatPresetKey) {
   const p = FORMAT_PRESETS.find((x) => x.key === k)
   if (p) labelsText.value = p.labels.join('\n')
@@ -150,13 +166,16 @@ function validate(): boolean {
   if (form.after_sales_hours !== null && (!Number.isInteger(form.after_sales_hours) || form.after_sales_hours < 0 || form.after_sales_hours > 8760)) {
     e.after_sales = t('delivery.hoursInvalid')
   }
+  if (cost.value.trim() && yuanToMinor(cost.value) === null) e.cost = t('v5.amountInvalid')
+  if (sourceUrl.value.trim() && !/^https?:\/\/\S+$/i.test(sourceUrl.value.trim())) e.source = t('delivery.redeemInvalid')
+  if (eta.value !== null && (!Number.isInteger(eta.value) || eta.value < 1 || eta.value > 720)) e.eta = t('v5.payment.etaInvalid')
   if (validateBuyerInput(form.bi)) e.bi = t('products.bi.invalid')
   errors.value = e
   if (e.title) tab.value = 'en'
   return Object.keys(e).length === 0
 }
 
-function payload(): AdminProductInputV3 & { buyer_input: BuyerInputForm } {
+function payload(): AdminProductInputV3 & { buyer_input: BuyerInputForm; delivery_eta_hours: number | null; cost_minor: number | null; source_url: string | null } {
   const usage = { en: form.usage_en.trim(), 'zh-CN': form.usage_zh.trim() }
   const trim = (o: { en: string; 'zh-CN': string }) => ({ en: o.en.trim(), 'zh-CN': o['zh-CN'].trim() })
   return {
@@ -166,6 +185,9 @@ function payload(): AdminProductInputV3 & { buyer_input: BuyerInputForm } {
       prompt_i18n: trim(form.bi.prompt_i18n),
       placeholder_i18n: trim(form.bi.placeholder_i18n),
     },
+    delivery_eta_hours: form.delivery_mode === 'manual' ? eta.value : null,
+    cost_minor: cost.value.trim() ? yuanToMinor(cost.value) : null,
+    source_url: sourceUrl.value.trim() || null,
     delivery_format: joinFormat(labels.value, form.separator),
     delivery_separator: form.separator,
     redeem_url: form.redeem_url.trim() || null,
@@ -206,10 +228,26 @@ async function save() {
   }
 }
 
-async function upload(opt: UploadRequestOptions) {
+function upload(opt: UploadRequestOptions) {
+  return uploadFile(opt.file)
+}
+function onImgPaste(e: ClipboardEvent) {
+  const f = Array.from(e.clipboardData?.files ?? []).find((x) => x.type.startsWith('image/'))
+  if (f && current.value) {
+    e.preventDefault()
+    void uploadFile(f)
+  }
+}
+function onImgDrop(e: DragEvent) {
+  const f = Array.from(e.dataTransfer?.files ?? []).find((x) => x.type.startsWith('image/'))
+  if (f && current.value) {
+    e.preventDefault()
+    void uploadFile(f)
+  }
+}
+async function uploadFile(file: File) {
   const p = current.value
   if (!p) return
-  const file = opt.file
   if (!isAcceptedImage(file)) {
     toastError(new Error('upload_rejected'))
     return
@@ -297,6 +335,30 @@ async function removeImage(url: string) {
           </el-radio-group>
         </el-form-item>
       </div>
+
+      <template v-if="form.delivery_mode === 'manual'">
+        <el-form-item :label="t('v5.product.eta')" :error="errors.eta">
+          <el-input-number v-model="eta" :min="1" :max="720" :placeholder="String(defaultEtaHours ?? 24)" />
+          <span class="muted sw">{{ t('site.hours') }} ({{ t('v5.product.etaDefault', { h: defaultEtaHours ?? 24 }) }})</span>
+          <el-button v-if="eta !== null" link type="primary" @click="resetEta">{{ t('v5.product.etaReset') }}</el-button>
+          <div class="hint muted">{{ t('v5.product.noRush') }}</div>
+        </el-form-item>
+      </template>
+
+      <h3 class="sec">{{ t('v5.product.sourcing') }}</h3>
+      <p class="hint muted">{{ t('v5.product.sourcingNote') }}</p>
+      <div class="grid">
+        <el-form-item :label="`${t('v5.product.cost')} (${form.currency})`" :error="errors.cost">
+          <el-input v-model="cost" inputmode="decimal" placeholder="12.00" />
+        </el-form-item>
+        <el-form-item :label="t('v5.product.margin')">
+          <span v-if="marginText" :class="marginNeg ? 'neg' : 'pos'">{{ marginText }}</span>
+          <span v-else class="muted">—</span>
+        </el-form-item>
+      </div>
+      <el-form-item :label="t('v5.product.sourceUrl')" :error="errors.source">
+        <el-input v-model="sourceUrl" maxlength="500" inputmode="url" :placeholder="URL_HINT" />
+      </el-form-item>
 
       <h3 class="sec">{{ t('delivery.title') }}</h3>
       <div class="grid">
@@ -400,7 +462,7 @@ async function removeImage(url: string) {
 
       <el-form-item :label="t('products.form.images')">
         <div v-if="isNew" class="muted">{{ t('products.form.saveFirst') }}</div>
-        <div v-else class="images">
+        <div v-else class="images" tabindex="0" :aria-label="t('v5.product.pasteHint')" @paste="onImgPaste" @dragover.prevent @drop="onImgDrop">
           <div v-for="(url, i) in form.images" :key="url" class="img">
             <el-image :src="url" fit="cover" :preview-src-list="form.images" :initial-index="i" preview-teleported />
             <el-tag v-if="i === 0" size="small" class="cover-tag">{{ t('products.form.cover') }}</el-tag>
@@ -414,7 +476,7 @@ async function removeImage(url: string) {
           >
             <el-button :loading="uploading">{{ t('products.form.upload') }}</el-button>
           </el-upload>
-          <div class="hint muted full">{{ t('products.form.uploadHint') }}</div>
+          <div class="hint muted full">{{ t('products.form.uploadHint') }} {{ t('v5.product.pasteHint') }}</div>
         </div>
       </el-form-item>
     </el-form>
@@ -497,6 +559,14 @@ async function removeImage(url: string) {
 }
 .hours {
   margin-left: 8px;
+}
+.pos {
+  color: var(--el-color-success);
+  font-weight: 600;
+}
+.neg {
+  color: var(--el-color-danger);
+  font-weight: 600;
 }
 .sw {
   margin-left: 10px;

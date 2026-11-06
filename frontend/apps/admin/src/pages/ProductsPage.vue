@@ -1,26 +1,34 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Plus, Search } from '@element-plus/icons-vue'
-import { copyText, formatDateTime, formatMoney, type Category, type ProductStatus } from '@24goods/shared'
+import { Plus, Search, Upload } from '@element-plus/icons-vue'
+import { copyText, formatDateTime, formatMoney, isApiError, type Category } from '@24goods/shared'
 import { ProductThumb } from '@24goods/shared/ui'
-import { api, apiV3 } from '../api'
-import type { AdminProductV3 as AdminProduct } from '../api-v3'
+import { api, apiV5 } from '../api'
+import type { AdminProductV5 as AdminProduct, BulkAction, ProductPrefill } from '../api-v5'
+import ImportDialog from '../components/ImportDialog.vue'
 import ProductDialog from '../components/ProductDialog.vue'
 import { usePaged } from '../composables/usePaged'
+import { marginMinor, yuanToMinor } from '../lib/money'
 import { useAuthStore } from '../stores/auth'
 import { confirmBox, toastError, toastOk } from '../ui'
 
 const { t, locale } = useI18n()
 const auth = useAuthStore()
 const q = ref('')
-const status = ref<ProductStatus | ''>('')
+const status = ref<'' | 'active' | 'draft' | 'archived'>('')
 const categories = ref<Category[]>([])
 const dialog = ref(false)
 const editing = ref<AdminProduct | null>(null)
+const prefill = ref<ProductPrefill | null>(null)
+const importOpen = ref(false)
+const selected = ref<AdminProduct[]>([])
+const catDialog = ref(false)
+const bulkCat = ref('')
+const defaultEta = ref(24)
 
 const table = usePaged<AdminProduct>((page, page_size) =>
-  apiV3.products.list({ q: q.value.trim() || undefined, status: status.value, page, page_size }),
+  apiV5.products.list({ q: q.value.trim() || undefined, status: status.value || undefined, page, page_size }),
 )
 let debounce: ReturnType<typeof setTimeout> | null = null
 watch(q, () => {
@@ -32,14 +40,26 @@ watch(status, () => void table.reload())
 onMounted(async () => {
   void table.load()
   try {
-    categories.value = await api.categories()
+    categories.value = (await apiV5.categories.list()).map((c) => ({ key: c.slug, name: (locale.value === 'zh-CN' && c.name_i18n['zh-CN']) || c.name_i18n.en }) as Category)
   } catch {
-    /* optional */
+    try {
+      categories.value = await api.categories()
+    } catch {
+      /* optional */
+    }
+  }
+  try {
+    defaultEta.value = (await apiV5.site.get()).delivery?.manual_eta_hours ?? 24
+  } catch {
+    /* admin-only; keep 24 */
   }
 })
 
 const catName = (key: string) => categories.value.find((c) => c.key === key)?.name ?? key
 const titleOf = (p: AdminProduct) => (locale.value === 'zh-CN' && p.title_i18n['zh-CN']) || p.title_i18n.en
+const marginOf = (p: AdminProduct) => marginMinor(yuanToMinor(p.price), p.cost_minor)
+const isArchived = (p: AdminProduct) => p.status === 'archived'
+const bulkOn = computed(() => auth.isAdmin && selected.value.length > 0)
 
 async function copyLink(p: AdminProduct) {
   if (await copyText(`${location.origin}/buy/${p.id}`)) toastOk(t('products.linkCopied'))
@@ -47,21 +67,63 @@ async function copyLink(p: AdminProduct) {
 }
 function openNew() {
   editing.value = null
+  prefill.value = null
   dialog.value = true
 }
 function openEdit(p: AdminProduct) {
   editing.value = p
+  prefill.value = null
+  dialog.value = true
+}
+function onImported(d: ProductPrefill) {
+  importOpen.value = false
+  editing.value = null
+  prefill.value = d
   dialog.value = true
 }
 function onSaved(p: AdminProduct) {
   if (table.items.value.some((x) => x.id === p.id)) table.patch((x) => x.id === p.id, p)
   else void table.reload()
 }
-async function unpublish(p: AdminProduct) {
-  if (!(await confirmBox(t('products.deleteConfirm', { title: titleOf(p) })))) return
+async function archive(p: AdminProduct) {
+  if (!(await confirmBox(t('v5.products.archiveConfirm', { title: titleOf(p) })))) return
   try {
-    await api.products.remove(p.id)
-    toastOk(t('products.deleted'))
+    await apiV5.products.archive(p.id)
+    toastOk(t('v5.products.archived'))
+    void table.load()
+  } catch (e) {
+    toastError(e)
+  }
+}
+async function restore(p: AdminProduct) {
+  try {
+    await apiV5.products.restore(p.id)
+    toastOk(t('v5.products.restored'))
+    void table.load()
+  } catch (e) {
+    toastError(e)
+  }
+}
+async function hardDelete(p: AdminProduct) {
+  if (!(await confirmBox(t('v5.products.hardConfirm', { title: titleOf(p) }), t('v5.products.hardTitle')))) return
+  try {
+    await apiV5.products.hardDelete(p.id)
+    toastOk(t('v5.products.hardDeleted'))
+    void table.load()
+  } catch (e) {
+    if (isApiError(e) && e.code === 'product_in_use') ElMessage.warning({ message: t('v5.products.inUse'), grouping: true })
+    else toastError(e)
+  }
+}
+async function bulk(action: BulkAction, category?: string) {
+  const ids = selected.value.map((p) => p.id)
+  if (!ids.length) return
+  if (action === 'archive' && !(await confirmBox(t('v5.products.bulkArchiveConfirm', { n: ids.length })))) return
+  try {
+    const r = await apiV5.products.bulk({ ids, action, ...(category ? { category } : {}) })
+    toastOk(t('v5.products.bulkDone', { n: r.updated }))
+    catDialog.value = false
+    selected.value = []
     void table.load()
   } catch (e) {
     toastError(e)
@@ -78,14 +140,35 @@ async function unpublish(p: AdminProduct) {
           <el-option value="" :label="t('products.allStatus')" />
           <el-option value="active" :label="t('products.status.active')" />
           <el-option value="draft" :label="t('products.status.draft')" />
+          <el-option value="archived" :label="t('v5.products.statusArchived')" />
         </el-select>
       </div>
-      <el-button v-if="auth.isAdmin" type="primary" :icon="Plus" @click="openNew">{{ t('products.new') }}</el-button>
+      <div v-if="auth.isAdmin" class="toolbar">
+        <el-button :icon="Upload" @click="importOpen = true">{{ t('v5.products.import') }}</el-button>
+        <el-button type="primary" :icon="Plus" @click="openNew">{{ t('products.new') }}</el-button>
+      </div>
       <el-text v-else type="info" size="small">{{ t('products.readOnly') }}</el-text>
     </div>
 
+    <div v-if="bulkOn" class="bulkbar panel" role="toolbar" :aria-label="t('v5.products.bulk')">
+      <strong>{{ t('v5.products.selected', { n: selected.length }) }}</strong>
+      <el-button size="small" @click="bulk('publish')">{{ t('v5.products.publish') }}</el-button>
+      <el-button size="small" @click="bulk('unpublish')">{{ t('v5.products.unpublish') }}</el-button>
+      <el-button size="small" @click="catDialog = true">{{ t('v5.products.setCategory') }}</el-button>
+      <el-button size="small" type="danger" plain @click="bulk('archive')">{{ t('v5.products.archive') }}</el-button>
+      <el-button size="small" @click="bulk('restore')">{{ t('v5.products.restore') }}</el-button>
+      <el-button size="small" link @click="selected = []">{{ t('v5.products.clearSel') }}</el-button>
+    </div>
+
     <div class="panel">
-      <el-table v-loading="table.loading.value" :data="table.items.value" row-key="id" :empty-text="t('common.empty')">
+      <el-table
+        v-loading="table.loading.value"
+        :data="table.items.value"
+        row-key="id"
+        :empty-text="t('common.empty')"
+        @selection-change="selected = $event"
+      >
+        <el-table-column v-if="auth.isAdmin" type="selection" width="44" reserve-selection />
         <el-table-column :label="t('products.col.title')" min-width="260">
           <template #default="{ row }">
             <div class="prod">
@@ -100,7 +183,15 @@ async function unpublish(p: AdminProduct) {
         <el-table-column :label="t('products.col.price')" width="120">
           <template #default="{ row }"><span class="price">{{ formatMoney(row.price, row.currency, locale) }}</span></template>
         </el-table-column>
-        <el-table-column :label="t('products.col.floor')" width="120">
+        <el-table-column v-if="auth.isAdmin" :label="t('v5.product.margin')" width="110">
+          <template #default="{ row }">
+            <span v-if="marginOf(row as AdminProduct) !== null" :class="(marginOf(row as AdminProduct) as number) < 0 ? 'neg' : 'pos'">
+              {{ formatMoney(((marginOf(row as AdminProduct) as number) / 100).toFixed(2), row.currency, locale) }}
+            </span>
+            <span v-else class="muted">—</span>
+          </template>
+        </el-table-column>
+        <el-table-column :label="t('products.col.floor')" width="110">
           <template #default="{ row }">{{ formatMoney(row.floor_price, row.currency, locale) }}</template>
         </el-table-column>
         <el-table-column :label="t('products.col.mode')" width="110">
@@ -108,40 +199,48 @@ async function unpublish(p: AdminProduct) {
             <el-tag :type="row.delivery_mode === 'auto_card' ? 'warning' : 'info'" size="small">{{ t(`deliveryMode.${row.delivery_mode}`) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column :label="t('products.col.stock')" width="90">
+        <el-table-column :label="t('products.col.stock')" width="80">
           <template #default="{ row }">{{ row.stock ?? '—' }}</template>
         </el-table-column>
-        <el-table-column :label="t('products.col.sold')" prop="sold" width="80" />
-        <el-table-column :label="t('products.col.status')" width="100">
+        <el-table-column :label="t('products.col.sold')" prop="sold" width="70" />
+        <el-table-column :label="t('products.col.status')" width="110">
           <template #default="{ row }">
-            <el-tag :type="row.status === 'active' ? 'success' : 'info'" size="small">{{ t(`products.status.${row.status}`) }}</el-tag>
+            <el-tag :type="row.status === 'active' ? 'success' : 'info'" size="small">{{ t(row.status === 'archived' ? 'v5.products.statusArchived' : `products.status.${row.status}`) }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column :label="t('products.col.created')" width="160">
           <template #default="{ row }">{{ formatDateTime(row.created_at, locale) }}</template>
         </el-table-column>
-        <el-table-column :label="t('common.actions')" width="230" fixed="right">
+        <el-table-column :label="t('common.actions')" width="270" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="copyLink(row as AdminProduct)">{{ t('products.copyLink') }}</el-button>
             <template v-if="auth.isAdmin">
-            <el-button link type="primary" @click="openEdit(row as AdminProduct)">{{ t('common.edit') }}</el-button>
-            <el-button v-if="row.status === 'active'" link type="danger" @click="unpublish(row as AdminProduct)">{{ t('products.toDraft') }}</el-button>
+              <el-button link type="primary" @click="openEdit(row as AdminProduct)">{{ t('common.edit') }}</el-button>
+              <template v-if="isArchived(row as AdminProduct)">
+                <el-button link type="primary" @click="restore(row as AdminProduct)">{{ t('v5.products.restore') }}</el-button>
+                <el-button link type="danger" @click="hardDelete(row as AdminProduct)">{{ t('v5.products.hardDelete') }}</el-button>
+              </template>
+              <el-button v-else link type="danger" @click="archive(row as AdminProduct)">{{ t('v5.products.archive') }}</el-button>
             </template>
           </template>
         </el-table-column>
       </el-table>
       <div class="pager">
-        <el-pagination
-          layout="total, prev, pager, next"
-          :total="table.total.value"
-          :page-size="table.pageSize"
-          :current-page="table.page.value"
-          @current-change="table.load"
-        />
+        <el-pagination layout="total, prev, pager, next" :total="table.total.value" :page-size="table.pageSize" :current-page="table.page.value" @current-change="table.load" />
       </div>
     </div>
 
-    <ProductDialog v-model="dialog" :product="editing" :categories="categories" @saved="onSaved" />
+    <ProductDialog v-model="dialog" :product="editing" :categories="categories" :prefill="prefill" :default-eta-hours="defaultEta" @saved="onSaved" />
+    <ImportDialog v-model="importOpen" @create="onImported" />
+    <el-dialog v-model="catDialog" :title="t('v5.products.setCategory')" width="min(380px, 96vw)">
+      <el-select v-model="bulkCat" filterable style="width: 100%" :placeholder="t('products.form.category')">
+        <el-option v-for="c in categories" :key="c.key" :label="c.name" :value="c.key" />
+      </el-select>
+      <template #footer>
+        <el-button @click="catDialog = false">{{ t('common.cancel') }}</el-button>
+        <el-button type="primary" :disabled="!bulkCat" @click="bulk('set_category', bulkCat)">{{ t('common.confirm') }}</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -157,9 +256,6 @@ async function unpublish(p: AdminProduct) {
   border-radius: 6px;
   flex: none;
 }
-.thumb.ph {
-  background: #f3f4f6;
-}
 .prod-text {
   min-width: 0;
 }
@@ -173,5 +269,19 @@ async function unpublish(p: AdminProduct) {
 }
 .small {
   font-size: 12px;
+}
+.bulkbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+  padding: 10px 14px;
+}
+.pos {
+  color: var(--el-color-success);
+}
+.neg {
+  color: var(--el-color-danger);
 }
 </style>
