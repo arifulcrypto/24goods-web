@@ -108,15 +108,9 @@ async function openConversation() {
   opening.value = true
   connectFailed.value = false
   try {
-    // /chat needs no sign-in: create an instant account silently when there is none.
-    if (!auth.loggedIn) {
-      connecting.value = true
-      try {
-        await account.ensure()
-      } finally {
-        connecting.value = false
-      }
-    }
+    // No account yet: show the UI only. The instant account is created when the visitor sends
+    // something (bots/crawlers must not burn the instant-account quota just by loading /chat).
+    if (!auth.loggedIn) return
     let id = typeof route.query.cid === 'string' ? route.query.cid : ''
     if (!id) {
       const productId = typeof route.query.product === 'string' && route.query.product ? route.query.product : undefined
@@ -137,6 +131,27 @@ async function openConversation() {
     if (!isPowAbort(e)) toastError(e)
   } finally {
     opening.value = false
+  }
+}
+
+/** Run `send` once a conversation exists, creating the instant account + conversation on first use. */
+async function whenReady(send: () => void): Promise<void> {
+  if (chat.conversationId.value) {
+    send()
+    return
+  }
+  if (connecting.value) return
+  connecting.value = true
+  connectFailed.value = false
+  try {
+    await account.ensure()
+    await openConversation()
+    if (chat.conversationId.value) send()
+  } catch (e) {
+    connectFailed.value = true
+    if (!isPowAbort(e)) toastError(e)
+  } finally {
+    connecting.value = false
   }
 }
 
@@ -198,20 +213,28 @@ function sent() {
   void list.value?.scrollToBottom(true)
 }
 function onSendText(text: string) {
-  chat.sendText(text)
-  sent()
+  void whenReady(() => {
+    chat.sendText(text)
+    sent()
+  })
 }
 function onSendFile(text: string) {
-  chat.sendFile(text, messageFilename())
-  sent()
+  void whenReady(() => {
+    chat.sendFile(text, messageFilename())
+    sent()
+  })
 }
 function onSendImage(blob: Blob, meta: { width?: number; height?: number; filename: string }) {
-  chat.sendImage(blob, meta)
-  sent()
+  void whenReady(() => {
+    chat.sendImage(blob, meta)
+    sent()
+  })
 }
 function onSendVoice(blob: Blob, durationMs: number, filename: string) {
-  chat.sendVoice(blob, durationMs, filename)
-  sent()
+  void whenReady(() => {
+    chat.sendVoice(blob, durationMs, filename)
+    sent()
+  })
 }
 
 function preview(url: string) {
@@ -263,8 +286,7 @@ function back() {
 }
 function chip(kind: 'presales' | 'order' | 'delivery') {
   if (kind === 'order') void router.push('/orders')
-  else chat.sendText(t(kind === 'presales' ? 'chat.chips.presalesMsg' : 'chat.chips.deliveryMsg'))
-  sent()
+  else onSendText(t(kind === 'presales' ? 'chat.chips.presalesMsg' : 'chat.chips.deliveryMsg'))
 }
 function deliveredOrderId(it: { kind: string; message?: { type: string; payload: unknown } }): string | null {
   if (it.kind !== 'server' || it.message?.type !== 'system') return null
@@ -320,7 +342,7 @@ function deliveredOrderId(it: { kind: string; message?: { type: string; payload:
           <van-loading size="20" /> <span>{{ t('cs.connecting') }}</span>
           <PowStatus :solving="account.solving.value" :progress="account.progress.value" />
         </div>
-        <button v-else-if="connectFailed" type="button" class="connecting retry" @click="openConversation">
+        <button v-else-if="connectFailed" type="button" class="connecting retry" @click="connectFailed = false; void openConversation()">
           {{ t('cs.connectFailed') }}
         </button>
         <div v-else class="gc-row welcome">
@@ -349,7 +371,7 @@ function deliveredOrderId(it: { kind: string; message?: { type: string; payload:
     </div>
     <ChatComposer
       v-else
-      :disabled="!chat.conversationId.value"
+      :disabled="connecting"
       @send-text="onSendText"
       @send-file="onSendFile"
       @send-image="onSendImage"
