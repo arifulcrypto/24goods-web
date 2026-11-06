@@ -6,6 +6,8 @@ Update this file in every PR. Phases are defined in [review-v2.md §8](review-v2
 
 ## Done
 
+- v5 product import backend: `core/safefetch.py` (SSRF-safe, IP-pinned), `catalog/importer/` parsers + gmailbuy/maitg/ka8 adapters, `admin/importer.py` endpoints, offline fixture tests.
+
 ### 2026-11-05: M0 bootstrap
 - Research by four parallel agents; evaluation in `docs/analysis.md`.
 - Card vault, EPay verifier, CI security gates, AGENTS.md, project review agents.

@@ -292,6 +292,25 @@ Spec: [review-v4.md](review-v4.md). These rows extend or override the tables abo
 
 **Global access-frequency limit** (default OFF): per-IP fixed window on `/api/*`, except the notify path, `/api/v1/realtime/*`, `/api/v1/admin/*` and non-`/api` paths (`/healthz`). Over the limit: HTTP 429, `Retry-After`, body exactly `{"code":429,"msg":"Access is too frequent. Please try again later."}` (not the error envelope). Fails open on Redis errors; config cached in-process 5 s.
 
+## Product import (v5, admin only, 30 req/min per admin)
+
+- `POST /admin/products/import/fetch` `{url}` -> `ImportDraft`. Server-side SSRF-safe fetch
+  (`app/core/safefetch.py`: http/https, ports 80/443/8080/8443, every resolved IP must be public,
+  connection pinned to the vetted IP, redirects <= 3 re-vetted, 10 s, 3 MB). Audited as
+  `product.import_fetch` with `target = host:<hostname>` only. Refusals: 422 `unsafe_url` /
+  `fetch_failed`; 429 when rate limited.
+- `POST /admin/products/import/parse` `{text?, html?, base_url?}` -> `ImportDraft` (422 when both empty).
+- `POST /admin/content/images/fetch` `{url}` -> `{id, url}` (same as `POST /admin/content/images`;
+  8 MB cap, then the normal magic-byte / re-encode / EXIF-strip pipeline).
+- `ImportDraft = {title, description_md, images:[{url, alt}], price_minor|null, currency, source_url|null,
+  site|null, suggested_price_minor|null, warnings:[code]}`. `suggested_price_minor` =
+  round-up(cost + markup, `import.round_to_minor`) from settings section `import`.
+  Warning codes: `no_title`, `no_price`, `no_description`, `no_images`, `paste_page` (client-rendered
+  site: ask the admin to paste the page instead). Image URLs in the draft are remote; the UI
+  uploads the chosen ones via `images/fetch` and rewrites the description.
+- Adapters: gmailbuy.com, maitg.com (server-rendered), go.ka8.ai (public JSON API
+  `/api/v1/public/products/<slug>`; falls back to `paste_page` if the site blocks the server).
+
 ## Internal (never routed by Caddy)
 
 | Service | Endpoint | Purpose |
