@@ -43,6 +43,7 @@ VAULT_PUB_JSON = json.dumps(
 FP_KEY = base64.b64encode(secrets.token_bytes(32)).decode()
 QUOTE_KEY = base64.b64encode(secrets.token_bytes(32)).decode()
 POW_KEY = base64.b64encode(secrets.token_bytes(32)).decode()
+SETTINGS_KEY = base64.b64encode(secrets.token_bytes(32)).decode()
 INTERNAL_TOKEN = secrets.token_urlsafe(32)
 ZPAY_PID = "1001"
 ZPAY_KEY = "test-merchant-key-0123456789"
@@ -170,6 +171,7 @@ def make_settings(s: Services, **over):
         vault_fingerprint_key=FP_KEY,
         quote_hmac_key=QUOTE_KEY,
         pow_key=POW_KEY,
+        settings_key=SETTINGS_KEY,
         pow_bits=8,
         internal_token=INTERNAL_TOKEN,
         delivery_url="http://delivery",
@@ -354,6 +356,12 @@ async def env(services: Services) -> AsyncIterator[Env]:
         db.add_all([t1, t2])
         await db.commit()
         tid, tid2 = t1.id, t2.id
+        from app.modules.catalog.categories import seed_default_categories
+
+    for t in (tid, tid2):
+        async with tenant_session(owner_maker, t) as db:
+            await seed_default_categories(db, t)
+            await db.commit()
 
     settings = make_settings(s)
     dsettings = DeliverySettings(

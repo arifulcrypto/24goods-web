@@ -6,17 +6,21 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import Page, get_db, get_lang, get_page, get_res, get_tenant_id
-from app.core.i18n import pick
 from app.core.resources import Resources
 from app.modules.catalog import service
-from app.modules.catalog.categories import CATEGORIES
+from app.modules.catalog.categories import enabled_categories, public_view
 
 router = APIRouter(tags=["catalog"])
 
 
 @router.get("/categories")
-async def categories(lang: str = Depends(get_lang)) -> list[dict[str, str]]:
-    return [{"key": k, "name": pick(v, lang)} for k, v in CATEGORIES.items()]
+@router.get("/catalog/categories")
+async def categories(
+    lang: str = Depends(get_lang),
+    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict[str, str | None]]:
+    return [public_view(c, lang) for c in await enabled_categories(db, tenant_id)]
 
 
 @router.get("/products")
