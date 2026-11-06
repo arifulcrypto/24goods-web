@@ -48,6 +48,54 @@ class NotifyOutcome:
     orders: list[Order] = field(default_factory=list)  # every order touched (checkout path)
 
 
+def exact_minor(amount: Decimal) -> int | None:
+    """Minor units of an amount with at most 2 decimals; ``None`` for sub-fen / non-finite."""
+    if not amount.is_finite():
+        return None
+    scaled = amount * 100
+    if scaled != scaled.to_integral_value():
+        return None
+    return int(scaled)
+
+
+async def apply_sold(db: AsyncSession, sold: dict[uuid.UUID, int]) -> None:
+    """``sold += qty``, aggregated per product and applied in product_id order (stable lock
+    order, one UPDATE per product)."""
+    for pid in sorted(sold):
+        await db.execute(
+            update(Product).where(Product.id == pid).values(sold=Product.sold + sold[pid])
+        )
+
+
+async def post_payment_ledger(db: AsyncSession, settings: Settings, order: Order) -> None:
+    """gateway_clearing +amount / sales_revenue -subtotal / surcharge_revenue -fee, plus the
+    gateway cost entry (fees:zpay)."""
+    lines = [
+        Line("gateway_clearing:zpay", order.amount_minor),
+        Line("sales_revenue", -order.subtotal_minor),
+    ]
+    if order.fee_minor > 0:
+        lines.append(Line("surcharge_revenue", -order.fee_minor))
+    await post_txn(
+        db,
+        tenant_id=order.tenant_id,
+        currency=order.currency,
+        order_id=order.id,
+        memo=f"zpay payment {order.order_no}",
+        lines=lines,
+    )
+    gateway_cost = percent_of(order.amount_minor, settings.zpay_fee_permille)
+    if gateway_cost > 0:
+        await post_txn(
+            db,
+            tenant_id=order.tenant_id,
+            currency=order.currency,
+            order_id=order.id,
+            memo=f"zpay fee {order.order_no}",
+            lines=[Line("fees:zpay", gateway_cost), Line("gateway_clearing:zpay", -gateway_cost)],
+        )
+
+
 def safe_params(params: dict[str, str]) -> dict[str, str]:
     """Notify params as stored for audit (no secrets in them, but bound the size)."""
     return {str(k)[:32]: str(v)[:256] for k, v in list(params.items())[:30]}
@@ -119,14 +167,19 @@ async def to_manual_review(
     return NotifyOutcome(SUCCESS, order, msgs)
 
 
-async def lock_checkout(db: AsyncSession, checkout_id: uuid.UUID) -> tuple[Checkout, list[Order]]:
+async def lock_checkout(
+    db: AsyncSession, checkout_id: uuid.UUID, tenant_id: uuid.UUID | None = None
+) -> tuple[Checkout, list[Order]]:
     """Checkout ``FOR UPDATE`` first, then its orders ``ORDER BY id FOR UPDATE``."""
-    co = await db.scalar(select(Checkout).where(Checkout.id == checkout_id).with_for_update())
+    stmt = select(Checkout).where(Checkout.id == checkout_id)
+    if tenant_id is not None:
+        stmt = stmt.where(Checkout.tenant_id == tenant_id)
+    co = await db.scalar(stmt.with_for_update())
     assert co is not None
     orders = list(
         await db.scalars(
             select(Order)
-            .where(Order.checkout_id == checkout_id)
+            .where(Order.checkout_id == checkout_id, Order.tenant_id == co.tenant_id)
             .order_by(Order.id)
             .with_for_update()
         )
@@ -178,6 +231,7 @@ async def settle_member(
     late: bool,
     trade_no: str,
     ip: str | None,
+    sold: dict[uuid.UUID, int],
 ) -> list[Message | None]:
     """pending/expired/cancelled -> paid (or manual_review if ``late``), with events, ledger,
     outbox, ``sold += qty``, system + buyer-input chat messages and the audit row.
@@ -198,30 +252,7 @@ async def settle_member(
         actor_kind="gateway",
         reason="late_payment" if late else f"zpay:{trade_no[:40]}",
     )
-    lines = [
-        Line("gateway_clearing:zpay", order.amount_minor),
-        Line("sales_revenue", -order.subtotal_minor),
-    ]
-    if order.fee_minor > 0:
-        lines.append(Line("surcharge_revenue", -order.fee_minor))
-    await post_txn(
-        db,
-        tenant_id=order.tenant_id,
-        currency=order.currency,
-        order_id=order.id,
-        memo=f"zpay payment {order.order_no}",
-        lines=lines,
-    )
-    gateway_cost = percent_of(order.amount_minor, settings.zpay_fee_permille)
-    if gateway_cost > 0:
-        await post_txn(
-            db,
-            tenant_id=order.tenant_id,
-            currency=order.currency,
-            order_id=order.id,
-            memo=f"zpay fee {order.order_no}",
-            lines=[Line("fees:zpay", gateway_cost), Line("gateway_clearing:zpay", -gateway_cost)],
-        )
+    await post_payment_ledger(db, settings, order)
     msgs: list[Message | None] = []
     if late:
         msgs.append(
@@ -242,12 +273,8 @@ async def settle_member(
                 payload={"order_id": str(order.id), "tenant_id": str(order.tenant_id)},
             )
         )
-        if order.product_id:
-            await db.execute(
-                update(Product)
-                .where(Product.id == order.product_id)
-                .values(sold=Product.sold + order.qty)
-            )
+        if order.product_id:  # applied by the caller via apply_sold, after the member loop
+            sold[order.product_id] = sold.get(order.product_id, 0) + order.qty
         if order.buyer_input and order.conversation_id is None:
             order.conversation_id = await ensure_open_conversation(
                 db, tenant_id=order.tenant_id, buyer_id=order.buyer_id
@@ -299,6 +326,65 @@ async def settle_member(
 
 
 # --------------------------------------------------------------------------- single order
+def _payment_row(
+    tenant_id: uuid.UUID,
+    channel_trade_no: str,
+    amount_minor: int,
+    currency: str,
+    raw: dict[str, str],
+    *,
+    order_id: uuid.UUID | None = None,
+    checkout_id: uuid.UUID | None = None,
+) -> Payment:
+    return Payment(
+        tenant_id=tenant_id,
+        order_id=order_id,
+        checkout_id=checkout_id,
+        channel=CHANNEL,
+        gateway_trade_no=channel_trade_no[:64],
+        amount_minor=amount_minor,
+        currency=currency,
+        raw=safe_params({k: v for k, v in raw.items() if k != "sign"}),
+    )
+
+
+async def _record_unrecorded_payment(
+    db: AsyncSession,
+    settings: Settings,
+    order: Order,
+    trade_no: str,
+    amount_minor: int,
+    raw: dict[str, str],
+    ip: str | None,
+    reason: str,
+) -> bool:
+    """F2: a verified notify must never leave money unrecorded. Record the Payment (and the
+    payment ledger lines when the amount is the order's) and leave the order as it is."""
+    db.add(
+        _payment_row(
+            order.tenant_id, trade_no, amount_minor, order.currency, raw, order_id=order.id
+        )
+    )
+    try:
+        await db.flush()
+    except IntegrityError:
+        await db.rollback()
+        return False
+    if amount_minor == order.amount_minor:
+        await post_payment_ledger(db, settings, order)
+    await audit(
+        db,
+        tenant_id=order.tenant_id,
+        action="payment.recorded_in_review",
+        actor_role="gateway",
+        target=f"order:{order.id}",
+        ip=ip,
+        detail={"reason": reason, "trade_no": trade_no[:64], "paid_minor": amount_minor},
+        severity="critical" if reason == "member_order_paid_directly" else "warning",
+    )
+    return True
+
+
 async def apply_order_payment(
     db: AsyncSession,
     settings: Settings,
@@ -309,12 +395,26 @@ async def apply_order_payment(
     ip: str | None,
 ) -> NotifyOutcome:
     """Locked transaction for a verified + re-queried payment of one order."""
+    amount_minor = exact_minor(paid_amount)
+    if amount_minor is None:
+        return await to_manual_review(db, order_id, "bad_amount", ip, {})
     order = await db.scalar(select(Order).where(Order.id == order_id).with_for_update())
     assert order is not None
-    amount_minor = int(paid_amount * 100)
 
     if order.status in PAID_STATES or order.status == "manual_review":
         existing = await payment_for_order(db, order)
+        if existing is None and order.status == "manual_review":
+            # reached manual review without a Payment (e.g. re-query mismatch): record it now
+            if order.checkout_id is None:
+                reason = "recorded_after_review"
+            else:
+                reason = "member_order_paid_directly"
+            ok = await _record_unrecorded_payment(
+                db, settings, order, trade_no, amount_minor, raw, ip, reason
+            )
+            if ok:
+                await db.commit()
+            return NotifyOutcome(SUCCESS, order)
         if existing is None or existing.gateway_trade_no != trade_no:
             await audit(
                 db,
@@ -353,33 +453,51 @@ async def apply_order_payment(
         await db.commit()
         return NotifyOutcome(SUCCESS, order)
     if order.checkout_id is not None:
-        # A member order is only ever paid through its checkout.
+        # A member order is only ever paid through its checkout: the money is real, so record
+        # the Payment, hold the order for review and raise a critical audit entry.
+        ok = await _record_unrecorded_payment(
+            db, settings, order, trade_no, amount_minor, raw, ip, "member_order_paid_directly"
+        )
+        if not ok:
+            return NotifyOutcome(SUCCESS)
+        before = snapshot(order)
+        prev = order.status
+        order.status = "manual_review"
+        order.version += 1
+        await add_event(
+            db, order, prev, "manual_review", actor_kind="gateway", reason="member_paid_directly"
+        )
         await audit(
             db,
             tenant_id=order.tenant_id,
-            action="payment.anomaly",
+            action="payment.manual_review",
             actor_role="gateway",
             target=f"order:{order.id}",
+            before=before,
+            after=snapshot(order),
             ip=ip,
             detail={"reason": "member_order_paid_directly", "trade_no": trade_no[:64]},
             severity="critical",
         )
+        msgs = [
+            await post_system(
+                db,
+                tenant_id=order.tenant_id,
+                conversation_id=order.conversation_id,
+                event="manual_review",
+                order_id=str(order.id),
+            )
+        ]
         await db.commit()
-        return NotifyOutcome(SUCCESS, order)
+        return NotifyOutcome(SUCCESS, order, msgs, [order])
     if amount_minor != order.amount_minor:  # price changed after the pay URL was issued
         return await to_manual_review(
             db, order.id, "amount_changed", ip, {"paid_minor": amount_minor}
         )
 
     db.add(
-        Payment(
-            tenant_id=order.tenant_id,
-            order_id=order.id,
-            channel=CHANNEL,
-            gateway_trade_no=trade_no[:64],
-            amount_minor=amount_minor,
-            currency=order.currency,
-            raw=safe_params({k: v for k, v in raw.items() if k != "sign"}),
+        _payment_row(
+            order.tenant_id, trade_no, amount_minor, order.currency, raw, order_id=order.id
         )
     )
     try:
@@ -388,7 +506,9 @@ async def apply_order_payment(
         # UNIQUE(channel, trade_no) / UNIQUE(order_id): someone else settled it first.
         await db.rollback()
         return NotifyOutcome(SUCCESS)
-    msgs = await settle_member(db, settings, order, late=late, trade_no=trade_no, ip=ip)
+    sold: dict[uuid.UUID, int] = {}
+    msgs = await settle_member(db, settings, order, late=late, trade_no=trade_no, ip=ip, sold=sold)
+    await apply_sold(db, sold)
     await db.commit()
     return NotifyOutcome(SUCCESS, order, msgs, [order])
 
@@ -408,12 +528,43 @@ async def apply_checkout_payment(
     Lock order: checkout FOR UPDATE, then member orders ORDER BY id FOR UPDATE. One Payment
     row (``checkout_id``); then the same per-order transition as a single payment.
     """
+    amount_minor = exact_minor(paid_amount)
+    if amount_minor is None:
+        return await checkout_to_manual_review(db, checkout_id, "bad_amount", ip, {})
     co, orders = await lock_checkout(db, checkout_id)
     first = orders[0] if orders else None
-    amount_minor = int(paid_amount * 100)
 
     if co.status in ("paid", "manual_review"):
         existing = await db.scalar(select(Payment).where(Payment.checkout_id == co.id))
+        if existing is None and co.status == "manual_review":
+            # reached manual review without a Payment (e.g. re-query mismatch): record it now
+            db.add(
+                _payment_row(
+                    co.tenant_id, trade_no, amount_minor, co.currency, raw, checkout_id=co.id
+                )
+            )
+            try:
+                await db.flush()
+            except IntegrityError:
+                await db.rollback()
+                return NotifyOutcome(SUCCESS)
+            if amount_minor == co.amount_minor == sum(o.amount_minor for o in orders):
+                for o in orders:
+                    await post_payment_ledger(db, settings, o)
+            co.paid_at = co.paid_at or datetime.now(timezone.utc)
+            co.channel = CHANNEL
+            await audit(
+                db,
+                tenant_id=co.tenant_id,
+                action="payment.recorded_in_review",
+                actor_role="gateway",
+                target=f"checkout:{co.id}",
+                ip=ip,
+                detail={"trade_no": trade_no[:64], "paid_minor": amount_minor},
+                severity="warning",
+            )
+            await db.commit()
+            return NotifyOutcome(SUCCESS, first, [], orders)
         if existing is None or existing.gateway_trade_no != trade_no:
             await audit(
                 db,
@@ -445,17 +596,7 @@ async def apply_checkout_payment(
     # If the checkout itself is expired/cancelled every member is late.
     co_late = co.status in ("expired", "cancelled")
 
-    db.add(
-        Payment(
-            tenant_id=co.tenant_id,
-            checkout_id=co.id,
-            channel=CHANNEL,
-            gateway_trade_no=trade_no[:64],
-            amount_minor=amount_minor,
-            currency=co.currency,
-            raw=safe_params({k: v for k, v in raw.items() if k != "sign"}),
-        )
-    )
+    db.add(_payment_row(co.tenant_id, trade_no, amount_minor, co.currency, raw, checkout_id=co.id))
     try:
         await db.flush()
     except IntegrityError:
@@ -487,6 +628,7 @@ async def apply_checkout_payment(
         return NotifyOutcome(SUCCESS, first, msgs, orders)
 
     co_before = {"status": co.status, "amount_minor": co.amount_minor}
+    sold: dict[uuid.UUID, int] = {}
     for o in orders:
         if o.status in ("pending_payment", "expired", "cancelled"):
             msgs += await settle_member(
@@ -496,6 +638,7 @@ async def apply_checkout_payment(
                 late=co_late or o.status in ("expired", "cancelled"),
                 trade_no=trade_no,
                 ip=ip,
+                sold=sold,
             )
         else:  # a member that is already settled/refunded cannot be paid again
             await audit(
@@ -508,6 +651,7 @@ async def apply_checkout_payment(
                 detail={"trade_no": trade_no[:64], "status": o.status},
                 severity="critical",
             )
+    await apply_sold(db, sold)
     co.status = "manual_review" if co_late else "paid"
     co.paid_at = datetime.now(timezone.utc)
     co.channel = CHANNEL

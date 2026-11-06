@@ -391,3 +391,15 @@ async def env(services: Services) -> AsyncIterator[Env]:
     await res.delivery.aclose()
     await res.http.aclose()
     await res.hub.stop()
+
+
+@pytest.fixture
+async def gw(env: Env):  # type: ignore[no-untyped-def]
+    """Server-to-server ZPay re-query stub keyed by out_trade_no (see tests.helpers.Gateway)."""
+    from tests.helpers import Gateway
+
+    stub = Gateway()
+    client = httpx.AsyncClient(transport=httpx.MockTransport(stub.handler))
+    env.res.zpay._http = client
+    yield stub
+    await client.aclose()

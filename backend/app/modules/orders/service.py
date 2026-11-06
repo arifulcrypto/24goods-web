@@ -243,7 +243,9 @@ def _parse_ref(ref: str) -> tuple[uuid.UUID | None, str | None]:
 
 async def get_owned(db: AsyncSession, ref: str, user: User, *, lock: bool = False) -> Order:
     oid, order_no = _parse_ref(ref)
-    stmt = select(Order).where(Order.id == oid if oid else Order.order_no == order_no)
+    stmt = select(Order).where(
+        Order.id == oid if oid else Order.order_no == order_no, Order.tenant_id == user.tenant_id
+    )
     if lock:
         stmt = stmt.with_for_update()
     order = await db.scalar(stmt)
@@ -316,7 +318,24 @@ async def pay_url(db: AsyncSession, res: Resources, ref: str, user: User, channe
         raise Unavailable("Payment channel not configured")
     permille = await check_channel(db, order.tenant_id, channel)
     if permille != order.fee_permille:
-        raise FeeChannelMismatch("The payment fee changed; please recreate the order")
+        if order.channel is not None:  # a pay URL is already out for the old amount
+            raise FeeChannelMismatch("The payment fee changed; please recreate the order")
+        # no URL issued yet (also covers pre-v4 pending orders): re-apply the current rate
+        before = snapshot(order)
+        fee, total = split_amount(order.subtotal_minor, permille)
+        order.fee_minor, order.fee_permille, order.amount_minor = fee, permille, total
+        order.version += 1
+        await audit(
+            db,
+            tenant_id=order.tenant_id,
+            action="order.fee_recomputed",
+            actor_id=user.id,
+            actor_role=user.role,
+            target=f"order:{order.id}",
+            before=before,
+            after=snapshot(order),
+            detail={"fee_permille": permille},
+        )
     order.channel = channel
     url = res.zpay.build_pay_url(order.order_no, order.title, to_decimal(order.amount_minor))
     await db.commit()

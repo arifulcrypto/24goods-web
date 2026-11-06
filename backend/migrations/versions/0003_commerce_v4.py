@@ -112,13 +112,21 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # Never delete money records. payments is FORCE-RLS, so a plain COUNT here would be
+    # filtered; SET NOT NULL checks every row regardless and fails if a checkout payment
+    # (order_id IS NULL) exists. DDL is transactional: the failure rolls everything back.
+    try:
+        op.execute("ALTER TABLE payments ALTER COLUMN order_id SET NOT NULL")
+    except Exception as exc:
+        raise RuntimeError(
+            "refusing to downgrade 0003: checkout payments exist (payments.order_id IS NULL); "
+            "reconcile or move them first"
+        ) from exc
     op.execute("ALTER TABLE products DROP COLUMN IF EXISTS description_html_i18n")
     op.execute("ALTER TABLE products DROP COLUMN IF EXISTS buyer_input")
     op.execute("ALTER TABLE payments DROP CONSTRAINT IF EXISTS ck_payments_target")
     op.execute("ALTER TABLE payments DROP CONSTRAINT IF EXISTS uq_payments_checkout_id")
-    op.execute("DELETE FROM payments WHERE order_id IS NULL")
     op.execute("ALTER TABLE payments DROP COLUMN IF EXISTS checkout_id")
-    op.execute("ALTER TABLE payments ALTER COLUMN order_id SET NOT NULL")
     op.execute("DROP TRIGGER IF EXISTS orders_subtotal_default ON orders")
     op.execute("DROP FUNCTION IF EXISTS orders_subtotal_default()")
     op.execute("ALTER TABLE orders DROP CONSTRAINT IF EXISTS ck_orders_amount_split")

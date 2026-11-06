@@ -5,8 +5,6 @@ from __future__ import annotations
 
 import json
 
-import httpx
-import pytest
 from sqlalchemy import text
 
 from app.core import globallimit
@@ -42,42 +40,6 @@ async def leaks(env, table: str, needle: str) -> int:
     """Rows of an audit-like table whose text form contains ``needle``."""
     q = f"SELECT count(*) FROM {table} t WHERE t::text LIKE :n"  # noqa: S608
     return await env.scalar(q, n=f"%{needle}%")
-
-
-class Gateway:
-    """Server-to-server re-query stub keyed by out_trade_no."""
-
-    def __init__(self) -> None:
-        self.paid: dict[str, tuple[str, str]] = {}  # out_trade_no -> (money, trade_no)
-        self.down = False
-        self.calls = 0
-
-    def handler(self, request: httpx.Request) -> httpx.Response:
-        self.calls += 1
-        if self.down:
-            raise httpx.ConnectError("boom", request=request)
-        no = request.url.params["out_trade_no"]
-        if no in self.paid:
-            money, trade = self.paid[no]
-            body = {
-                "code": "1",
-                "trade_no": trade,
-                "out_trade_no": no,
-                "money": money,
-                "status": "1",
-            }
-        else:
-            body = {"code": "1", "trade_no": "", "out_trade_no": no, "money": "0", "status": "0"}
-        return httpx.Response(200, text=json.dumps(body))
-
-
-@pytest.fixture
-async def gw(env):
-    stub = Gateway()
-    client = httpx.AsyncClient(transport=httpx.MockTransport(stub.handler))
-    env.res.zpay._http = client
-    yield stub
-    await client.aclose()
 
 
 async def checkout(client, items, **extra):

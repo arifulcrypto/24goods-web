@@ -140,6 +140,8 @@ async def anonymize(db: AsyncSession, user: User) -> tuple[dict[str, Any], list[
     user.status = "deleted"
     user.is_instant = False
     user.email_verified = False
+    # order information can hold session tokens: drop it with the account
+    await db.execute(update(Order).where(Order.buyer_id == user.id).values(buyer_input=None))
     await db.execute(
         update(AfterSales)
         .where(AfterSales.buyer_id == user.id, AfterSales.status.notin_(OPEN_TICKET_STATES))

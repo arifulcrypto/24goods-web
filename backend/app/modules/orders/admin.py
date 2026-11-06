@@ -27,8 +27,10 @@ from app.modules.payments.channels import split_amount
 from app.modules.payments.settle import payment_for_order
 
 
-async def lock_order(db: AsyncSession, order_id: uuid.UUID) -> Order:
-    order = await db.scalar(select(Order).where(Order.id == order_id).with_for_update())
+async def lock_order(db: AsyncSession, order_id: uuid.UUID, tenant_id: uuid.UUID) -> Order:
+    order = await db.scalar(
+        select(Order).where(Order.id == order_id, Order.tenant_id == tenant_id).with_for_update()
+    )
     if order is None:
         raise NotFound("Order not found")
     return order
@@ -41,7 +43,7 @@ async def change_price(
         new_minor = parse_amount(amount)
     except MoneyError as exc:
         raise Validation(f"amount: {exc}") from None
-    order = await lock_order(db, order_id)
+    order = await lock_order(db, order_id, agent.tenant_id)
     if order.status != "pending_payment":
         raise InvalidState("Price can only change while awaiting payment")
     if order.checkout_id is not None:
@@ -102,7 +104,7 @@ async def deliver_manual(
     agent: User,
     ip: str | None,
 ) -> tuple[Order, Message | None]:
-    order = await lock_order(db, order_id)
+    order = await lock_order(db, order_id, agent.tenant_id)
     if order.delivery_mode != "manual" or order.status != "paid":
         raise InvalidState("Only paid manual orders can be delivered")
     if attachment_id is not None:
@@ -188,9 +190,10 @@ async def list_orders(
     page: Page,
     status: str | None,
     q: str | None,
+    tenant_id: uuid.UUID,
     buyer_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
-    stmt = select(Order)
+    stmt = select(Order).where(Order.tenant_id == tenant_id)
     if buyer_id is not None:
         stmt = stmt.where(Order.buyer_id == buyer_id)
     if status:
@@ -203,7 +206,8 @@ async def list_orders(
                 func.lower(Order.title).like(like, escape="\\"),
                 Order.checkout_id.in_(
                     select(Checkout.id).where(
-                        func.lower(Checkout.checkout_no).like(like, escape="\\")
+                        Checkout.tenant_id == tenant_id,
+                        func.lower(Checkout.checkout_no).like(like, escape="\\"),
                     )
                 ),
                 User.email.like(like, escape="\\"),
@@ -220,8 +224,10 @@ async def list_orders(
     return page.wrap(await admin_views(db, rows), int(total))
 
 
-async def order_detail(db: AsyncSession, order_id: uuid.UUID) -> dict[str, Any]:
-    order = await db.get(Order, order_id)
+async def order_detail(
+    db: AsyncSession, order_id: uuid.UUID, tenant_id: uuid.UUID
+) -> dict[str, Any]:
+    order = await db.scalar(select(Order).where(Order.id == order_id, Order.tenant_id == tenant_id))
     if order is None:
         raise NotFound("Order not found")
     (view,) = await admin_views(db, [order])
@@ -231,7 +237,7 @@ async def order_detail(db: AsyncSession, order_id: uuid.UUID) -> dict[str, Any]:
         siblings = list(
             await db.scalars(
                 select(Order)
-                .where(Order.checkout_id == order.checkout_id)
+                .where(Order.checkout_id == order.checkout_id, Order.tenant_id == order.tenant_id)
                 .order_by(Order.created_at, Order.id)
             )
         )

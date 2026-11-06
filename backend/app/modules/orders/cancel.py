@@ -33,21 +33,32 @@ from app.payments.zpay import ZPayQueryError
 
 
 async def _load_group(
-    db: AsyncSession, order_id: uuid.UUID | None, checkout_id: uuid.UUID | None
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    order_id: uuid.UUID | None,
+    checkout_id: uuid.UUID | None,
 ) -> tuple[Checkout | None, list[Order]]:
     """Lock the payable: checkout FOR UPDATE then orders ORDER BY id FOR UPDATE."""
     if checkout_id is None:
         assert order_id is not None
-        checkout_id = await db.scalar(select(Order.checkout_id).where(Order.id == order_id))
+        checkout_id = await db.scalar(
+            select(Order.checkout_id).where(Order.id == order_id, Order.tenant_id == tenant_id)
+        )
         if checkout_id is None:
-            order = await db.scalar(select(Order).where(Order.id == order_id).with_for_update())
+            order = await db.scalar(
+                select(Order)
+                .where(Order.id == order_id, Order.tenant_id == tenant_id)
+                .with_for_update()
+            )
             if order is None:
                 raise NotFound("Order not found")
             return None, [order]
-    exists = await db.scalar(select(Checkout.id).where(Checkout.id == checkout_id))
+    exists = await db.scalar(
+        select(Checkout.id).where(Checkout.id == checkout_id, Checkout.tenant_id == tenant_id)
+    )
     if exists is None:
         raise NotFound("Checkout not found")
-    return await lock_checkout(db, checkout_id)
+    return await lock_checkout(db, checkout_id, tenant_id)
 
 
 def _status(co: Checkout | None, orders: list[Order]) -> str:
@@ -63,14 +74,22 @@ async def _settle_if_paid(
     amount_minor: int,
 ) -> NotifyOutcome | None:
     """Re-query the gateway (no row locks held). If it says paid, settle and return the
-    outcome; if it says unpaid, ``None``; if the query fails, 503."""
+    outcome; if it says unpaid / not found, ``None``; if the query fails or is malformed, 503."""
     try:
         q = await res.zpay.query_order(out_trade_no)
     except ZPayQueryError:
         raise Unavailable("Could not verify the payment status; please try again") from None
     if not (q.found and q.paid) or q.out_trade_no != out_trade_no:
         return None
-    paid: Decimal = q.money if q.money is not None else Decimal(amount_minor) / 100
+    # a "paid" answer we cannot trust field-by-field is never settled (and never cancelled over)
+    paid = q.money
+    if (
+        paid is None
+        or not paid.is_finite()
+        or paid != paid.quantize(Decimal("0.01"))
+        or not q.trade_no
+    ):
+        raise Unavailable("Could not verify the payment status; please try again")
     raw = {"out_trade_no": out_trade_no, "money": str(paid), "trade_no": q.trade_no}
     if checkout_id is not None:
         return await apply_checkout_payment(
@@ -91,13 +110,15 @@ async def cancel_group(
     reason: str | None,
     ip: str | None,
 ) -> tuple[Checkout | None, list[Order]]:
-    actor_id, actor_role = actor.id, actor.role  # a rollback below expires ORM instances
-    co, orders = await _load_group(db, order_id, checkout_id)
+    # a rollback below expires ORM instances: capture what is needed afterwards
+    actor_id, actor_role, tid = actor.id, actor.role, actor.tenant_id
+    co, orders = await _load_group(db, tid, order_id, checkout_id)
     if _status(co, orders) != "pending_payment":
         raise InvalidState("Only orders awaiting payment can be cancelled")
 
-    issued = co.channel if co is not None else orders[0].channel
-    if issued and res.settings.zpay_pid and res.settings.zpay_key:
+    # Query the gateway whenever it is configured (not only when a pay URL is known to have
+    # been issued): "not found / unpaid" means proceed, a paid answer settles instead.
+    if res.settings.zpay_pid and res.settings.zpay_key:
         no = co.checkout_no if co is not None else orders[0].order_no
         amount = co.amount_minor if co is not None else orders[0].amount_minor
         oid, cid = order_id, checkout_id
@@ -114,7 +135,7 @@ async def cancel_group(
                     [m for m in outcome.messages if m and m.conversation_id == o.conversation_id],
                 )
             raise AlreadyPaid("This order has already been paid")
-        co, orders = await _load_group(db, oid, cid)
+        co, orders = await _load_group(db, tid, oid, cid)
         st = _status(co, orders)
         if st in PAID_STATES or st == "manual_review":
             raise AlreadyPaid("This order has already been paid")
