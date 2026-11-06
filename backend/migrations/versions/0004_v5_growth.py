@@ -44,7 +44,8 @@ SCHEMA = [
     "CHECK (delivery_eta_hours IS NULL OR delivery_eta_hours BETWEEN 1 AND 720)",
     # import / middleman fields: staff-only, never in buyer responses
     "ALTER TABLE products ADD COLUMN source_url varchar(1000)",
-    "ALTER TABLE products ADD COLUMN cost_minor bigint CHECK (cost_minor IS NULL OR cost_minor >= 0)",
+    "ALTER TABLE products ADD COLUMN cost_minor bigint "
+    "CHECK (cost_minor IS NULL OR cost_minor >= 0)",
     "ALTER TABLE products ADD COLUMN archived_at timestamptz",
     # ---- encrypted tenant secrets (AES-256-GCM, key APP_SETTINGS_KEY, api only) ----
     f"""CREATE TABLE tenant_secrets (
