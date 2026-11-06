@@ -121,7 +121,10 @@ zh-CN brand = **客思维** (`brand.ts` nameZh; `brandName('zh-CN')` = "客思�
 - Order emails (outbox topic `email.order`, sent by the api jobs loop, best effort, never inside
   the payment transaction): paid (with order link + lookup hint) and delivered (link only —
   **never card secrets**). Only to real (non-instant) verified emails.
-- `POST /admin/site/email/test` `{to}` → sends a test, returns `{ok, error?}` (error message
+- Email templates (owner request, sub2api-style): settings `email_templates.{verify_code,
+  password_reset,order_paid,order_delivered} = {subject_i18n, body_i18n}`, placeholders
+  `{site_name} {code} {minutes} {order_no} {order_url} {title} {amount}`, defaults built in.
+- `POST /admin/site/email/test` `{to, template?}` → sends a test, returns `{ok, error?}` (error message
   sanitized).
 
 ### 5.3 Google sign-in
@@ -215,6 +218,12 @@ settings (name, logo, welcome, default markup, payout account).
 **Admin**: Resellers page (list/filter, detail drawer with stats, activate/suspend, edit markup
 limits per reseller), Payouts queue (mark paid with note / reject). Orders list gets a
 "Store" column/filter.
+
+**White-label.** On a storefront the platform brand never shows (store name/logo replace it;
+`/site.storefront.white_label = true`). Owner concern: buyers can strip the subdomain and land on
+the main store → v5.1 adds **reseller custom domains** via Cloudflare for SaaS (custom hostnames,
+free up to 100 on the Free plan; CNAME to a fallback origin) and optionally a neutral
+white-label base domain whose apex is not the main store (`resellers.base_domain`).
 
 **Subdomains in production** ⚠ (done at deploy, not in dev): proxied wildcard `A *.kesiv.com →
 c4`; config/origin rules extended from `shop.kesiv.com` to `(http.host wildcard "*.kesiv.com"
@@ -331,6 +340,12 @@ Admin
 - `GET /admin/audit` + `action, actor, target, severity, since, until`; `GET /admin/audit.csv`.
 - `GET /admin/orders` + `reseller_id`, `overdue_manual=true` filters; order admin view + `kind,
   discount_minor, promo_code, reseller{slug, store_name}, reseller_markup_minor, cost_minor`.
+
+## 12b. Environments
+Demo is also served at **https://demo.kesiv.com** (Cloudflare proxied, Flexible SSL, origin rule →
+107.173.10.79:18888; host Caddy untouched). `APP_PUBLIC_BASE_URL=https://demo.kesiv.com`.
+Caddy trusts CF-Connecting-IP only from Cloudflare ranges; CSP allows
+`https://challenges.cloudflare.com` for script/frame (Turnstile, ADR-022).
 
 ## 13. Out of scope / later
 Reseller open API + balance wallet, upstream API delivery (sub2api), reseller custom domains,
