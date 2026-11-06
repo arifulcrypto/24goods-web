@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Microphone, Picture, Promotion } from '@element-plus/icons-vue'
+import { Goods, Microphone, Picture, Promotion } from '@element-plus/icons-vue'
 import {
   IMAGE_MAX_BYTES,
   VoiceError,
@@ -13,15 +13,19 @@ import {
   voiceExtension,
 } from '@24goods/shared'
 
+import ProductPickerDialog from './ProductPickerDialog.vue'
+
 defineProps<{ disabled?: boolean }>()
 const emit = defineEmits<{
   sendText: [text: string]
   sendImage: [blob: Blob, meta: { width?: number; height?: number; filename: string }]
   sendVoice: [blob: Blob, durationMs: number, filename: string]
+  sendProduct: [productId: string]
 }>()
 const { t } = useI18n()
 const text = ref('')
 const fileInput = ref<HTMLInputElement | null>(null)
+const pickerOpen = ref(false)
 const recording = ref(false)
 const elapsed = ref(0)
 let recorder: VoiceRecorder | null = null
@@ -152,6 +156,7 @@ onBeforeUnmount(() => recorder?.cancel())
         <el-tooltip :content="t('chat.voice.record')">
           <el-button text circle :icon="Microphone" :disabled="disabled" :aria-label="t('chat.voice.record')" @click="startVoice" />
         </el-tooltip>
+        <el-button text :icon="Goods" :disabled="disabled" @click="pickerOpen = true">{{ t('inbox.product_btn') }}</el-button>
         <input ref="fileInput" type="file" accept="image/jpeg,image/png,image/webp,image/gif" hidden @change="onFile" />
       </div>
       <div class="input-row">
@@ -169,6 +174,7 @@ onBeforeUnmount(() => recorder?.cancel())
         <el-button type="primary" :icon="Promotion" :disabled="disabled || !text.trim()" @click="send">{{ t('common.send') }}</el-button>
       </div>
     </template>
+    <ProductPickerDialog v-model="pickerOpen" @pick="(id) => ((pickerOpen = false), emit('sendProduct', id))" />
   </div>
 </template>
 
