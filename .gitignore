@@ -35,3 +35,6 @@ node_modules/
 deploy/.env
 deploy/secrets/
 deploy/env/
+
+# Local dev stack (scripts/dev.sh): keys, env, logs, uploads
+.dev/

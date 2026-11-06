@@ -386,6 +386,9 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--base", required=True)
     ap.add_argument("--seed-env", required=True)
+    ap.add_argument(
+        "--dev", action="store_true", help="Vite dev server (scripts/dev.sh): skip Caddy edge headers"
+    )
     a = ap.parse_args()
     env = read_env(a.seed_env)
     base = a.base.rstrip("/")
@@ -394,11 +397,14 @@ def main() -> None:
     anon = Client(base)
     home = anon.req("GET", "/")
     check('<div id="app"' in home.text or "<div id=app" in home.text, "buyer SPA not served")
-    check("Content-Security-Policy" in home.headers, "missing CSP on SPA")
-    check(home.headers.get("X-Content-Type-Options") == "nosniff", "missing nosniff")
-    check("Server" not in home.headers, "Server header should be stripped")
-    check("/admin/" in anon.req("GET", "/admin/").text or True, "admin SPA")
-    step("SPAs served by Caddy with security headers")
+    if a.dev:
+        step("buyer SPA served by Vite (dev mode: edge headers not checked)")
+    else:
+        check("Content-Security-Policy" in home.headers, "missing CSP on SPA")
+        check(home.headers.get("X-Content-Type-Options") == "nosniff", "missing nosniff")
+        check("Server" not in home.headers, "Server header should be stripped")
+        check("/admin/" in anon.req("GET", "/admin/").text or True, "admin SPA")
+        step("SPAs served by Caddy with security headers")
 
     # ---- CSRF + RBAC -----------------------------------------------------------
     raw = httpx.post(f"{base}{API}/auth/login", json={"email": "x@y.z", "password": "x" * 12})
