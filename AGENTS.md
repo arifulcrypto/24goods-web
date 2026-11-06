@@ -44,6 +44,8 @@ docs/               analysis, review-v2 (current decisions), architecture, api-c
 
 ## 3. Validation commands (run before every commit)
 
+Shortcut on a dev machine: `scripts/dev.sh test` (ruff + pytest against the dev containers + frontend lint/typecheck/test). Dev stack: [`docs/dev-setup.md`](docs/dev-setup.md).
+
 ```bash
 # backend — needs PG + Redis (throwaway containers are fine)
 cd backend && pip install -e '.[dev]'

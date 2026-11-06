@@ -80,6 +80,12 @@ Update this file in every PR. Phases are defined in [review-v2.md §8](review-v2
   - `APP_LOOKUP_KEY` is required in prod;
   - `test_message_rate_limit` is now deterministic (clock pinned).
 
+### 2026-11-06: local dev environment
+- `scripts/dev.sh` runs the whole stack in one command: Python 3.12 venv via uv, dev PG + Redis containers, migrate + seed, then API, delivery and mockpay with reload, and both Vite apps.
+- Everything binds to 127.0.0.1. You open it through an SSH tunnel, see `docs/dev-setup.md`.
+- `scripts/dev.sh test` is a shortcut for the backend checks plus the frontend lint, typecheck and tests.
+- `e2e/smoke.py --dev` runs the full E2E against the dev stack; it passes.
+
 ## Next
 
 ### v3 follow-up

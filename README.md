@@ -51,6 +51,8 @@
 
 ## Quick start
 
+**Development (hot reload, mock data):** `scripts/dev.sh setup && scripts/dev.sh up` — see [docs/dev-setup.md](docs/dev-setup.md) (SSH tunnel to open it from your PC).
+
 ```bash
 # whole stack with mock data (needs Docker; ~600 MB RAM)
 PUBLIC_BASE_URL=http://127.0.0.1:8080 PUBLISH_HTTP=8080 \

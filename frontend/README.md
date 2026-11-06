@@ -24,7 +24,8 @@ Run these from `frontend/`:
 ```bash
 pnpm install --frozen-lockfile
 
-pnpm dev:web          # http://localhost:5173/        (proxies /api and /mockpay → 127.0.0.1:18000)
+pnpm dev:web          # http://localhost:5173/        (proxies /api → 127.0.0.1:18000, /mockpay → $VITE_MOCKPAY or the same)
+# full stack with backend + DB: ../scripts/dev.sh up  (docs/dev-setup.md)
 pnpm dev:admin        # http://localhost:5174/admin/  (same proxy)
 VITE_BACKEND=http://127.0.0.1:9000 pnpm dev:web   # point the proxy at another backend
 

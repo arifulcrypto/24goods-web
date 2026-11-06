@@ -28,7 +28,7 @@ export default defineConfig({
     strictPort: true,
     proxy: {
       '/api': { target: BACKEND, changeOrigin: false },
-      '/mockpay': { target: BACKEND, changeOrigin: false },
+      '/mockpay': { target: process.env.VITE_MOCKPAY ?? BACKEND, changeOrigin: false },
     },
   },
   preview: { port: 4173 },
