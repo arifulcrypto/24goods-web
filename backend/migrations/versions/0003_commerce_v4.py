@@ -65,8 +65,13 @@ SCHEMA = [
     "ALTER TABLE products ADD COLUMN description_html_i18n jsonb NOT NULL DEFAULT '{}'::jsonb",
 ]
 
+# orders is FORCE ROW LEVEL SECURITY: even the owner sees no rows without a pinned tenant,
+# so the backfill would silently update nothing. Lift FORCE for the backfill only (the owner
+# then bypasses RLS) and restore it in the same transaction.
 BACKFILL = [
+    "ALTER TABLE orders NO FORCE ROW LEVEL SECURITY",
     "UPDATE orders SET subtotal_minor = amount_minor WHERE subtotal_minor IS NULL",
+    "ALTER TABLE orders FORCE ROW LEVEL SECURITY",
 ]
 
 POST = [

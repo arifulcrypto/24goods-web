@@ -96,8 +96,9 @@ def wait_status(c: Client, order_id: str, want: set[str], timeout: float = 30) -
     raise AssertionError  # unreachable
 
 
-def pay_with_simulator(c: Client, order_id: str) -> None:
-    pay_url = c.j("POST", f"orders/{order_id}/pay", json={"channel": "zpay_alipay"})["pay_url"]
+def pay_with_simulator(c: Client, order_id: str, path: str | None = None) -> None:
+    path = path or f"orders/{order_id}/pay"
+    pay_url = c.j("POST", path, json={"channel": "zpay_alipay"})["pay_url"]
     check(pay_url.startswith("/mockpay/submit.php?"), f"unexpected pay_url {pay_url[:60]}")
     check("key=" not in pay_url, "merchant key must never appear in pay_url")
     page = c.req("GET", pay_url)
@@ -112,6 +113,81 @@ def pay_with_simulator(c: Client, order_id: str) -> None:
         data={"out_trade_no": out_trade_no.group(1), "nonce": nonce.group(1), "action": "pay"},
     )
     check("/api/v1/pay/return/zpay" in r.headers.get("location", ""), "no redirect to return_url")
+
+
+def v4_commerce(base: str, anon: Client, buyer: Client, agent: Client, admin: Client,
+                auto: dict, manual: dict, conv: dict) -> None:
+    """review-v4: channel fee, cart quote + checkout (one payment), cancel, product card, limiter."""
+    chans = anon.j("GET", "site/payment-channels")
+    ali = next((c for c in chans if c["id"] == "zpay_alipay"), None)
+    check(ali and ali["permille"] >= 0, f"payment channels missing zpay_alipay: {chans!r}")
+    permille = int(ali["permille"])
+
+    items = [{"product_id": auto["id"], "qty": 1}, {"product_id": manual["id"], "qty": 1}]
+    q = anon.j("POST", "cart/quote", json={"items": items})
+    check(len(q["lines"]) == 2 and all(ln["available"] for ln in q["lines"]), f"cart quote: {q!r}")
+    check(Decimal(q["total"]) == Decimal(q["subtotal"]) + Decimal(q["fee"]), "quote total != sub+fee")
+    step(f"cart quote: subtotal {q['subtotal']} + fee {q['fee']} ({ali['fee_rate']}) = {q['total']}")
+
+    co = buyer.j("POST", "checkout", json={"items": items})
+    ck, orders = co["checkout"], co["orders"]
+    check(len(orders) == 2 and set(co["access_codes"]) == {o["order_no"] for o in orders},
+          "checkout must create one order + access code per line")
+    check(Decimal(ck["amount"]) == sum(Decimal(o["amount"]) for o in orders),
+          "checkout amount must equal the sum of its orders")
+    for o in orders:
+        sub = int(Decimal(o["subtotal"]) * 100)
+        want_fee = (sub * permille + 999) // 1000
+        check(int(Decimal(o["fee"]) * 100) == want_fee, f"fee must be ceil(subtotal*rate): {o!r}")
+    r = buyer.req("POST", f"orders/{orders[0]['id']}/pay", json={"channel": "zpay_alipay"},
+                  expect=(409,))
+    check("pay_via_checkout" in r.text, "member order must be paid via its checkout")
+    pay_with_simulator(buyer, orders[0]["id"], path=f"checkouts/{ck['checkout_no']}/pay")
+    by_mode = {o["delivery_mode"]: o for o in orders}
+    wait_status(buyer, by_mode["auto_card"]["id"], {"delivered"})
+    wait_status(buyer, by_mode["manual"]["id"], {"paid"})
+    check(buyer.j("GET", f"checkouts/{ck['checkout_no']}")["status"] == "paid", "checkout not paid")
+    step(f"checkout {ck['checkout_no']}: 2 orders paid in one payment ({ck['amount']})")
+
+    # buyer cancels an unpaid order; staff closes another with a reason
+    o1 = buyer.j("POST", "orders", json={"product_id": manual["id"], "qty": 1})
+    c1 = buyer.j("POST", f"orders/{o1['id']}/cancel", json={"reason": "changed my mind"})
+    check(c1["status"] == "cancelled", "buyer cancel must cancel a pending order")
+    buyer.req("POST", f"orders/{o1['id']}/pay", json={"channel": "zpay_alipay"}, expect=(409,))
+    o2 = buyer.j("POST", "orders", json={"product_id": manual["id"], "qty": 1})
+    c2 = agent.j("POST", f"admin/orders/{o2['id']}/cancel", json={"reason": "duplicate order"})
+    check(c2["status"] == "cancelled", "staff close must cancel a pending order")
+    step("buyer cancel + staff close of pending orders")
+
+    # staff pushes a product card (payload built by the server)
+    m = agent.j("POST", f"admin/conversations/{conv['id']}/messages",
+                json={"client_msg_id": str(uuid.uuid4()), "type": "product_card",
+                      "product_id": manual["id"]})
+    m = m.get("message", m)
+    check(m["type"] == "product_card" and m["payload"]["product_id"] == manual["id"],
+          f"staff product card: {m!r}")
+    step("staff sent a product card")
+
+    # global access-frequency limiter: off by default, admin can switch it on
+    admin.j("PUT", "admin/site", json={"rate_limit": {"enabled": True, "limit": 10, "window_s": 60}})
+    try:
+        hit = None
+        deadline = time.monotonic() + 15  # config is cached in-process for a few seconds
+        while hit is None and time.monotonic() < deadline:
+            r = anon.h.get(f"{base}{API}/site")
+            if r.status_code == 429:
+                hit = r
+            else:
+                time.sleep(0.2)
+        check(hit is not None, "global limiter must answer 429 once enabled")
+        check(hit.json() == {"code": 429, "msg": "Access is too frequent. Please try again later."},
+              f"429 body must match exactly: {hit.text!r}")
+    finally:
+        admin.j("PUT", "admin/site", json={"rate_limit": {"enabled": False, "limit": 120,
+                                                          "window_s": 60}})
+    time.sleep(7)  # let the cached "enabled" expire and the window roll
+    anon.j("GET", "site")
+    step("global limiter: exact 429 body when enabled, off again")
 
 
 def v3_public(anon: Client, auto: dict, multi: dict, manual: dict) -> None:
@@ -459,8 +535,10 @@ def main() -> None:
                 json={"title": auto["title"], "amount": f"{quote_amount}", "qty": 2,
                       "note": "bundle price", "product_id": auto["id"], "expires_in_minutes": 30})
     order = buyer.j("POST", f"quotes/{q['quote_id']}/accept")
-    check(order["status"] == "pending_payment" and Decimal(order["amount"]) == quote_amount,
-          "quote accept must create a pending order at the quoted amount")
+    check(order["status"] == "pending_payment" and Decimal(order["subtotal"]) == quote_amount,
+          "quote accept must create a pending order at the quoted amount (subtotal; v4 fee on top)")
+    check(Decimal(order["amount"]) == Decimal(order["subtotal"]) + Decimal(order["fee"]),
+          "order amount must be subtotal + channel fee")
     buyer.req("POST", f"quotes/{q['quote_id']}/accept", expect=(409, 422))
     step(f"quote {quote_amount} accepted -> order {order['order_no']} (double-accept rejected)")
 
@@ -473,7 +551,7 @@ def main() -> None:
     new_amount = max(floor, quote_amount - Decimal("0.50")).quantize(Decimal("0.01"))
     changed = agent.j("PATCH", f"admin/orders/{order['id']}/price",
                       json={"amount": f"{new_amount}", "reason": "loyal customer"})
-    check(changed["version"] == order["version"] + 1 and Decimal(changed["amount"]) == new_amount,
+    check(changed["version"] == order["version"] + 1 and Decimal(changed["subtotal"]) == new_amount,
           "price change must bump version")
     step(f"agent changed price {quote_amount} -> {new_amount} (floor {floor} enforced)")
 
@@ -522,6 +600,7 @@ def main() -> None:
     v3_instant_and_after_sales(base, buyer, agent, admin, auto, multi, details[multi["id"]])
     v3_cards(agent, admin, multi)
     v3_file_message(buyer, agent, conv)
+    v4_commerce(base, anon, buyer, agent, admin, auto, manual, conv)
 
     # ---- ledger balance -------------------------------------------------------------
     rows, page = [], 1
