@@ -2,7 +2,7 @@
 import { onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Plus, Search } from '@element-plus/icons-vue'
-import { formatDateTime, formatMoney, type Category, type ProductStatus } from '@24goods/shared'
+import { copyText, formatDateTime, formatMoney, type Category, type ProductStatus } from '@24goods/shared'
 import { ProductThumb } from '@24goods/shared/ui'
 import { api, apiV3 } from '../api'
 import type { AdminProductV3 as AdminProduct } from '../api-v3'
@@ -41,6 +41,10 @@ onMounted(async () => {
 const catName = (key: string) => categories.value.find((c) => c.key === key)?.name ?? key
 const titleOf = (p: AdminProduct) => (locale.value === 'zh-CN' && p.title_i18n['zh-CN']) || p.title_i18n.en
 
+async function copyLink(p: AdminProduct) {
+  if (await copyText(`${location.origin}/buy/${p.id}`)) toastOk(t('products.linkCopied'))
+  else toastError(new Error('copy'))
+}
 function openNew() {
   editing.value = null
   dialog.value = true
@@ -116,10 +120,13 @@ async function unpublish(p: AdminProduct) {
         <el-table-column :label="t('products.col.created')" width="160">
           <template #default="{ row }">{{ formatDateTime(row.created_at, locale) }}</template>
         </el-table-column>
-        <el-table-column v-if="auth.isAdmin" :label="t('common.actions')" width="160" fixed="right">
+        <el-table-column :label="t('common.actions')" width="230" fixed="right">
           <template #default="{ row }">
+            <el-button link type="primary" @click="copyLink(row as AdminProduct)">{{ t('products.copyLink') }}</el-button>
+            <template v-if="auth.isAdmin">
             <el-button link type="primary" @click="openEdit(row as AdminProduct)">{{ t('common.edit') }}</el-button>
             <el-button v-if="row.status === 'active'" link type="danger" @click="unpublish(row as AdminProduct)">{{ t('products.toDraft') }}</el-button>
+            </template>
           </template>
         </el-table-column>
       </el-table>

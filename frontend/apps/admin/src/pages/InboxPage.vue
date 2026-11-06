@@ -12,7 +12,7 @@ import {
   type QuoteCardPayload,
 } from '@24goods/shared'
 import { ChatMessageList, useConversation } from '@24goods/shared/chat'
-import { api } from '../api'
+import { api, apiV4 } from '../api'
 import InboxSidePanel from '../components/InboxSidePanel.vue'
 import OrderDrawer from '../components/OrderDrawer.vue'
 import StaffComposer from '../components/StaffComposer.vue'
@@ -203,6 +203,18 @@ async function closeConv() {
 function sent() {
   void msgList.value?.scrollToBottom(true)
 }
+async function sendProduct(productId: string) {
+  const id = chat.conversationId.value
+  if (!id) return
+  try {
+    await apiV4.conversations.sendProductCard(id, productId)
+    toastOk(t('inbox.pickSent'))
+    await chat.catchUp()
+    sent()
+  } catch (e) {
+    toastError(e)
+  }
+}
 function onQuoteSent() {
   void chat.catchUp().then(() => sent())
 }
@@ -338,6 +350,7 @@ function openProduct(id: string) {
           @send-text="(v) => (chat.sendText(v), sent())"
           @send-image="(b, m) => (chat.sendImage(b, m), sent())"
           @send-voice="(b, d, f) => (chat.sendVoice(b, d, f), sent())"
+          @send-product="sendProduct"
         />
       </template>
       <el-empty v-else :description="t('inbox.select')" class="placeholder" />

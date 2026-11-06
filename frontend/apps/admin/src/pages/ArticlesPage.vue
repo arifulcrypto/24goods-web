@@ -5,6 +5,7 @@ import { Plus, Search } from '@element-plus/icons-vue'
 import { formatDateTime } from '@24goods/shared'
 import { apiV3 } from '../api'
 import type { AdminArticle, ArticleKind, ArticleStatus } from '../api-v3'
+import MarkdownEditor from '../components/MarkdownEditor.vue'
 import { usePaged } from '../composables/usePaged'
 import { FIXED_SLUGS, isValidSlug, slugify } from '../lib/content'
 import { confirmBox, toastError, toastOk } from '../ui'
@@ -166,7 +167,7 @@ async function remove(a: AdminArticle) {
               <el-input v-model="form.title_en" maxlength="150" show-word-limit @input="onTitle" />
             </el-form-item>
             <el-form-item :label="t('articles.body')" :error="errors.body" required>
-              <el-input v-model="form.body_en" type="textarea" :rows="12" maxlength="50000" class="mono" />
+              <MarkdownEditor v-model="form.body_en" :rows="12" :maxlength="50000" />
             </el-form-item>
           </el-tab-pane>
           <el-tab-pane :label="t('products.form.tabZh')" name="zh-CN">
@@ -174,7 +175,7 @@ async function remove(a: AdminArticle) {
               <el-input v-model="form.title_zh" maxlength="150" show-word-limit />
             </el-form-item>
             <el-form-item :label="t('articles.body')">
-              <el-input v-model="form.body_zh" type="textarea" :rows="12" maxlength="50000" class="mono" />
+              <MarkdownEditor v-model="form.body_zh" :rows="12" :maxlength="50000" />
             </el-form-item>
           </el-tab-pane>
         </el-tabs>
