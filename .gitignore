@@ -38,3 +38,6 @@ deploy/env/
 
 # Local dev stack (scripts/dev.sh): keys, env, logs, uploads
 .dev/
+deploy/certs/origin.pem
+deploy/certs/origin.key
+!deploy/certs/cf-origin-pull-ca.pem
