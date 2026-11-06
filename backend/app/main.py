@@ -24,6 +24,7 @@ from app.core.middleware import (
 )
 from app.core.resources import Resources, build_resources
 from app.modules import jobs
+from app.modules.admin.importer import router as admin_import_router
 from app.modules.admin.router import router as admin_router
 from app.modules.admin.v3 import router as admin_v3_router
 from app.modules.aftersales.router import router as aftersales_router
@@ -99,6 +100,7 @@ def api_router() -> APIRouter:
         realtime_router,
         admin_router,
         admin_v3_router,
+        admin_import_router,
     ):
         r.include_router(sub)
     return r
