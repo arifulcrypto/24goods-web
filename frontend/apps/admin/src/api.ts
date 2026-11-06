@@ -1,5 +1,5 @@
-import { ApiClient, createAdminApi, type ApiError } from '@24goods/shared'
-import { currentLocale } from './i18n'
+import { ApiClient, createAdminApi, createRateLimitNotifier, type ApiError } from '@24goods/shared'
+import { currentLocale, i18n } from './i18n'
 import { createAdminV3Api } from './api-v3'
 import { createAdminV4Api } from './api-v4'
 
@@ -13,6 +13,9 @@ export const client = new ApiClient({
   baseUrl: '/api/v1',
   getLocale: () => currentLocale(),
   onUnauthorized: (e) => onUnauthorized(e),
+  onRateLimited: createRateLimitNotifier(() =>
+    ElMessage.error({ message: i18n.global.t('errors.too_frequent'), grouping: true }),
+  ),
 })
 export const api = createAdminApi(client)
 /** review-v3 §12 admin endpoints (api-v3.ts). */
