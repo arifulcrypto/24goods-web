@@ -20,7 +20,24 @@ export interface ApiClientOptions {
   getLocale?: () => string
   /** Called on any 401 unless the request opted out. */
   onUnauthorized?: (err: ApiError) => void
+  /**
+   * v4: called on the global access-frequency 429 (`{"code":429,"msg":...}`), so each app can show
+   * its own toast ("Access is too frequent. Please try again later."). May fire often: debounce in the app
+   * (see `createRateLimitNotifier`).
+   */
+  onRateLimited?: (err: ApiError) => void
   fetchImpl?: typeof fetch
+}
+
+/** Wraps a toast function into a debounced `onRateLimited` handler (default: once per 3 s). */
+export function createRateLimitNotifier(show: () => void, minIntervalMs = 3000): (err: ApiError) => void {
+  let last = 0
+  return () => {
+    const now = Date.now()
+    if (now - last < minIntervalMs) return
+    last = now
+    show()
+  }
 }
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
@@ -94,6 +111,7 @@ export class ApiClient {
     if (!res.ok) {
       const err = errorFromBody(res.status, parsed)
       if (res.status === 401 && !o.skipAuthHandler) this.opts.onUnauthorized?.(err)
+      if (err.code === 'too_frequent') this.opts.onRateLimited?.(err)
       throw err
     }
     if (typeof parsed === 'string') {

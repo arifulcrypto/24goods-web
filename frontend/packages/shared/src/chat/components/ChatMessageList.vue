@@ -15,11 +15,15 @@ const props = defineProps<{
   loadingOlder?: boolean
   hasMore?: boolean
   busyQuoteId?: string | null
+  /** Show a "View order" button next to order-number chips (buyer app). */
+  viewOrder?: boolean
 }>()
 const emit = defineEmits<{
   reachTop: []
   preview: [url: string]
   openProduct: [id: string]
+  buyProduct: [id: string]
+  openOrderNo: [orderNo: string]
   openOrder: [id: string]
   acceptQuote: [q: QuoteCardPayload]
   withdrawQuote: [q: QuoteCardPayload]
@@ -106,9 +110,12 @@ defineExpose({ scrollToBottom, isNearBottom, preserveScroll, el: scroller })
         :item="it"
         :mode="mode"
         :busy-quote-id="busyQuoteId"
+        :view-order="viewOrder"
         @preview="emit('preview', $event)"
         @open-file="openFile"
         @open-product="emit('openProduct', $event)"
+        @buy-product="emit('buyProduct', $event)"
+        @open-order-no="emit('openOrderNo', $event)"
         @open-order="emit('openOrder', $event)"
         @accept-quote="emit('acceptQuote', $event)"
         @withdraw-quote="emit('withdrawQuote', $event)"

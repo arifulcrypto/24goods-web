@@ -10,12 +10,15 @@ import VoiceBubble from './VoiceBubble.vue'
 import QuoteCardView from './QuoteCardView.vue'
 import OrderCardView from './OrderCardView.vue'
 import ProductCardView from './ProductCardView.vue'
+import SmartText from './SmartText.vue'
 
-const props = defineProps<{ item: ChatItem; mode: 'buyer' | 'staff'; busyQuoteId?: string | null }>()
+const props = defineProps<{ item: ChatItem; mode: 'buyer' | 'staff'; busyQuoteId?: string | null; viewOrder?: boolean }>()
 const emit = defineEmits<{
   preview: [url: string]
   openFile: [f: { url: string; name: string }]
   openProduct: [id: string]
+  buyProduct: [id: string]
+  openOrderNo: [orderNo: string]
   openOrder: [id: string]
   acceptQuote: [q: QuoteCardPayload]
   withdrawQuote: [q: QuoteCardPayload]
@@ -139,7 +142,9 @@ const systemText = computed(() => {
 
         <div v-if="redacted" class="gc-bubble gc-redacted" :class="{ self }">{{ t('chat.redacted') }}</div>
 
-        <div v-else-if="view.type === 'text'" class="gc-bubble" :class="{ self }">{{ view.text }}</div>
+        <div v-else-if="view.type === 'text'" class="gc-bubble" :class="{ self }">
+          <SmartText :text="view.text" :view-order="viewOrder" @open-order-no="emit('openOrderNo', $event)" />
+        </div>
 
         <button
           v-else-if="view.type === 'image'"
@@ -172,7 +177,9 @@ const systemText = computed(() => {
         <ProductCardView
           v-else-if="view.type === 'product_card' && view.payload"
           :product="view.payload as ProductCardPayload"
+          :actions="mode === 'buyer'"
           @open="emit('openProduct', $event)"
+          @buy="emit('buyProduct', $event)"
         />
         <QuoteCardView
           v-else-if="view.type === 'quote_card' && view.payload"

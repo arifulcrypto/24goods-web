@@ -46,6 +46,20 @@ export interface Product extends ProductSummary {
   redeem_url?: string | null
   /** v3: server-sanitized HTML (markdown → nh3). Only *_html fields may be rendered as HTML. */
   usage_html?: string | null
+  /** v4: server-rendered, sanitized HTML of the markdown description (render with SafeHtml). */
+  description_html?: string | null
+  /** v4: public order-information popup config, resolved to the request locale. */
+  buyer_input?: BuyerInputConfig | null
+}
+/** v4 (§4): public config of the order-information popup. */
+export interface BuyerInputConfig {
+  enabled: boolean
+  required: boolean
+  multiline: boolean
+  max_len: number
+  title: string
+  prompt: string
+  placeholder: string
 }
 export type I18nText = Record<Locale, string>
 export interface AdminProduct extends Omit<Product, 'title' | 'description'> {
@@ -65,6 +79,17 @@ export interface AdminProductInput {
   category: string
   status: ProductStatus
   images?: string[]
+  /** v4: i18n form of the order-information popup config. */
+  buyer_input?: BuyerInputAdmin | null
+}
+export interface BuyerInputAdmin {
+  enabled: boolean
+  required: boolean
+  multiline: boolean
+  max_len: number
+  title_i18n: Partial<I18nText>
+  prompt_i18n: Partial<I18nText>
+  placeholder_i18n: Partial<I18nText>
 }
 
 export interface Attachment {
@@ -193,6 +218,67 @@ export interface Order {
   after_sales?: AfterSales | null
   delivery_info?: DeliveryInfo | null
   source?: string | null
+  // ---- v4 (review-v4 §12) ----
+  /** Money before the channel fee (same format as `amount`). Absent on pre-v4 payloads. */
+  subtotal?: string
+  fee?: string
+  /** e.g. "3%" */
+  fee_rate?: string
+  /** Set on member orders of a combined checkout. */
+  checkout_no?: string | null
+  /** Owner/staff only. Never logged. */
+  buyer_input?: string | null
+  cancel_reason?: string | null
+}
+
+export type CheckoutStatus = 'pending_payment' | 'paid' | 'cancelled' | 'expired' | 'manual_review'
+export interface CheckoutView {
+  checkout_no: string
+  status: CheckoutStatus
+  amount: string
+  currency: string
+  expires_at: string | null
+  order_nos: string[]
+  subtotal: string
+  fee: string
+}
+export interface CheckoutLineInput {
+  product_id: string
+  qty: number
+  buyer_input?: string
+}
+export interface CheckoutResult {
+  checkout: CheckoutView
+  orders: Order[]
+  /** Returned once, keyed by order_no. */
+  access_codes: Record<string, string>
+}
+export interface PaymentChannel {
+  id: string
+  label: string
+  fee_rate: string
+  permille: number
+}
+export interface CartQuoteLine {
+  product_id: string
+  title: string
+  cover: string | null
+  unit_price: string
+  currency: string
+  stock: number | null
+  available: boolean
+  max_qty: number
+  needs_input: boolean
+  qty: number
+  line_subtotal: string
+}
+export interface CartQuote {
+  lines: CartQuoteLine[]
+  subtotal: string
+  fee: string
+  fee_rate: string
+  total: string
+  currency: string
 }
 
 /** v3: how delivered codes are presented (from the product, snapshotted on the order). */
@@ -267,6 +353,8 @@ export interface SiteInfo {
   after_sales_default_hours: number
   support_hours: string | null
   pages: { slug: string; title: string }[]
+  /** v4: welcome bubble + quick-question chips (resolved to the request locale). */
+  support?: { welcome?: string | null; quick_questions?: string[] } | null
 }
 export type PowScope = 'instant' | 'register' | 'lookup' | 'login'
 export interface PowChallenge {
@@ -326,12 +414,14 @@ export interface Category {
   name: string
 }
 
-export type SendMessageType = 'text' | 'image' | 'voice' | 'file'
+export type SendMessageType = 'text' | 'image' | 'voice' | 'file' | 'product_card'
 export interface SendMessageBody {
   client_msg_id: string
   type: SendMessageType
   text?: string
   attachment_id?: string
+  /** v4 (staff only): type=product_card; the server builds the payload. */
+  product_id?: string
 }
 
 export interface MessageQuery {
