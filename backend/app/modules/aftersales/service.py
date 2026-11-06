@@ -355,7 +355,7 @@ async def _refund(db: AsyncSession, order: Order, staff: User, ip: str | None) -
         # MONEY: the exact mirror of the payment lines (sales_revenue, reseller_payable,
         # promo_discount, surcharge_revenue, gateway_clearing), so a refund can never leave a
         # residue on any account. A paid-out reseller balance may go negative (clawback).
-        lines=[Line(ln.account, -ln.amount_minor) for ln in payment_lines(order)],
+        lines=[Line(ln.account, -ln.amount_minor) for ln in reversed(payment_lines(order))],
     )
     await audit(
         db,
