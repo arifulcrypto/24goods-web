@@ -53,7 +53,7 @@ async def require_turnstile(
     async with tenant_session(res.maker, tenant_id) as db:
         secret = await secretbox.get_secret(db, res.settings, tenant_id, "turnstile_secret")
     if not secret:
-        log.warning("turnstile enabled without a secret; check skipped tenant=%s", tenant_id)
+        log.warning("turnstile enabled but not configured; check skipped tenant=%s", tenant_id)
         return
     token = (token or "").strip()
     if not token or len(token) > MAX_TOKEN_LEN:
