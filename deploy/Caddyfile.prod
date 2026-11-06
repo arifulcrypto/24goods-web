@@ -2,7 +2,7 @@
 # Mounted over /etc/caddy/Caddyfile by docker-compose.prod.yml. See docs/production.md, ADR-020.
 #
 #   Visitor --TLS--> Cloudflare --TLS (Origin CA cert, SSL Full strict)--> :8088 here
-#   Cloudflare presents its zone-level client cert (Authenticated Origin Pulls); we REQUIRE it,
+#   Cloudflare presents its client cert (Authenticated Origin Pulls); we REQUIRE it,
 #   so a direct hit on the origin IP without that cert fails the TLS handshake.
 #
 # Behaviour is kept in sync with deploy/Caddyfile (security_headers / app snippets); differences:
@@ -12,7 +12,9 @@
 #
 # Required env (docker-compose.prod.yml): ADMIN_ALLOW_IPS
 # Required files in ./certs (read-only mount at /certs): origin.pem, origin.key (Cloudflare Origin CA),
-#   cf-origin-pull-ca.pem (Cloudflare Authenticated Origin Pull CA, public, committed)
+#   cf-origin-pull-ca.pem (the CA that signed the client cert Cloudflare presents for this hostname;
+#   our own per-hostname AOP CA, or Cloudflare's shared origin-pull CA if the zone-level cert is used)
+#   Certs are NOT in git; scripts/prod.sh sync copies them from /root/.secrets/prod-certs.
 
 {
 	admin off
