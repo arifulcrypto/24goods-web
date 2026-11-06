@@ -20,12 +20,15 @@ import {
   type Order,
 } from '@24goods/shared'
 import { api, apiV4 } from '../api'
-import type { AdminOrderDetailV4 as AdminOrderDetail, SiblingOrder } from '../api-v4'
+import type { AdminOrderDetailV4 as AdminOrderDetailBase, SiblingOrder } from '../api-v4'
+import type { OrderV5Fields } from '../api-v5'
+import { marginMinor, minorToYuan, yuanToMinor } from '../lib/money'
 import CloseOrderDialog from './CloseOrderDialog.vue'
 import { buildBuyerTemplate, clockTime, htmlToText } from '../lib/orderText'
 import OrderStatusTag from './OrderStatusTag.vue'
 import { toastError, toastOk } from '../ui'
 
+type AdminOrderDetail = AdminOrderDetailBase & Partial<OrderV5Fields>
 const props = defineProps<{ orderId: string | null }>()
 const emit = defineEmits<{ close: []; updated: [o: Order] }>()
 const { t, locale } = useI18n()
@@ -114,6 +117,15 @@ async function resolveFloor(o: AdminOrderDetail) {
   }
 }
 const floorTotal = computed(() => (floorUnit.value && order.value ? multiplyAmount(floorUnit.value, order.value.qty) : null))
+const yuanMinor = (m: number | null | undefined) => (m == null ? null : minorToYuan(m))
+/** Net of discount and reseller markup, minus staff-only cost (cost_minor is the order's total cost). */
+const netMargin = computed(() => {
+  const o = order.value
+  if (!o || o.cost_minor == null) return null
+  const sub = yuanToMinor(o.subtotal ?? o.amount)
+  if (sub === null) return null
+  return marginMinor(sub - (o.discount_minor ?? 0) - (o.reseller_markup_minor ?? 0), o.cost_minor)
+})
 const money = (a: string | null | undefined) => formatMoney(a, order.value?.currency ?? 'CNY', locale.value)
 
 /** Merge an action result (Order) into the loaded detail, keeping buyer + events, then refetch events. */
@@ -256,6 +268,17 @@ defineExpose({ reload: () => props.orderId && load(props.orderId) })
           <el-descriptions-item :label="t('orders.col.title')">{{ order.title }}</el-descriptions-item>
           <el-descriptions-item v-if="order.subtotal" :label="t('orders.info.subtotal')">{{ money(order.subtotal) }}</el-descriptions-item>
           <el-descriptions-item v-if="order.fee && order.fee !== '0' && order.fee !== '0.00'" :label="t('orders.info.fee', { rate: order.fee_rate ?? '' })">{{ money(order.fee) }}</el-descriptions-item>
+          <el-descriptions-item v-if="order.discount_minor" :label="t('v5.orders.discount')">
+            −{{ money(yuanMinor(order.discount_minor)) }}<template v-if="order.promo_code"> · <span class="mono">{{ order.promo_code }}</span></template>
+          </el-descriptions-item>
+          <el-descriptions-item v-if="order.reseller" :label="t('v5.orders.store')">{{ order.reseller.store_name }} <span class="mono muted">({{ order.reseller.slug }})</span></el-descriptions-item>
+          <el-descriptions-item v-if="order.reseller_markup_minor" :label="t('v5.orders.markup')">{{ money(yuanMinor(order.reseller_markup_minor)) }}</el-descriptions-item>
+          <el-descriptions-item v-if="order.cost_minor != null" :label="t('v5.orders.cost')">{{ money(yuanMinor(order.cost_minor)) }}</el-descriptions-item>
+          <el-descriptions-item v-if="netMargin !== null" :label="t('v5.orders.margin')"><b :class="netMargin < 0 ? 'neg' : 'pos'">{{ money(yuanMinor(netMargin)) }}</b></el-descriptions-item>
+          <el-descriptions-item v-if="order.kind === 'reseller_signup'" :label="t('v5.orders.kind')"><el-tag size="small" type="warning">{{ t('v5.orders.kindSignup') }}</el-tag></el-descriptions-item>
+          <el-descriptions-item v-if="order.delivery_deadline" :label="t('v5.orders.deadline')">
+            {{ formatDateTime(order.delivery_deadline, locale) }}<el-tag v-if="order.overdue_manual" size="small" type="danger" class="ml">{{ t('v5.orders.overdue') }}</el-tag>
+          </el-descriptions-item>
           <el-descriptions-item v-if="order.subtotal" :label="t('orders.info.total')"><b class="price">{{ money(order.amount) }}</b></el-descriptions-item>
           <el-descriptions-item v-if="order.checkout_no" :label="t('orders.info.checkout')">
             <span class="mono small">{{ order.checkout_no }}</span>
@@ -360,6 +383,15 @@ defineExpose({ reload: () => props.orderId && load(props.orderId) })
 </template>
 
 <style scoped>
+.pos {
+  color: var(--el-color-success);
+}
+.neg {
+  color: var(--el-color-danger);
+}
+.ml {
+  margin-left: 8px;
+}
 .drawer {
   min-height: 200px;
 }

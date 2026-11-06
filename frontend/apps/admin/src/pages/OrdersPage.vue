@@ -3,8 +3,10 @@ import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { Search } from '@element-plus/icons-vue'
-import { formatDateTime, formatMoney, visibleEmail, type AdminOrder, type Order, type OrderStatus } from '@24goods/shared'
-import { api } from '../api'
+import { formatDateTime, formatMoney, visibleEmail, type Order, type OrderStatus } from '@24goods/shared'
+import { apiV5 } from '../api'
+import type { AdminOrderV5 } from '../api-v5'
+import type { AdminReseller } from '../api-v5'
 import CloseOrderDialog from '../components/CloseOrderDialog.vue'
 import OrderDrawer from '../components/OrderDrawer.vue'
 import OrderStatusTag from '../components/OrderStatusTag.vue'
@@ -20,9 +22,17 @@ const status = ref<OrderStatus | ''>(STATUSES.includes(route.query.status as Ord
 const q = ref(typeof route.query.q === 'string' ? route.query.q : '')
 const openId = ref<string | null>(typeof route.query.open === 'string' ? route.query.open : null)
 
+type AdminOrder = AdminOrderV5
+const resellerId = ref(typeof route.query.reseller === 'string' ? route.query.reseller : '')
+const overdue = ref(route.query.overdue === '1')
+const resellers = ref<AdminReseller[]>([])
 const table = usePaged<AdminOrder>((page, page_size) =>
-  api.orders.list({ status: status.value, q: q.value.trim() || undefined, page, page_size }),
+  apiV5.orders.list({ status: status.value, q: q.value.trim() || undefined, reseller_id: resellerId.value, overdue_manual: overdue.value || undefined, page, page_size }),
 )
+watch([resellerId, overdue], ([r, o]) => {
+  void router.replace({ query: { ...route.query, reseller: r || undefined, overdue: o ? '1' : undefined } })
+  void table.reload()
+})
 let debounce: ReturnType<typeof setTimeout> | null = null
 watch(q, () => {
   if (debounce) clearTimeout(debounce)
@@ -32,7 +42,14 @@ watch(status, (s) => {
   void router.replace({ query: { ...route.query, status: s || undefined } })
   void table.reload()
 })
-onMounted(() => void table.load())
+onMounted(async () => {
+  void table.load()
+  try {
+    resellers.value = (await apiV5.resellers.list({ page: 1, page_size: 100 })).items
+  } catch {
+    /* staff (non-admin) cannot list resellers: filter hidden */
+  }
+})
 watch(
   () => route.query.open,
   (v) => {
@@ -66,7 +83,13 @@ function open(row: AdminOrder) {
         <el-radio-button value="">{{ t('orders.allStatus') }}</el-radio-button>
         <el-radio-button v-for="s in STATUSES" :key="s" :value="s">{{ t(`orderStatus.${s}`) }}</el-radio-button>
       </el-radio-group>
-      <el-input v-model="q" :placeholder="t('orders.search')" :prefix-icon="Search" clearable style="width: 280px" />
+      <div class="toolbar">
+        <el-select v-if="resellers.length" v-model="resellerId" clearable style="width: 180px" :placeholder="t('v5.orders.storeFilter')">
+          <el-option v-for="r in resellers" :key="r.id" :value="r.id" :label="r.store_name" />
+        </el-select>
+        <el-checkbox v-model="overdue" border>{{ t('v5.orders.overdueFilter') }}</el-checkbox>
+        <el-input v-model="q" :placeholder="t('orders.search')" :prefix-icon="Search" clearable style="width: 280px" />
+      </div>
     </div>
     <div class="panel">
       <el-table
@@ -94,8 +117,18 @@ function open(row: AdminOrder) {
         <el-table-column :label="t('orders.col.status')" width="130">
           <template #default="{ row }"><OrderStatusTag :status="row.status" /></template>
         </el-table-column>
-        <el-table-column :label="t('orders.col.mode')" width="100">
-          <template #default="{ row }">{{ t(`deliveryMode.${row.delivery_mode}`) }}</template>
+        <el-table-column :label="t('orders.col.mode')" width="130">
+          <template #default="{ row }">
+            {{ (row.delivery_mode as string) === 'system' ? t('v5.orders.system') : t(`deliveryMode.${row.delivery_mode}`) }}
+            <el-tag v-if="row.overdue_manual" size="small" type="danger" class="tag">{{ t('v5.orders.overdue') }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column :label="t('v5.orders.store')" width="140">
+          <template #default="{ row }">
+            <el-tag v-if="row.kind === 'reseller_signup'" size="small" type="warning">{{ t('v5.orders.kindSignup') }}</el-tag>
+            <span v-else-if="row.reseller">{{ row.reseller.store_name }}</span>
+            <span v-else class="muted">—</span>
+          </template>
         </el-table-column>
         <el-table-column :label="t('orders.col.created')" width="160">
           <template #default="{ row }">{{ formatDateTime(row.created_at, locale) }}</template>
@@ -132,6 +165,9 @@ function open(row: AdminOrder) {
 }
 .small {
   font-size: 12px;
+}
+.tag {
+  margin-left: 4px;
 }
 .clickable :deep(.el-table__row) {
   cursor: pointer;

@@ -2,6 +2,7 @@ import { ApiClient, createAdminApi, createRateLimitNotifier, type ApiError } fro
 import { currentLocale, i18n } from './i18n'
 import { createAdminV3Api } from './api-v3'
 import { createAdminV4Api } from './api-v4'
+import { createAdminV5Api } from './api-v5'
 
 type UnauthorizedHandler = (e: ApiError) => void
 let onUnauthorized: UnauthorizedHandler = () => undefined
@@ -22,3 +23,5 @@ export const api = createAdminApi(client)
 export const apiV3 = createAdminV3Api(client)
 /** review-v4 §12 admin endpoints (api-v4.ts). */
 export const apiV4 = createAdminV4Api(client)
+/** review-v5 §12 admin endpoints (api-v5.ts). */
+export const apiV5 = createAdminV5Api(client)
