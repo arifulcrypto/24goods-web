@@ -305,7 +305,8 @@ cmd_creds() {
 cmd_test() {
   ensure_containers
   local su; su=$(secret PG_SUPERUSER_PASSWORD)
-  docker exec "$PG_NAME" psql -U postgres -tc "SELECT 1 FROM pg_database WHERE datname='test'" | grep -q 1 \
+  # capture first: `| grep -q` under pipefail can fail on SIGPIPE and wrongly re-create the DB
+  [[ "$(docker exec "$PG_NAME" psql -U postgres -tAc "SELECT 1 FROM pg_database WHERE datname='test'")" == 1 ]] \
     || docker exec "$PG_NAME" createdb -U postgres test
   (cd "$ROOT/backend" \
     && export TEST_DATABASE_URL="postgresql+asyncpg://postgres:$su@127.0.0.1:$PG_PORT/test" \

@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     env: str = "dev"  # dev | staging | prod
     log_level: str = "INFO"
 
+    # --- seed (python -m app.devtools.seed) ---
+    seed_demo: bool = True  # false = production seed: tenant + one admin + fixed content only
+    seed_admin_email: str = "admin@kesiv.com"  # prod seed only (demo seed uses admin@demo.local)
+
     # --- network ---
     host: str = "127.0.0.1"  # the Docker image sets APP_HOST=0.0.0.0
     port: int = 8000
