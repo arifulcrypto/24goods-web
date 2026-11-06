@@ -41,6 +41,9 @@ type Translate = (key: string, params?: Record<string, unknown>) => string
 /** One-line preview of a message for conversation lists. */
 export function messagePreview(m: Message | null | undefined, t: Translate, max = 60): string {
   if (!m) return ''
+  if (m.payload && (m.payload as { redacted?: boolean }).redacted === true && m.type !== 'system') {
+    return t('chat.redacted')
+  }
   if (m.type === 'text') {
     const s = (m.text ?? '').replace(/\s+/g, ' ').trim()
     return s.length > max ? `${s.slice(0, max)}…` : s

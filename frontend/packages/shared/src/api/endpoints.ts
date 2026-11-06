@@ -1,6 +1,16 @@
 import type { ApiClient } from './client'
 import { seg } from './client'
 import type {
+  AfterSales,
+  AfterSalesInput,
+  Article,
+  ArticleSummary,
+  InstantResult,
+  LookupOrder,
+  PowChallenge,
+  PowScope,
+  PowSolution,
+  SiteInfo,
   AdminOrder,
   AdminOrderDetail,
   AdminProduct,
@@ -36,7 +46,7 @@ import type {
 export const DEFAULT_PAY_CHANNEL = 'zpay_alipay'
 
 export interface UploadOptions {
-  kind: 'image' | 'voice'
+  kind: 'image' | 'voice' | 'file'
   /** voice only, ≤ 60000 */
   durationMs?: number
   filename?: string
@@ -44,7 +54,7 @@ export interface UploadOptions {
 
 export function uploadForm(file: Blob, o: UploadOptions): FormData {
   const fd = new FormData()
-  const name = o.filename ?? (o.kind === 'voice' ? 'voice' : 'image')
+  const name = o.filename ?? (o.kind === 'voice' ? 'voice' : o.kind === 'file' ? 'message.txt' : 'image')
   fd.append('file', file, name)
   fd.append('kind', o.kind)
   if (o.kind === 'voice' && o.durationMs !== undefined) {
@@ -57,17 +67,57 @@ export function uploadForm(file: Blob, o: UploadOptions): FormData {
 export function createBuyerApi(c: ApiClient) {
   return {
     auth: {
-      register: (b: { email: string; password: string; display_name: string; locale: Locale }) =>
-        c.post<User>('/auth/register', b, { skipAuthHandler: true }),
-      login: (b: { email: string; password: string }) =>
+      register: (b: {
+        email: string
+        password: string
+        display_name: string
+        locale: Locale
+        pow?: PowSolution
+      }) => c.post<User>('/auth/register', b, { skipAuthHandler: true }),
+      /** `email` also accepts an instant-account login handle (`u-xxxxxxx`). */
+      login: (b: { email: string; password: string; pow?: PowSolution }) =>
         c.post<User>('/auth/login', b, { skipAuthHandler: true }),
       logout: () => c.post<void>('/auth/logout', undefined, { skipAuthHandler: true }),
       me: () => c.get<User>('/auth/me', undefined, { skipAuthHandler: true }),
+      /** v3: one-tap instant account; the credentials are returned once. */
+      instant: (b: { pow: PowSolution }) =>
+        c.post<InstantResult>('/auth/instant', b, { skipAuthHandler: true }),
+    },
+    /** v3: brand, announcement, defaults, fixed pages. */
+    site: () => c.get<SiteInfo>('/site'),
+    pow: {
+      challenge: (scope: PowScope) => c.get<PowChallenge>('/pow/challenge', { scope }),
+    },
+    me: {
+      update: (b: { display_name?: string; locale?: Locale }) => c.patch<User>('/me', b),
+      credentials: (b: { current_password?: string; email?: string; new_password?: string }) =>
+        c.post<User>('/me/credentials', b),
+      remove: (b: { password?: string; confirm: 'DELETE' }) => c.post<void>('/me/delete', b),
     },
     categories: () => c.get<Category[]>('/categories'),
     products: (q: { q?: string; category?: string; page?: number; page_size?: number }) =>
       c.get<Paginated<ProductSummary>>('/products', q),
+    /** v3: summaries for ≤20 ids, in the given order (recently viewed). */
+    productsByIds: (ids: readonly string[]) =>
+      c.get<{ items: ProductSummary[] }>('/products', { ids: ids.slice(0, 20).join(',') }),
+    recommended: (q: { for?: string; recent?: readonly string[]; limit?: number }) =>
+      c.get<{ items: ProductSummary[] }>('/products/recommended', {
+        for: q.for,
+        recent: q.recent?.length ? q.recent.slice(0, 20).join(',') : undefined,
+        limit: q.limit ?? 8,
+      }),
     product: (id: string) => c.get<Product>(`/products/${seg(id)}`),
+    articles: {
+      list: (q: { category?: string; page?: number; page_size?: number } = {}) =>
+        c.get<Paginated<ArticleSummary>>('/articles', q),
+      get: (slug: string) => c.get<Article>(`/articles/${seg(slug)}`),
+    },
+    lookup: {
+      find: (b: { order_no: string; access_code: string; pow: PowSolution }) =>
+        c.post<LookupOrder>('/lookup', b, { skipAuthHandler: true }),
+      reveal: (b: { order_no: string; access_code: string }) =>
+        c.post<{ cards: { id: string; code: string }[] }>('/lookup/reveal', b, { skipAuthHandler: true }),
+    },
     supportStatus: () => c.get<AgentStatus>('/support/status'),
     conversations: {
       open: (product_id?: string) =>
@@ -85,13 +135,16 @@ export function createBuyerApi(c: ApiClient) {
       accept: (id: string) => c.post<Order>(`/quotes/${seg(id)}/accept`),
     },
     orders: {
-      create: (product_id: string, qty: number) => c.post<Order>('/orders', { product_id, qty }),
+      /** `src` = traffic attribution tag from a direct buy link (`[a-z0-9_-]{0,32}`). */
+      create: (product_id: string, qty: number, src?: string | null) =>
+        c.post<Order>('/orders', src ? { product_id, qty, src } : { product_id, qty }),
       list: (q: { page?: number; page_size?: number } = {}) => c.get<Paginated<Order>>('/orders', q),
       get: (id: string) => c.get<Order>(`/orders/${seg(id)}`),
       pay: (id: string, channel: string = DEFAULT_PAY_CHANNEL) =>
         c.post<{ pay_url: string }>(`/orders/${seg(id)}/pay`, { channel }),
-      reveal: (id: string) => c.post<{ secrets: string[] }>(`/orders/${seg(id)}/reveal`),
+      reveal: (id: string) => c.post<{ secrets: string[]; cards: { id: string; code: string }[] }>(`/orders/${seg(id)}/reveal`),
       confirm: (id: string) => c.post<Order>(`/orders/${seg(id)}/confirm`),
+      afterSales: (id: string, b: AfterSalesInput) => c.post<AfterSales>(`/orders/${seg(id)}/after-sales`, b),
     },
     streamUrl: () => c.url('/stream'),
   }
@@ -208,6 +261,38 @@ export function safeAssetUrl(raw: string | null | undefined, base = currentBase(
   } catch {
     return null
   }
+}
+
+/**
+ * Links from product data (redeem URLs): https anywhere, or a same-origin relative path.
+ * Never `http:`, `javascript:`, `data:`, protocol-relative `//host` or backslash tricks.
+ */
+export function safeLinkUrl(raw: string | null | undefined, base = currentBase()): string | null {
+  if (!raw) return null
+  const s = raw.trim()
+  if (!s || /[\u0000-\u001f\\]/.test(s)) return null
+  try {
+    if (s.startsWith('/')) {
+      if (s.startsWith('//')) return null
+      const u = new URL(s, base)
+      return u.origin === new URL(base).origin ? u.toString() : null
+    }
+    const u = new URL(s)
+    return u.protocol === 'https:' && !u.username && !u.password ? u.toString() : null
+  } catch {
+    return null
+  }
+}
+
+/** Accepts `{secrets: string[]}` (orders/{id}/reveal) or `{cards:[{code}]}` (lookup/reveal). */
+export function revealedCodes(r: { secrets?: unknown; cards?: unknown } | null | undefined): string[] {
+  if (!r) return []
+  if (Array.isArray(r.secrets)) return r.secrets.filter((x): x is string => typeof x === 'string')
+  if (Array.isArray(r.cards))
+    return r.cards
+      .map((c) => (c && typeof c === 'object' ? (c as { code?: unknown }).code : null))
+      .filter((x): x is string => typeof x === 'string')
+  return []
 }
 
 /** Only allow internal redirects (`/x`, not `//evil` or `https://...`). */

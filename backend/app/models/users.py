@@ -20,6 +20,9 @@ class User(Base):
     display_name: Mapped[str] = mapped_column(String(64))
     locale: Mapped[str] = mapped_column(String(8), default="en")
     status: Mapped[str] = mapped_column(String(16), default="active")
+    is_instant: Mapped[bool] = mapped_column(default=False)
+    email_verified: Mapped[bool] = mapped_column(default=False)
+    handle: Mapped[str | None] = mapped_column(String(16))
     last_login_at: Mapped[datetime | None]
     created_at: Mapped[datetime] = created_at()
 

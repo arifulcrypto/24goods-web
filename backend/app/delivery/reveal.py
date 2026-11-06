@@ -136,7 +136,11 @@ def create_delivery_app(ctx: DeliveryContext) -> Starlette:
                 await db.execute(
                     select(CardStock.id, CardStock.product_id, CardStock.blob)
                     .join(Delivery, Delivery.card_stock_id == CardStock.id)
-                    .where(Delivery.order_id == order.id, CardStock.order_id == order.id)
+                    .where(
+                        Delivery.order_id == order.id,
+                        CardStock.order_id == order.id,
+                        CardStock.status != "void",  # replaced / defective cards are never shown
+                    )
                     .order_by(Delivery.created_at, CardStock.id)
                 )
             ).all()
@@ -166,10 +170,12 @@ def create_delivery_app(ctx: DeliveryContext) -> Starlette:
                 return _err(503, "unavailable", "Reveal temporarily unavailable")
 
             secrets: list[str] = []
+            card_ids: list[str] = []
             try:
                 for card_id, product_id, blob in rows:
                     ctx_ = CardContext(str(tenant_id), str(product_id), str(card_id))
                     secrets.append(ctx.opener.open(bytes(blob), ctx_))
+                    card_ids.append(str(card_id))
             except VaultError:
                 log.critical("vault open failed for order %s (tamper or key mismatch)", order.id)
                 await audit(
@@ -184,7 +190,10 @@ def create_delivery_app(ctx: DeliveryContext) -> Starlette:
 
             await db.execute(
                 update(Delivery)
-                .where(Delivery.order_id == order.id)
+                .where(
+                    Delivery.order_id == order.id,
+                    Delivery.card_stock_id.in_([uuid.UUID(c) for c in card_ids]),
+                )
                 .values(
                     reveal_count=Delivery.reveal_count + 1,
                     first_revealed_at=func.coalesce(Delivery.first_revealed_at, func.now()),
@@ -200,7 +209,10 @@ def create_delivery_app(ctx: DeliveryContext) -> Starlette:
                 detail={"cards": len(secrets)},
             )
             await db.commit()
-        return JSONResponse({"secrets": secrets}, headers={"Cache-Control": "no-store"})
+        cards = [{"id": i, "code": c} for i, c in zip(card_ids, secrets, strict=True)]
+        return JSONResponse(
+            {"secrets": secrets, "cards": cards}, headers={"Cache-Control": "no-store"}
+        )
 
     app = Starlette(
         routes=[

@@ -28,6 +28,12 @@ class FileStore:
         with os.fdopen(fd, "wb") as fh:
             fh.write(data)
 
+    def _delete_sync(self, key: str) -> None:
+        self.path_for(key).unlink(missing_ok=True)
+
+    async def delete(self, key: str) -> None:
+        await anyio.to_thread.run_sync(self._delete_sync, key)
+
     async def write(self, data: bytes) -> str:
         key = secrets.token_hex(16)
         await anyio.to_thread.run_sync(self._write_sync, key, data)

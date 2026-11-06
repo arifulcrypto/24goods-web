@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { ProductThumb } from '@24goods/shared/ui'
 import { moneyParts, formatNumber, type ProductSummary } from '@24goods/shared'
 
 const props = defineProps<{ product: ProductSummary }>()
@@ -12,8 +13,7 @@ const soldOut = computed(() => props.product.delivery_mode === 'auto_card' && pr
 <template>
   <RouterLink :to="`/p/${encodeURIComponent(product.id)}`" class="pcard">
     <div class="pcard-cover">
-      <img v-if="product.cover" :src="product.cover" :alt="product.title" loading="lazy" decoding="async" />
-      <span v-else class="pcard-ph" aria-hidden="true">24</span>
+      <ProductThumb :src="product.cover" :title="product.title" size="100%" :radius="0" />
       <span v-if="soldOut" class="pcard-soldout">{{ t('product.outOfStock') }}</span>
     </div>
     <div class="pcard-body">

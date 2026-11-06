@@ -176,3 +176,9 @@ export function formatBytes(n: number, locale: string): string {
   }
   return `${new Intl.NumberFormat(locale, { maximumFractionDigits: i === 0 ? 0 : 1 }).format(v)} ${units[i]}`
 }
+
+/** Instant accounts carry a `<handle>@instant.invalid` placeholder address: never display it. */
+export function visibleEmail(email: string | null | undefined): string {
+  const e = (email ?? '').trim()
+  return !e || e.toLowerCase().endsWith('.invalid') ? '' : e
+}

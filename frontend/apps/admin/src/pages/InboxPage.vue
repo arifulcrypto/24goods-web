@@ -8,6 +8,7 @@ import {
   messagePreview,
   type Conversation,
   type ConversationFilter,
+  type Message,
   type QuoteCardPayload,
 } from '@24goods/shared'
 import { ChatMessageList, useConversation } from '@24goods/shared/chat'
@@ -54,6 +55,14 @@ const chat = useConversation({
   },
   onError: (e) => toastError(e),
 })
+
+// ---------------- after-sales link bar ----------------
+// The shared bubble renders `file` messages and the after-sales system cards (server-sent
+// payload `{event, order_id, after_sales_id, note?}`); the staff only get a deep link here.
+type SystemPayload = { event?: string; after_sales_id?: string }
+const payloadOf = (m: Message) => (m.payload ?? {}) as SystemPayload
+const isAfterSales = (m: Message) => m.type === 'system' && (payloadOf(m).event ?? '').startsWith('after_sales')
+const afterSalesCard = computed(() => chat.messages.value.filter(isAfterSales).at(-1) ?? null)
 
 // ---------------- conversation list ----------------
 function matches(c: Conversation): boolean {
@@ -304,6 +313,9 @@ function openProduct(id: string) {
             <el-button v-if="!wideSide" size="small" :icon="InfoFilled" @click="detailsOpen = true" />
           </div>
         </header>
+        <div v-if="afterSalesCard" class="v3-bar">
+          <RouterLink v-if="afterSalesCard" :to="{ path: '/after-sales', query: { open: payloadOf(afterSalesCard).after_sales_id } }">{{ t('inbox.openAfterSales') }}</RouterLink>
+        </div>
         <ChatMessageList
           ref="msgList"
           :items="chat.items.value"
@@ -513,5 +525,14 @@ function openProduct(id: string) {
   border-left: 1px solid var(--a-line);
   overflow-y: auto;
   background: var(--a-bg);
+}
+.v3-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  padding: 6px 14px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--a-line);
+  background: var(--a-surface);
 }
 </style>

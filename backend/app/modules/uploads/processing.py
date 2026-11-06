@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import io
 import logging
+import re
+import unicodedata
 import warnings
 from dataclasses import dataclass
 
@@ -170,6 +172,35 @@ def process_image(data: bytes) -> Processed:
     finally:
         trim()
     return Processed(out.getvalue(), mime, width, height)
+
+
+MAX_FILE_BYTES = 256 * 1024
+_NAME_BAD = re.compile(r"[^\w .()\[\]+-]", re.UNICODE)
+
+
+def sanitize_filename(raw: str | None) -> str:
+    """Display name only (the stored key is random): basename, no control/path/odd chars,
+    forced ``.txt`` extension, at most 100 characters."""
+    name = (raw or "").replace("\\", "/").rsplit("/", 1)[-1]
+    name = _NAME_BAD.sub("_", unicodedata.normalize("NFKC", name)).strip(" .")
+    stem = name[:-4] if name.lower().endswith(".txt") else name
+    stem = stem.strip(" .")[:96]
+    return (stem or "message") + ".txt"
+
+
+def process_text(data: bytes) -> Processed:
+    """Plain text only: valid UTF-8, no NUL bytes, at most 256 KB."""
+    if not data:
+        raise UploadRejected("Empty file")
+    if len(data) > MAX_FILE_BYTES:
+        raise UploadRejected("Text file larger than 256 KB")
+    if b"\x00" in data:
+        raise UploadRejected("Not a text file")
+    try:
+        data.decode("utf-8")
+    except UnicodeDecodeError:
+        raise UploadRejected("Text files must be UTF-8") from None
+    return Processed(data, "text/plain")
 
 
 def process_voice(data: bytes, duration_ms: int | None) -> Processed:

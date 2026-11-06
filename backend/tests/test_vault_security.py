@@ -26,16 +26,30 @@ async def test_import_dedup_limits_and_masked_listing(env, caplog):
             },
         )
     assert r.status_code == 200, r.text
-    assert r.json() == {"imported": 2, "duplicates": 1, "rejected": 2}
+    body = r.json()
+    assert body.pop("batch_id")
+    assert body == {"imported": 2, "duplicates": 1, "rejected": 2}
     r = await admin.post(url, json={"lines": "CODE-BBB-2\nCODE-CCC-3"})
-    assert r.json() == {"imported": 1, "duplicates": 1, "rejected": 0}
+    body = r.json()
+    assert body.pop("batch_id")
+    assert body == {"imported": 1, "duplicates": 1, "rejected": 0}
     assert "CODE-AAA-1" not in caplog.text
     r = await admin.post(url, json={"lines": "\n".join(f"C{i}" for i in range(5001))})
     assert r.status_code == 422
     listing = (await admin.get(f"/api/v1/admin/products/{p.id}/cards")).json()
     assert listing["total"] == 3
     for item in listing["items"]:
-        assert set(item) == {"id", "masked", "status", "order_id", "created_at"}
+        assert set(item) == {  # CardRow: never a code, only metadata
+            "id",
+            "masked",
+            "status",
+            "batch_id",
+            "expires_at",
+            "void_reason",
+            "order_id",
+            "order_no",
+            "created_at",
+        }
         assert "CODE" not in item["masked"]
     blob = await env.scalar("SELECT blob FROM card_stock LIMIT 1")
     assert b"CODE" not in bytes(blob)
@@ -63,7 +77,10 @@ async def test_app_api_cannot_select_blob(env):
             await db.execute(text("SELECT * FROM card_stock"))
         await db.rollback()
         with pytest.raises(DBAPIError, match="permission denied"):
-            await db.execute(text("UPDATE card_stock SET status='void'"))
+            await db.execute(text("UPDATE card_stock SET blob = '\\x00'"))
+        await db.rollback()
+        with pytest.raises(DBAPIError, match="permission denied"):
+            await db.execute(text("UPDATE card_stock SET order_id = NULL"))
         await db.rollback()
         with pytest.raises(DBAPIError, match="permission denied"):
             await db.execute(text("DELETE FROM audit_log"))

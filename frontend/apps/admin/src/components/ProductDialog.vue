@@ -9,13 +9,28 @@ import {
   isAcceptedImage,
   isValidAmount,
   normalizeAmount,
-  type AdminProduct,
-  type AdminProductInput,
   type Category,
   type DeliveryMode,
   type ProductStatus,
 } from '@24goods/shared'
-import { api } from '../api'
+import { api, apiV3 } from '../api'
+import type { AdminProductInputV3, AdminProductV3 as AdminProduct } from '../api-v3'
+import {
+  AFTER_SALES_PRESETS,
+  DEFAULT_SEPARATOR,
+  FORMAT_PRESETS,
+  SEPARATORS,
+  SITE_DEFAULT_AFTER_SALES_HOURS,
+  afterSalesPresetFor,
+  formatLabels,
+  isSeparator,
+  isValidRedeemUrl,
+  joinFormat,
+  presetFor,
+  splitCard,
+  type AfterSalesPresetKey,
+  type FormatPresetKey,
+} from '../lib/delivery'
 import { toastError, toastOk } from '../ui'
 
 const props = defineProps<{ modelValue: boolean; product: AdminProduct | null; categories: Category[] }>()
@@ -23,6 +38,11 @@ const emit = defineEmits<{ 'update:modelValue': [v: boolean]; saved: [p: AdminPr
 const { t } = useI18n()
 
 const tab = ref<'en' | 'zh-CN'>('en')
+const usageTab = ref<'en' | 'zh-CN'>('en')
+const preset = ref<FormatPresetKey>('card')
+const labelsText = ref('')
+const sample = ref('')
+const asPreset = ref<AfterSalesPresetKey>('default')
 const saving = ref(false)
 const uploading = ref(false)
 const errors = ref<Record<string, string>>({})
@@ -39,6 +59,11 @@ const form = reactive({
   category: '',
   status: 'draft' as ProductStatus,
   images: [] as string[],
+  separator: DEFAULT_SEPARATOR as string,
+  redeem_url: '',
+  usage_en: '',
+  usage_zh: '',
+  after_sales_hours: null as number | null,
 })
 
 watch(
@@ -59,11 +84,42 @@ watch(
     form.category = p?.category ?? props.categories[0]?.key ?? ''
     form.status = p?.status ?? 'draft'
     form.images = [...(p?.images ?? [])]
+    form.separator = p?.delivery_separator && isSeparator(p.delivery_separator) ? p.delivery_separator : DEFAULT_SEPARATOR
+    const labels = formatLabels(p?.delivery_format, form.separator)
+    preset.value = p?.delivery_format ? presetFor(labels) : 'card'
+    labelsText.value = (labels.length ? labels : ['Card code']).join('\n')
+    sample.value = ''
+    form.redeem_url = p?.redeem_url ?? ''
+    form.usage_en = p?.usage_i18n?.en ?? ''
+    form.usage_zh = p?.usage_i18n?.['zh-CN'] ?? ''
+    usageTab.value = 'en'
+    form.after_sales_hours = p?.after_sales_hours ?? null
+    asPreset.value = afterSalesPresetFor(form.after_sales_hours)
   },
   { immediate: true },
 )
 
+const URL_HINT = "https://example.com"
 const isNew = computed(() => !current.value)
+
+const labels = computed(() =>
+  labelsText.value
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean),
+)
+function onPreset(k: FormatPresetKey) {
+  const p = FORMAT_PRESETS.find((x) => x.key === k)
+  if (p) labelsText.value = p.labels.join('\n')
+  sample.value = ''
+}
+const sampleLine = computed(() => sample.value || (labels.value.length ? labels.value.map((_, i) => `value${i + 1}`).join(form.separator) : 'ABCD-1234'))
+const preview = computed(() => splitCard(sampleLine.value, labels.value, form.separator, (n) => t('delivery.fieldN', { n })))
+function onAfterSales(k: AfterSalesPresetKey) {
+  const p = AFTER_SALES_PRESETS.find((x) => x.key === k)
+  if (p) form.after_sales_hours = p.hours
+  else if (form.after_sales_hours === null) form.after_sales_hours = SITE_DEFAULT_AFTER_SALES_HOURS
+}
 
 function validate(): boolean {
   const e: Record<string, string> = {}
@@ -72,13 +128,23 @@ function validate(): boolean {
   if (!isValidAmount(form.floor_price)) e.floor_price = t('products.v.priceInvalid')
   else if (!e.price && compareAmount(form.floor_price, form.price) === 1) e.floor_price = t('products.v.floorAbovePrice')
   if (!form.category) e.category = t('products.v.categoryRequired')
+  if (!isValidRedeemUrl(form.redeem_url)) e.redeem_url = t('delivery.redeemInvalid')
+  if (form.after_sales_hours !== null && (!Number.isInteger(form.after_sales_hours) || form.after_sales_hours < 0 || form.after_sales_hours > 8760)) {
+    e.after_sales = t('delivery.hoursInvalid')
+  }
   errors.value = e
   if (e.title) tab.value = 'en'
   return Object.keys(e).length === 0
 }
 
-function payload(): AdminProductInput {
+function payload(): AdminProductInputV3 {
+  const usage = { en: form.usage_en.trim(), 'zh-CN': form.usage_zh.trim() }
   return {
+    delivery_format: joinFormat(labels.value, form.separator),
+    delivery_separator: form.separator,
+    redeem_url: form.redeem_url.trim() || null,
+    usage_i18n: usage,
+    after_sales_hours: form.after_sales_hours,
     title_i18n: { en: form.title_en.trim(), 'zh-CN': form.title_zh.trim() },
     description_i18n: { en: form.desc_en.trim(), 'zh-CN': form.desc_zh.trim() },
     price: normalizeAmount(form.price)!,
@@ -95,13 +161,13 @@ async function save() {
   saving.value = true
   try {
     if (current.value) {
-      const p = await api.products.update(current.value.id, payload())
+      const p = await apiV3.products.update(current.value.id, payload())
       current.value = p
       emit('saved', p)
       toastOk(t('products.saved'))
       emit('update:modelValue', false)
     } else {
-      const p = await api.products.create({ ...payload(), images: [] })
+      const p = await apiV3.products.create({ ...payload(), images: [] })
       current.value = p
       form.images = [...p.images]
       emit('saved', p)
@@ -206,6 +272,58 @@ async function removeImage(url: string) {
         </el-form-item>
       </div>
 
+      <h3 class="sec">{{ t('delivery.title') }}</h3>
+      <div class="grid">
+        <el-form-item :label="t('delivery.preset')">
+          <el-select v-model="preset" @change="onPreset">
+            <el-option v-for="p in FORMAT_PRESETS" :key="p.key" :value="p.key" :label="t(`delivery.presets.${p.key}`)" />
+            <el-option value="custom" :label="t('delivery.presets.custom')" />
+          </el-select>
+        </el-form-item>
+        <el-form-item :label="t('delivery.separator')">
+          <el-select v-model="form.separator">
+            <el-option v-for="s in SEPARATORS" :key="s.key" :value="s.value" :label="t(`delivery.sep.${s.key}`)" />
+          </el-select>
+        </el-form-item>
+      </div>
+      <el-form-item :label="t('delivery.labels')">
+        <el-input v-model="labelsText" type="textarea" :rows="Math.max(2, labels.length + 1)" spellcheck="false" @input="preset = 'custom'" />
+        <div class="hint muted">{{ t('delivery.labelsHint') }}</div>
+      </el-form-item>
+      <el-form-item :label="t('delivery.sample')">
+        <el-input v-model="sample" :placeholder="sampleLine" spellcheck="false" class="mono" />
+        <table class="preview" :aria-label="t('delivery.preview')">
+          <tbody>
+            <tr v-for="(f, i) in preview" :key="i">
+              <th scope="row" :class="{ extra: f.extra }">{{ f.label }}</th>
+              <td class="mono">{{ f.value }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="hint muted">{{ t('delivery.previewHint') }}</div>
+      </el-form-item>
+      <el-form-item :label="t('delivery.redeemUrl')" :error="errors.redeem_url">
+        <el-input v-model="form.redeem_url" :placeholder="URL_HINT" maxlength="500" inputmode="url" />
+      </el-form-item>
+      <el-form-item :label="t('delivery.usage')">
+        <el-tabs v-model="usageTab" class="full">
+          <el-tab-pane :label="t('products.form.tabEn')" name="en">
+            <el-input v-model="form.usage_en" type="textarea" :rows="5" maxlength="5000" show-word-limit />
+          </el-tab-pane>
+          <el-tab-pane :label="t('products.form.tabZh')" name="zh-CN">
+            <el-input v-model="form.usage_zh" type="textarea" :rows="5" maxlength="5000" show-word-limit />
+          </el-tab-pane>
+        </el-tabs>
+        <div class="hint muted">{{ t('delivery.usageHint') }}</div>
+      </el-form-item>
+      <el-form-item :label="t('delivery.afterSales')" :error="errors.after_sales">
+        <el-select v-model="asPreset" style="width: 240px" @change="onAfterSales">
+          <el-option v-for="p in AFTER_SALES_PRESETS" :key="p.key" :value="p.key" :label="t(`delivery.as.${p.key}`, { d: SITE_DEFAULT_AFTER_SALES_HOURS / 24 })" />
+          <el-option value="custom" :label="t('delivery.as.custom')" />
+        </el-select>
+        <el-input-number v-if="asPreset === 'custom'" v-model="form.after_sales_hours" :min="1" :max="8760" class="hours" />
+      </el-form-item>
+
       <el-form-item :label="t('products.form.images')">
         <div v-if="isNew" class="muted">{{ t('products.form.saveFirst') }}</div>
         <div v-else class="images">
@@ -274,5 +392,36 @@ async function removeImage(url: string) {
 }
 .full {
   width: 100%;
+}
+.sec {
+  margin: 8px 0 12px;
+  font-size: 15px;
+  padding-top: 8px;
+  border-top: 1px solid var(--a-line);
+}
+.preview {
+  margin-top: 8px;
+  border-collapse: collapse;
+  font-size: 13px;
+  width: 100%;
+}
+.preview th {
+  text-align: left;
+  width: 140px;
+  padding: 4px 8px;
+  color: var(--el-text-color-secondary);
+  font-weight: 500;
+  border-bottom: 1px solid var(--a-line);
+}
+.preview th.extra {
+  font-style: italic;
+}
+.preview td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--a-line);
+  overflow-wrap: anywhere;
+}
+.hours {
+  margin-left: 8px;
 }
 </style>

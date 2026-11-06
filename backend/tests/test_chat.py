@@ -47,7 +47,16 @@ async def test_send_text_idempotent_and_limits(env):
     assert r.status_code == 422  # buyers cannot forge system/quote/order cards
 
 
-async def test_message_rate_limit(env):
+async def test_message_rate_limit(env, monkeypatch):
+    # The limiter is a fixed 60 s window; pin the clock it reads to mid-window so a minute
+    # boundary can never split the 31 requests (that made this test flaky).
+    import time
+    from types import SimpleNamespace
+
+    from app.core import ratelimit
+
+    mid = (int(time.time()) // 60) * 60 + 30
+    monkeypatch.setattr(ratelimit, "time", SimpleNamespace(time=lambda: mid))
     buyer, _ = await env.login("buyer")
     conv = await open_conversation(buyer)
     url = f"/api/v1/conversations/{conv['id']}/messages"

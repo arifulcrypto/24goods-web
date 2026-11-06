@@ -10,16 +10,18 @@ import {
   type StreamMessageEvent,
 } from '@24goods/shared'
 import { api } from '../api'
+import type { AfterSalesTicket } from '../api-v3'
 
 type Events = {
   message: StreamMessageEvent
   conversation: Conversation
   order: Order
   agent_status: AgentStatus
+  after_sales: AfterSalesTicket
   sync: void
 }
 
-/** Staff SSE (/admin/stream: all conversation, message and order events of the tenant). */
+/** Staff SSE (/admin/stream: all conversation, message, order and after-sales events of the tenant). */
 export const useRealtimeStore = defineStore('realtime', () => {
   const state = ref<RealtimeState>('idle')
   const bus = createEmitter<Events>()
@@ -34,6 +36,7 @@ export const useRealtimeStore = defineStore('realtime', () => {
         conversation: (c) => bus.emit('conversation', c),
         order: (o) => bus.emit('order', o),
         agent_status: (s) => bus.emit('agent_status', s),
+        after_sales: (t) => bus.emit('after_sales', t as unknown as AfterSalesTicket),
         poll: () => bus.emit('sync', undefined),
         resync: () => bus.emit('sync', undefined),
         state: (s) => (state.value = s),

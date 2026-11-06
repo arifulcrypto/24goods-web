@@ -4,6 +4,8 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { safeRedirect } from '@24goods/shared'
 import AuthShell from '../components/AuthShell.vue'
+import PowStatus from '../components/PowStatus.vue'
+import { isPowAbort, usePow } from '../composables/usePow'
 import { useAuthStore } from '../stores/auth'
 import { currentLocale } from '../i18n'
 import { showSuccessToast, toastError } from '../ui'
@@ -12,6 +14,7 @@ const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
+const pow = usePow()
 const email = ref('')
 const displayName = ref('')
 const password = ref('')
@@ -23,7 +26,9 @@ async function submit() {
   if (busy.value) return
   busy.value = true
   try {
+    const solution = await pow.run('register')
     await auth.register({
+      pow: solution,
       email: email.value.trim(),
       password: password.value,
       display_name: displayName.value.trim(),
@@ -32,7 +37,7 @@ async function submit() {
     showSuccessToast(t('auth.registered'))
     await router.replace(safeRedirect(route.query.redirect, '/'))
   } catch (e) {
-    toastError(e)
+    if (!isPowAbort(e)) toastError(e)
   } finally {
     busy.value = false
   }
@@ -73,6 +78,7 @@ async function submit() {
         @click-right-icon="show = !show"
       />
       <div class="submit">
+        <PowStatus :solving="pow.solving.value" :progress="pow.progress.value" />
         <van-button round block type="primary" native-type="submit" :loading="busy">{{ t('me.register') }}</van-button>
       </div>
     </van-form>

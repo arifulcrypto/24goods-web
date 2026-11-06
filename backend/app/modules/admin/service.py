@@ -26,6 +26,7 @@ from app.models import (
     Product,
     User,
 )
+from app.modules.catalog.service import claimable
 from app.modules.chat.messages import post_system
 from app.modules.chat.service import conversation_views
 from app.modules.common.views import iso, product_summary
@@ -55,7 +56,7 @@ async def stats(db: AsyncSession, lang: str) -> dict[str, Any]:
     )
     avail = (
         select(CardStock.product_id, func.count(CardStock.id).label("n"))
-        .where(CardStock.status == "available")
+        .where(*claimable())
         .group_by(CardStock.product_id)
         .subquery()
     )

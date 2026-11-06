@@ -11,6 +11,11 @@ export interface User {
   display_name: string
   role: Role
   locale: Locale
+  /** v3: one-tap instant account (random handle + password, email optional). */
+  is_instant?: boolean
+  email_verified?: boolean
+  /** v3: login handle `u-xxxxxxx` of instant accounts (usable as the login id). `email` is blank for them. */
+  handle?: string | null
 }
 
 export type DeliveryMode = 'auto_card' | 'manual'
@@ -26,12 +31,21 @@ export interface ProductSummary {
   stock: number | null
   category: string
   sold: number
+  /** v3: resolved after-sales window in hours (site default applied); 0 = no after-sales. */
+  after_sales_hours?: number | null
 }
 export type ProductStatus = 'active' | 'draft'
 export interface Product extends ProductSummary {
   description: string
   images: string[]
   status: ProductStatus
+  /** v3: field labels joined by `delivery_separator`, e.g. `Account----Password----2FA`. */
+  delivery_format?: string | null
+  delivery_separator?: string | null
+  /** v3: https only (validated server-side, re-validated client-side). */
+  redeem_url?: string | null
+  /** v3: server-sanitized HTML (markdown → nh3). Only *_html fields may be rendered as HTML. */
+  usage_html?: string | null
 }
 export type I18nText = Record<Locale, string>
 export interface AdminProduct extends Omit<Product, 'title' | 'description'> {
@@ -58,7 +72,9 @@ export interface Attachment {
   url: string
   mime: string
   bytes: number
-  kind: 'image' | 'voice'
+  kind: 'image' | 'voice' | 'file'
+  /** v3 (kind=file): original file name. */
+  name?: string
   width?: number
   height?: number
   duration_ms?: number
@@ -72,6 +88,7 @@ export type MessageType =
   | 'quote_card'
   | 'order_card'
   | 'system'
+  | 'file'
 
 export type SenderRole = 'buyer' | 'agent' | 'system'
 export interface Message {
@@ -82,8 +99,18 @@ export interface Message {
   type: MessageType
   text: string | null
   attachment: Attachment | null
-  payload: ProductCardPayload | QuoteCardPayload | OrderCardPayload | SystemPayload | null
+  payload: ProductCardPayload | QuoteCardPayload | OrderCardPayload | SystemPayload | FilePayload | RedactedPayload | null
   created_at: string
+}
+/** v3: `type=file` message payload (text/plain attachment). */
+export interface RedactedPayload {
+  redacted: true
+}
+export interface FilePayload {
+  name: string
+  bytes: number
+  /** First ~160 characters of the file. */
+  preview: string
 }
 export interface ProductCardPayload {
   product_id: string
@@ -158,6 +185,126 @@ export interface Order {
   manual_delivery: { text: string | null; attachment: Attachment | null } | null
   /** auto_card && delivered/completed && owner */
   can_reveal: boolean
+  // ---- v3 (review-v3 §12) — optional so older payloads still type-check ----
+  /** Returned once by POST /orders (never again). */
+  access_code?: string | null
+  after_sales_until?: string | null
+  auto_confirm_at?: string | null
+  after_sales?: AfterSales | null
+  delivery_info?: DeliveryInfo | null
+  source?: string | null
+}
+
+/** v3: how delivered codes are presented (from the product, snapshotted on the order). */
+export interface DeliveryInfo {
+  format_labels: string[]
+  separator: string
+  redeem_url: string | null
+  usage_html: string | null
+}
+
+export type AfterSalesReason = 'not_received' | 'invalid_code' | 'wrong_item' | 'account_issue' | 'other'
+export const AFTER_SALES_REASONS: readonly AfterSalesReason[] = [
+  'not_received',
+  'invalid_code',
+  'wrong_item',
+  'account_issue',
+  'other',
+]
+export type AfterSalesStatus = 'open' | 'processing' | 'replaced' | 'refunded' | 'rejected' | 'resolved'
+export interface AfterSales {
+  id: string
+  order_id: string
+  reason: AfterSalesReason
+  description: string
+  attachment_ids?: string[]
+  /** Optional expanded attachments (if the server includes them). */
+  attachments?: Attachment[]
+  status: AfterSalesStatus
+  resolution_note: string | null
+  created_at: string
+  updated_at: string
+  resolved_at?: string | null
+  /** Staff views and SSE only. */
+  order_no?: string
+}
+export interface AfterSalesInput {
+  reason: AfterSalesReason
+  description: string
+  attachment_ids: string[]
+}
+
+/** v3: POST /lookup result — the order view without buyer identity. */
+export interface LookupOrder {
+  id?: string
+  order_no: string
+  title: string
+  qty: number
+  amount: string
+  currency: string
+  status: OrderStatus
+  delivery_mode: DeliveryMode
+  created_at: string
+  paid_at: string | null
+  delivered_at: string | null
+  manual_delivery?: { text: string | null; attachment: Attachment | null } | null
+  can_reveal?: boolean
+  after_sales_until?: string | null
+  auto_confirm_at?: string | null
+  delivery_info?: DeliveryInfo | null
+}
+
+// ---- v3 site / content / auth ----
+export interface Announcement {
+  version: string | number
+  title: string
+  body_html: string
+  enabled?: boolean
+}
+export interface SiteInfo {
+  brand: string
+  announcement: Announcement | null
+  after_sales_default_hours: number
+  support_hours: string | null
+  pages: { slug: string; title: string }[]
+}
+export type PowScope = 'instant' | 'register' | 'lookup' | 'login'
+export interface PowChallenge {
+  challenge: string
+  bits: number
+  /** Unix timestamp (seconds). */
+  expires_at: number
+}
+export interface PowSolution {
+  challenge: string
+  nonce: string
+}
+export interface InstantCredentials {
+  login: string
+  password: string
+}
+export interface InstantResult {
+  user: User
+  credentials: InstantCredentials
+}
+export interface ArticleSummary {
+  slug: string
+  title: string
+  category: string
+  published_at: string | null
+  updated_at: string | null
+  views: number
+  pinned: boolean
+}
+export interface Article {
+  slug: string
+  title: string
+  category: string
+  kind: 'article' | 'page'
+  body_html: string
+  published_at: string | null
+  updated_at: string | null
+  views: number
 }
 
 export type AgentStatusValue = 'online' | 'away' | 'on_hold' | 'offline'
@@ -179,7 +326,7 @@ export interface Category {
   name: string
 }
 
-export type SendMessageType = 'text' | 'image' | 'voice'
+export type SendMessageType = 'text' | 'image' | 'voice' | 'file'
 export interface SendMessageBody {
   client_msg_id: string
   type: SendMessageType

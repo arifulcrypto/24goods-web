@@ -52,8 +52,40 @@ Update this file in every PR. Phases are defined in [review-v2.md §8](review-v2
   - `bootstrap.sh` generates all secrets.
   - `demo-update.sh` with a systemd timer.
 - **CI:** backend tests against real PG and Redis; frontend checks; Semgrep; gitleaks (scoped allowlist); images + Trivy; **full-stack E2E smoke test**; GHCR publish only after E2E passes.
+- **E2E smoke (v3):** also covers site/articles/recommendations, instant account via PoW, multi-field delivery, order lookup, after-sales (replace + refund), staff card find/void/replace, `file` messages and `/me` self-service; the frontends were reconciled against the real API (see `docs/api-contract.md`).
+
+### 2026-11-06: v3 storefront
+- **Built** (`docs/review-v3.md`, ADR-015…019; API in `docs/api-contract.md`):
+  - list storefront with generated covers and the Kesiv brand config;
+  - announcement modal, recently viewed, recommendations;
+  - instant accounts with self-hosted PoW;
+  - order/card lookup by access code;
+  - multi-field delivery with redeem URL and usage notes;
+  - articles CMS and fixed pages;
+  - chat `.txt` file messages;
+  - after-sales (replace / refund record / reject / resolve) with auto-confirm;
+  - staff card management (fingerprint find, void, replace, batches, expiry);
+  - `/me` self-service including account deletion.
+- **Reviews and fixes:** a payment audit and a security review of the above were done; all findings are fixed with tests:
+  - replacement card ids are validated, and the staff actor is recorded on replacement;
+  - a duplicate notify after a refund is acknowledged quietly;
+  - delivered-order windows are backfilled in migration 0002;
+  - refund is admin-only inside the service, and opening a ticket bumps the order version (auto-confirm race);
+  - instant accounts have no email, and the per-network cap is 200/day with a PoW ramp;
+  - lookup lockout is per `order_no:ip` plus a global per-order cap, and a correct code is never blocked;
+  - markdown images are same-origin only;
+  - card find is audited and limited to 30/h;
+  - the 3rd replacement needs an admin;
+  - account deletion redacts chat messages, deletes uploads and clears ticket text;
+  - `APP_LOOKUP_KEY` is required in prod;
+  - `test_message_rate_limit` is now deterministic (clock pinned).
 
 ## Next
+
+### v3 follow-up
+1. [ ] Owner click-through of the v3 storefront on the demo; collect UX feedback.
+2. [ ] Refund API integration (ZPay) so a refund moves money instead of only recording it; reconciliation flags refunded orders without a gateway refund.
+3. [ ] Email verification before an address can be trusted (see Known issues).
 
 ### MVP-0 wrap-up
 1. [ ] Owner click-through on the demo host, then collect UX feedback.
@@ -85,3 +117,6 @@ Update this file in every PR. Phases are defined in [review-v2.md §8](review-v2
 ## Known issues
 - Local dev Python is 3.10: Pillow there is capped at 12.3 (advisories fixed only in 13.0.0, which needs ≥3.11). CI and the images use 3.12 + Pillow 13.
 - `filelock` (dev-tool transitive) advisories are advisory-only in CI.
+- **Email ownership is unverified** until email verification lands (M1): anyone can set an unverified address on their account via `/me/credentials` or register. Conflicts use a generic message so addresses are not enumerable. Do not use email for account recovery or notifications of secrets yet.
+- **Anonymization retains audit-log IPs** (and the anonymised order/ledger rows): account deletion redacts chat messages, deletes uploads and clears ticket text, but security audit rows keep IP addresses. The seeded privacy page says so.
+- **No refund API:** refunds are recorded (order `refunded` + reversal ledger entries + audit) but the money is returned manually in the Alipay console.

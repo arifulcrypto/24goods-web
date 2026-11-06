@@ -201,3 +201,33 @@ Rollback: `git revert` → CI → new `:main`; or pin `API_IMAGE`/`WEB_IMAGE` to
 | ADR-012 | ZPay Alipay v1 as the first channel | Implemented (mocked) |
 | ADR-013 | Delivery as a separate process with no egress and its own DB and Redis identity | Implemented |
 | ADR-014 | Pull-based deployment from GHCR (no inbound SSH from CI) | Implemented |
+| ADR-015 | List storefront, generated covers and a single Kesiv brand config | Implemented |
+| ADR-016 | Instant accounts + self-hosted PoW instead of guest checkout | Implemented |
+| ADR-017 | Order lookup by order no + access code | Implemented |
+| ADR-018 | Card management without plaintext (fingerprint find, void/replace, batches, expiry) | Implemented |
+| ADR-019 | After-sales, auto-confirm and recorded refunds | Implemented (refund API pending) |
+
+### ADR-015: List storefront, generated covers, Kesiv brand config
+- **Context:** The reference shops (gmailbuy and others) sell by plain, dense lists with tags in the title; buyers of virtual goods compare price and stock, not photos. Most products have no image.
+- **Decision:** The default product view is a grouped list (56 px thumbs, price, stock, Buy) with an optional grid toggle. A missing cover is a deterministic SVG generated client-side from the title and category. Every brand string lives in `packages/shared/src/brand.ts` (+ `APP_BRAND_NAME` for meta).
+- **Consequences:** No image storage or generation endpoint is needed; a rename is a one-line change. Covers can't be customised server-side until a real image is uploaded.
+
+### ADR-016: Instant accounts + self-hosted PoW instead of guest checkout
+- **Context:** Guest checkout would leave chat, after-sales, reveal budgets and order history without an identity, and anonymous orders can't be rate-limited per buyer.
+- **Decision:** One-tap instant account (`POST /auth/instant`): random handle and password returned once, a normal buyer row with `is_instant=true`. Abuse is limited by a self-hosted HMAC-signed, single-use proof-of-work (no third-party captcha because of China reachability and privacy), per-IP limits (3/h, 10/day), a hard per-/24 (/48) cap of 200/day with a soft ramp (+4 / +6 PoW bits above 30 / 100 accounts per net today), at most 2 pending orders, and a 7-day purge of unpaid instant accounts. Instant accounts are created without an email; an email can be added later and is unverified until email verification (M1).
+- **Consequences:** Everything downstream keeps one identity model. CGNAT or office networks are slowed down, not blocked. Email ownership is unverified, so the credentials path uses a generic conflict message and the gap is a tracked known issue.
+
+### ADR-017: Access-code order lookup
+- **Context:** Lookup by order number alone is an IDOR (guessable numbers); buyers who lose instant credentials still need their codes.
+- **Decision:** Every order gets a 10-char Crockford base32 access code (50 bits), stored only as `HMAC-SHA256(lookup_key, order_no || code)`. `POST /lookup` and `/lookup/reveal` need order no + code and never create a session. Order of checks: per-IP limit, verify the code, and only on failure count it per `order_no:ip` (5/h) and per order (50/h). A correct code is never blocked by the per-order counters, so nobody can lock a buyer out.
+- **Consequences:** Reveal goes through the same delivery service and budgets as the signed-in path. At 50 failures/h per order, guessing 2^50 codes is infeasible. `APP_LOOKUP_KEY` is mandatory in prod; rotating it invalidates all existing codes (buyers can rotate individually).
+
+### ADR-018: Card management without plaintext
+- **Context:** Staff need to find, void and replace cards, import batches and expire them, but invariant 1 forbids plaintext outside the vault and the delivery worker.
+- **Decision:** Cards carry a keyed fingerprint (content) and a `lookup_fp` (first field, case-folded), both HMACs with the vault fingerprint key. "Find" recomputes the fingerprint of what the admin pastes and matches; it never decrypts and returns masked values only. Void/replace are state changes with a reason (`defective`, `expired`, ...); batches record imports; `expires_at` drives an hourly void job. `/admin/cards/find` is audited with counts only and limited to 30/h per admin.
+- **Consequences:** Find is an existence oracle for people who already hold a code, so it is admin-only, rate-limited and audited. Replacement claims fresh stock in the delivery worker and records the acting staff member.
+
+### ADR-019: After-sales, auto-confirm and recorded refunds
+- **Context:** Digital goods need a warranty window and a way to settle disputes; unconfirmed orders must not hang forever, and money movement must not be silent.
+- **Decision:** `after_sales_until` and `auto_confirm_at` are snapshotted at delivery (site default 28 d / 72 h manual, 24 h auto_card; per-product override). A buyer opens one ticket per order; staff can process, replace (manual: new text; auto_card: outbox job in the delivery worker), reject, resolve; refund is admin-only and, from the 3rd replacement, replace needs an admin. Opening a ticket bumps `order.version` and pauses auto-confirm; the job re-checks for open tickets under the order lock. A refund only RECORDS the refund (order `refunded`, balanced reversal ledger entries, audit); the money goes back through the Alipay console until a refund API is integrated. Late payment notifies for a refunded order with the same trade number are acknowledged without effect.
+- **Consequences:** The ledger and the gateway can diverge if staff forget the console step; reconciliation (M1) must flag it. A refunded order's cards are never revealable (409).

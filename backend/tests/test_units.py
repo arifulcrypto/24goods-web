@@ -190,3 +190,21 @@ def test_delivery_settings_from_env_and_import_footprint():
         "sys.exit(1 if bad else 0)"
     )
     assert subprocess.run([sys.executable, "-c", code], check=False).returncode == 0  # noqa: S603
+
+
+def test_prod_requires_lookup_and_pow_keys():
+    import base64
+
+    import pytest
+
+    from app.core.config import Settings
+
+    key = base64.b64encode(b"k" * 32).decode()
+    dev = Settings(_env_file=None, env="dev", quote_hmac_key=key)
+    assert dev.lookup_secret()  # derived in dev
+    prod = dev.model_copy(update={"env": "prod"})  # skip the unrelated prod validators
+    with pytest.raises(ValueError, match="APP_LOOKUP_KEY"):
+        prod.model_copy(update={"pow_key": key}).lookup_secret()
+    with pytest.raises(ValueError, match="APP_POW_KEY"):
+        prod.model_copy(update={"lookup_key": key}).pow_secret()
+    assert prod.model_copy(update={"pow_key": key, "lookup_key": key}).lookup_secret()

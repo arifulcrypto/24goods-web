@@ -2,8 +2,10 @@
 import { onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Plus, Search } from '@element-plus/icons-vue'
-import { formatDateTime, formatMoney, type AdminProduct, type Category, type ProductStatus } from '@24goods/shared'
-import { api } from '../api'
+import { formatDateTime, formatMoney, type Category, type ProductStatus } from '@24goods/shared'
+import { ProductThumb } from '@24goods/shared/ui'
+import { api, apiV3 } from '../api'
+import type { AdminProductV3 as AdminProduct } from '../api-v3'
 import ProductDialog from '../components/ProductDialog.vue'
 import { usePaged } from '../composables/usePaged'
 import { useAuthStore } from '../stores/auth'
@@ -18,7 +20,7 @@ const dialog = ref(false)
 const editing = ref<AdminProduct | null>(null)
 
 const table = usePaged<AdminProduct>((page, page_size) =>
-  api.products.list({ q: q.value.trim() || undefined, status: status.value, page, page_size }),
+  apiV3.products.list({ q: q.value.trim() || undefined, status: status.value, page, page_size }),
 )
 let debounce: ReturnType<typeof setTimeout> | null = null
 watch(q, () => {
@@ -83,8 +85,7 @@ async function unpublish(p: AdminProduct) {
         <el-table-column :label="t('products.col.title')" min-width="260">
           <template #default="{ row }">
             <div class="prod">
-              <el-image v-if="row.cover" :src="row.cover" fit="cover" class="thumb" lazy />
-              <div v-else class="thumb ph" />
+              <ProductThumb :src="row.cover" :title="titleOf(row as AdminProduct)" :size="44" :radius="6" class="thumb" />
               <div class="prod-text">
                 <div class="prod-title">{{ titleOf(row as AdminProduct) }}</div>
                 <div class="muted small">{{ catName(row.category) }}</div>

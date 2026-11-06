@@ -1,19 +1,20 @@
 <script setup lang="ts">
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import { goBack } from '@24goods/shared'
+import { LogoMark } from '@24goods/shared/ui'
 defineProps<{ title: string; subtitle: string }>()
 const { t } = useI18n()
 const router = useRouter()
 function back() {
-  if (window.history.length > 1) router.back()
-  else void router.push('/')
+  goBack(router, '/')
 }
 </script>
 
 <template>
   <div class="auth">
     <button type="button" class="back" :aria-label="t('common.back')" @click="back"><van-icon name="arrow-left" size="20" /></button>
-    <div class="brand"><span class="logo" aria-hidden="true">24</span></div>
+    <div class="brand"><LogoMark :size="48" /></div>
     <h1>{{ title }}</h1>
     <p class="muted">{{ subtitle }}</p>
     <div class="auth-card card"><slot /></div>

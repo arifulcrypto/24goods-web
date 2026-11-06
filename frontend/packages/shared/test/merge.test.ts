@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { effectiveQuoteStatus, latestQuotes, mergeMessages, needsTimeDivider } from '../src'
+import { effectiveQuoteStatus, latestQuotes, mergeMessages, messagePreview, needsTimeDivider } from '../src'
 import type { Message, QuoteCardPayload } from '../src'
 
 const msg = (id: number, extra: Partial<Message> = {}): Message => ({
@@ -36,5 +36,13 @@ describe('chat merge', () => {
     expect(needsTimeDivider(undefined, { created_at: '2026-01-01T00:00:00Z' })).toBe(true)
     expect(needsTimeDivider({ created_at: '2026-01-01T00:00:00Z' }, { created_at: '2026-01-01T00:04:00Z' })).toBe(false)
     expect(needsTimeDivider({ created_at: '2026-01-01T00:00:00Z' }, { created_at: '2026-01-01T00:06:00Z' })).toBe(true)
+  })
+})
+
+describe('redacted messages', () => {
+  it('previews as "Message deleted" instead of the (removed) content', () => {
+    const t = (k: string) => k
+    const m = msg(5, { text: null, payload: { redacted: true } })
+    expect(messagePreview(m, t)).toBe('chat.redacted')
   })
 })

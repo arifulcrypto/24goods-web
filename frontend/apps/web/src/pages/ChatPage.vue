@@ -4,6 +4,8 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import {
   formatMoney,
+  goBack,
+  messageFilename,
   isApiError,
   safePayUrl,
   type Conversation,
@@ -12,6 +14,8 @@ import {
 import { AgentStatusDot, ChatMessageList, useConversation } from '@24goods/shared/chat'
 import { api } from '../api'
 import ChatComposer from '../components/ChatComposer.vue'
+import ChatDelivery from '../components/ChatDelivery.vue'
+import { stashAccessCode } from '../lib/attribution'
 import { useConversationsStore } from '../stores/conversations'
 import { useRealtimeStore } from '../stores/realtime'
 import { useSupportStore } from '../stores/support'
@@ -145,6 +149,10 @@ function onSendText(text: string) {
   chat.sendText(text)
   sent()
 }
+function onSendFile(text: string) {
+  chat.sendFile(text, messageFilename())
+  sent()
+}
 function onSendImage(blob: Blob, meta: { width?: number; height?: number; filename: string }) {
   chat.sendImage(blob, meta)
   sent()
@@ -171,6 +179,7 @@ async function acceptQuote(q: QuoteCardPayload) {
   try {
     const order = await api.quotes.accept(q.quote_id)
     orderId = order.id
+    stashAccessCode(order.id, order.access_code)
     chat.patchQuote({ quote_id: q.quote_id, status: 'accepted', order_id: order.id })
     const { pay_url } = await api.orders.pay(order.id)
     const safe = safePayUrl(pay_url)
@@ -198,8 +207,17 @@ async function startNew() {
 }
 
 function back() {
-  if (window.history.length > 1) router.back()
-  else void router.push('/messages')
+  goBack(router, '/messages')
+}
+function chip(kind: 'presales' | 'order' | 'delivery') {
+  if (kind === 'order') void router.push('/orders')
+  else chat.sendText(t(kind === 'presales' ? 'chat.chips.presalesMsg' : 'chat.chips.deliveryMsg'))
+  sent()
+}
+function deliveredOrderId(it: { kind: string; message?: { type: string; payload: unknown } }): string | null {
+  if (it.kind !== 'server' || it.message?.type !== 'system') return null
+  const p = it.message.payload as { event?: string; order_id?: string } | null
+  return p?.event === 'delivered' && typeof p.order_id === 'string' ? p.order_id : null
 }
 </script>
 
@@ -237,7 +255,16 @@ function back() {
       @discard="chat.discard"
     >
       <template #empty>
-        <van-empty image="default" :description="t('chat.empty')" />
+        <van-empty image="default" :description="t('chat.empty')">
+          <div class="chips" role="group" :aria-label="t('chat.chips.label')">
+            <button type="button" class="chip" @click="chip('presales')">{{ t('chat.chips.presales') }}</button>
+            <button type="button" class="chip" @click="chip('order')">{{ t('chat.chips.order') }}</button>
+            <button type="button" class="chip" @click="chip('delivery')">{{ t('chat.chips.delivery') }}</button>
+          </div>
+        </van-empty>
+      </template>
+      <template #item-extra="{ item }">
+        <ChatDelivery v-if="deliveredOrderId(item)" :order-id="deliveredOrderId(item)!" />
       </template>
     </ChatMessageList>
 
@@ -249,6 +276,7 @@ function back() {
       v-else
       :disabled="!chat.conversationId.value"
       @send-text="onSendText"
+      @send-file="onSendFile"
       @send-image="onSendImage"
       @send-voice="onSendVoice"
       @focus="list?.scrollToBottom()"
@@ -322,5 +350,22 @@ function back() {
   border-top: 1px solid var(--c-line);
   color: var(--c-text-2);
   font-size: 13px;
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  margin-top: 8px;
+}
+.chip {
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--c-line);
+  border-radius: 999px;
+  background: var(--c-surface);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
 }
 </style>

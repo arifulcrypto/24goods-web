@@ -1,14 +1,26 @@
 from __future__ import annotations
 
+import re
 import uuid
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+_SOURCE = re.compile(r"^[a-z0-9_-]{1,32}$")
 
 
 class BuyNowIn(BaseModel):
     product_id: uuid.UUID
     qty: int = Field(1, ge=1, le=10)
+    src: str | None = Field(None, max_length=200)
+
+    @field_validator("src")
+    @classmethod
+    def _src(cls, v: str | None) -> str | None:
+        """Traffic-attribution tag: ``[a-z0-9_-]{0,32}``. Anything else is dropped, never
+        stored, so a malformed link can't break checkout."""
+        v = (v or "").strip().lower()
+        return v if _SOURCE.match(v) else None
 
 
 class PayIn(BaseModel):

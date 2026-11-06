@@ -24,6 +24,8 @@ dependencies = [
   "pillow>=12.3; python_version < '3.11'",
   "python-multipart>=0.0.32",
   "httpx>=0.28.1",
+  "markdown-it-py>=3.0",  # article / usage markdown (HTML disabled) ...
+  "nh3>=0.3.0",  # ... then sanitized with an allowlist
 ]
 
 [project.optional-dependencies]
@@ -53,6 +55,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S105", "S106", "S311", "ASYNC110"]
+"app/devtools/seed_content.py" = ["E501"]  # long prose (EN + zh-CN) lines
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

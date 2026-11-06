@@ -52,6 +52,9 @@ PG_SUPERUSER_PASSWORD=$(rnd); APP_OWNER_PASSWORD=$(rnd)
 DB_API_PW=$(rnd); DB_DELIVERY_PW=$(rnd)
 R_API=$(rnd); R_DELIVERY=$(rnd); R_MOCK=$(rnd); R_HEALTH=$(rnd)
 ZPAY_KEY=$(rnd 16)
+# proof-of-work signing key + order access-code HMAC key (base64, 32 random bytes each)
+APP_POW_KEY=$(head -c 32 /dev/urandom | base64 | tr -d '\n')
+APP_LOOKUP_KEY=$(head -c 32 /dev/urandom | base64 | tr -d '\n')
 ADMIN_PW=$(rnd 9); AGENT_PW=$(rnd 9); BUYER_PW=$(rnd 9)
 
 # ---- Redis ACL (hashed passwords; default user disabled) ---------------------------
@@ -115,6 +118,8 @@ APP_VAULT_ACTIVE_KID=$APP_VAULT_ACTIVE_KID
 APP_VAULT_FINGERPRINT_KEY=$APP_VAULT_FINGERPRINT_KEY
 APP_QUOTE_HMAC_KEY=$APP_QUOTE_HMAC_KEY
 APP_INTERNAL_TOKEN=$APP_INTERNAL_TOKEN
+APP_POW_KEY=$APP_POW_KEY
+APP_LOOKUP_KEY=$APP_LOOKUP_KEY
 APP_DELIVERY_URL=http://delivery:8001
 APP_ZPAY_PID=1001
 APP_ZPAY_KEY=$ZPAY_KEY

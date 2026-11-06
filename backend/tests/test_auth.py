@@ -1,6 +1,15 @@
 from __future__ import annotations
 
 from tests.conftest import PASSWORD
+from tests.helpers import solve_pow
+
+
+async def register(c, **over):
+    """POST /auth/register with a freshly solved proof of work."""
+    body = {**REG, **over}
+    body["pow"] = await solve_pow(c, "register")
+    return await c.post("/api/v1/auth/register", json=body)
+
 
 REG = {
     "email": "Alice@Example.com",
@@ -12,7 +21,7 @@ REG = {
 
 async def test_register_login_logout_and_cookie_flags(env):
     c = env.client()
-    r = await c.post("/api/v1/auth/register", json=REG)
+    r = await register(c)
     assert r.status_code == 200, r.text
     assert r.json() == {
         "id": r.json()["id"],
@@ -20,6 +29,8 @@ async def test_register_login_logout_and_cookie_flags(env):
         "display_name": "Alice",
         "role": "buyer",
         "locale": "zh-CN",
+        "is_instant": False,
+        "handle": None,
     }
     cookie = r.headers["set-cookie"]
     assert cookie.startswith("sid=") and "HttpOnly" in cookie and "SameSite=lax" in cookie
@@ -34,14 +45,12 @@ async def test_register_login_logout_and_cookie_flags(env):
 
 async def test_duplicate_and_validation(env):
     c = env.client()
-    assert (await c.post("/api/v1/auth/register", json=REG)).status_code == 200
-    r = await env.client().post("/api/v1/auth/register", json={**REG, "email": "alice@EXAMPLE.com"})
+    assert (await register(c)).status_code == 200
+    r = await register(env.client(), email="alice@EXAMPLE.com")
     assert r.status_code == 409 and r.json()["error"]["code"] == "conflict"
-    r = await env.client().post(
-        "/api/v1/auth/register", json={**REG, "email": "b@x.io", "password": "short"}
-    )
+    r = await register(env.client(), email="b@x.io", password="short")
     assert r.status_code == 422 and r.json()["error"]["code"] == "validation"
-    r = await env.client().post("/api/v1/auth/register", json={**REG, "email": "not-an-email"})
+    r = await register(env.client(), email="not-an-email")
     assert r.status_code == 422
 
 
@@ -86,12 +95,20 @@ async def test_login_rate_limit_per_ip(env):
     assert r.json()["error"]["code"] == "rate_limited" and "retry-after" in r.headers
 
 
+async def _login(env, body: dict, ip: str | None = None):
+    """Login; after 3 failures the API demands a proof of work (428): solve it and retry."""
+    c = env.client()
+    headers = {"X-Forwarded-For": ip} if ip else {}
+    r = await c.post("/api/v1/auth/login", json=body, headers=headers)
+    if r.status_code == 428:
+        assert r.json()["error"]["code"] == "pow_required"
+        pow_ = await solve_pow(c, "login")
+        r = await c.post("/api/v1/auth/login", json={**body, "pow": pow_}, headers=headers)
+    return r
+
+
 async def _fail(env, email: str, ip: str) -> int:
-    r = await env.client().post(
-        "/api/v1/auth/login",
-        json={"email": email, "password": "wrong"},
-        headers={"X-Forwarded-For": ip},
-    )
+    r = await _login(env, {"email": email, "password": "wrong"}, ip)
     return r.status_code
 
 
@@ -122,9 +139,7 @@ async def test_successful_logins_do_not_consume_budget(env):
     body = {"email": "happy@example.com", "password": PASSWORD}
     for _ in range(4):
         assert await _fail(env, "happy@example.com", "127.0.0.1") == 401
-    codes = [
-        (await env.client().post("/api/v1/auth/login", json=body)).status_code for _ in range(12)
-    ]
+    codes = [(await _login(env, body)).status_code for _ in range(12)]
     assert codes == [200] * 12  # 12 > every limit: only failures are counted
 
 
@@ -132,7 +147,7 @@ async def test_register_rate_limit(env):
     c = env.client()
     codes = []
     for i in range(6):
-        r = await c.post("/api/v1/auth/register", json={**REG, "email": f"u{i}@example.com"})
+        r = await register(c, email=f"u{i}@example.com")
         codes.append(r.status_code)
     assert codes == [200] * 5 + [429]
 
