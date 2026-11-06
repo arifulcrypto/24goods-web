@@ -122,11 +122,18 @@ async def _window(db: AsyncSession, r: Reseller, since: datetime | None) -> dict
 async def stats(db: AsyncSession, r: Reseller, rcfg: dict[str, Any]) -> dict[str, Any]:
     now = _now()
     today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    t = await _window(db, r, today)
+    w = await _window(db, r, now - timedelta(days=7))
     return {
-        "today": await _window(db, r, today),
-        "last_7_days": await _window(db, r, now - timedelta(days=7)),
+        "today": t,
+        "last_7_days": w,
         "total": await _window(db, r, None),
         "balances": await balances(db, r, rcfg),
+        # flat aliases used by the buyer web app
+        "today_orders": t["orders"],
+        "today_earnings_minor": t["earnings_minor"],
+        "week_orders": w["orders"],
+        "week_earnings_minor": w["earnings_minor"],
     }
 
 
@@ -369,6 +376,7 @@ async def list_products(
         items.append(
             {
                 "id": str(p.id),
+                "product_id": str(p.id),
                 "title": pick(p.title_i18n, lang),
                 "cover": p.images[0] if p.images else None,
                 "currency": p.currency,
@@ -519,6 +527,7 @@ async def list_orders(db: AsyncSession, r: Reseller, page: Page) -> dict[str, An
                 "title": o.title,
                 "qty": o.qty,
                 "amount": fmt(o.amount_minor),
+                "amount_minor": o.amount_minor,
                 "currency": o.currency,
                 "markup_minor": o.reseller_markup_minor,
                 "status": o.status,

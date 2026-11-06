@@ -12,8 +12,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import pow as powmod
 from app.core.deps import Page, client_ip, get_db, get_lang, get_page, get_res, get_tenant_id
+from app.core.features import feature_on
 from app.core.ratelimit import count, enforce
 from app.core.resources import Resources
+from app.core.settings_v5 import section
 from app.core.storefront import Storefront, get_storefront
 from app.modules.auth.service import net_of
 from app.modules.content import service
@@ -33,6 +35,11 @@ async def site(
 ) -> dict:
     out = await service.public_site(db, tenant_id, lang, res.settings.brand_name)
     out["storefront"] = sf.public(lang) if sf is not None else None  # review-v5 s7
+    ts = await tenant_settings(db, tenant_id)
+    if feature_on(ts, "resellers"):
+        out["resellers"] = {
+            "base_domain": section(ts, "resellers")["base_domain"]
+        }  # slug preview in the apply form
     if sf is not None:
         out["brand"] = sf.store_name  # white label: never the platform brand on a storefront
     return out

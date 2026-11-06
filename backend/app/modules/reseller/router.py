@@ -73,6 +73,7 @@ async def apply(
     )
     out = await service.me_view(db, r, rcfg)
     out["signup_order"] = order  # pay it with POST /orders/{no}/pay; None when the fee is 0
+    out["order_no"] = order["order_no"] if order else None
     return out
 
 

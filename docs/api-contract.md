@@ -334,3 +334,56 @@ data: {…Order}
 | `APP_MAX_PENDING_ORDERS_INSTANT` | 2 | unpaid orders per instant account (registered: `APP_MAX_PENDING_ORDERS`=5) |
 | `APP_INSTANT_PURGE_DAYS` | 7 | purge window for unpaid instant accounts |
 | `APP_LOOKUP_PER_IP_HOUR` | 10 | `/lookup` attempts per IP |
+
+
+## Commerce v5 additions (promo codes, resellers) — backend `feat/v5-be-com`
+
+Authoritative spec: [review-v5.md](review-v5.md) §6, §7, §12. Errors use the usual envelope.
+
+**Promo codes.** `POST /promo/validate` `{code, items:[{product_id, qty}], turnstile_token?}` ->
+`{code, discount_minor, eligible_subtotal_minor, description}`; 20/min per user/IP. 422 codes:
+`promo_invalid | promo_not_started | promo_expired | promo_exhausted | promo_user_limit |
+promo_min_subtotal | promo_not_applicable`. `promo_code?` is accepted by `POST /orders`,
+`POST /cart/quote` (never errors: result in `promo: null | {code, discount_minor} | {error}`) and
+`POST /checkout`. Quote adds `discount`, `discount_minor`, per-line `discount_minor`, `promo`;
+`total = subtotal - discount + fee` (fee per line on the discounted line). Order and checkout
+views add `kind`, `discount`, `discount_minor`, `promo_code`, `reseller` (`null | {store_name}`;
+staff also `slug`); checkout view adds `discount`, `discount_minor`. Promo is `promo_not_applicable`
+on reseller storefronts and quote orders. Toggles: `features.promo_codes`, `features.cart`
+(403 `feature_disabled`).
+
+Admin (admin role): `GET/POST /admin/promo-codes`, `GET /admin/promo-codes/generate` -> `{code}`,
+`PATCH /admin/promo-codes/{id}` (code immutable), `GET /admin/promo-codes/{id}/redemptions`.
+Create body: `{code?, kind: percent|fixed, value (percent = permille), min_subtotal_minor,
+max_discount_minor?, starts_at?, ends_at?, usage_limit?, per_user_limit, product_ids,
+category_slugs, enabled, note?}`.
+
+**Storefront.** Resolved from Host `{slug}.{resellers.base_domain}` else `X-Storefront: {slug}`
+(only when `features.resellers`; non-active slug = main store). Catalog list/detail/ids/
+recommended, cart quote, `POST /orders`, `POST /checkout` use storefront prices (base + markup;
+hidden products 404). `GET /site` adds `storefront: null | {slug, store_name, logo_url, welcome,
+white_label: true}`, overrides `brand` with the store name, and `resellers: {base_domain}` when the
+feature is on. New conversations record `reseller_id`.
+
+**Reseller center** (`features.resellers`, else 403): `GET /reseller/me` (`null` if none),
+`POST /reseller/apply` `{slug, store_name, contact?, turnstile_token?}` -> me view +
+`signup_order` (order view; pay with `POST /orders/{no}/pay`) + `order_no`; errors `slug_taken`,
+`slug_reserved`, `reseller_exists`. `PATCH /reseller/me`; `GET /reseller/products?q&page` (items
+`{id, product_id, title, cover, base_price(_minor), markup_kind, markup_value, markup_minor,
+price(_minor), hidden, custom}`); `PUT /reseller/products/{id}` `{markup_kind?, markup_value?,
+hidden?}` and `DELETE` (204; 422 `markup_too_high`); `GET /reseller/orders?page`
+(`{order_no, title, qty, amount, amount_minor, markup_minor, status, created_at, buyer(masked)}`);
+`GET /reseller/stats` (`today/last_7_days/total {orders, earnings_minor}`, `balances`, plus flat
+`today_orders, today_earnings_minor, week_orders, week_earnings_minor`); `GET/POST
+/reseller/payouts` (`{amount_minor}`; errors `payout_account_required`, `payout_below_minimum`,
+`payout_open`, `insufficient_balance`).
+
+Admin: `GET /admin/resellers?status&q&page`, `GET/PATCH /admin/resellers/{id}` `{status?:
+active|suspended, markup_kind?, markup_value?}`, `GET /admin/payouts?status`, `POST
+/admin/payouts/{id}/decide` `{action: paid|rejected, note}`; `GET /admin/orders?reseller_id=` and
+admin order views gain `reseller_markup_minor`, `kind`, `discount_minor`, `promo_code`, `reseller`.
+
+**Ledger accounts.** payment: `gateway_clearing:zpay +amount`, `sales_revenue -(subtotal - markup)`,
+`reseller_payable:{id} -markup`, `promo_discount +discount`, `surcharge_revenue -fee`; sign-up:
+`reseller_signup_revenue -subtotal`; refund = exact mirror; payout paid: `reseller_payable:{id}
++amount`, `cash:payouts -amount`.
