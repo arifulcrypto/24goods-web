@@ -8,7 +8,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import AfterSales, Attachment, Order, Product
+from app.models import AfterSales, Attachment, Checkout, Order, Product
 from app.modules.common.views import after_sales_view, order_view
 
 
@@ -52,6 +52,17 @@ async def order_views(
     if pids:
         products = {p.id: p for p in await db.scalars(select(Product).where(Product.id.in_(pids)))}
     tickets = await latest_tickets(db, [o.id for o in orders])
+    co_ids = {o.checkout_id for o in orders if o.checkout_id}
+    checkout_nos: dict[uuid.UUID, str] = {}
+    if co_ids:
+        checkout_nos = {
+            cid: no
+            for cid, no in (
+                await db.execute(
+                    select(Checkout.id, Checkout.checkout_no).where(Checkout.id.in_(co_ids))
+                )
+            ).all()
+        }
     return [
         order_view(
             o,
@@ -62,6 +73,8 @@ async def order_views(
             product=products.get(o.product_id) if o.product_id else None,
             ticket=tickets.get(o.id),
             lang=lang,
+            viewer_is_staff=owner_id is None,
+            checkout_no=checkout_nos.get(o.checkout_id) if o.checkout_id else None,
         )
         for o in orders
     ]

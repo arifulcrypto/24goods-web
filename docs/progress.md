@@ -92,6 +92,20 @@ Update this file in every PR. Phases are defined in [review-v2.md §8](review-v2
 - Seed production mode (`APP_SEED_DEMO=false`): tenant, one admin (`APP_SEED_ADMIN_EMAIL`), pages, tutorials, site settings and a disabled announcement; no demo users, products, cards or orders. Idempotent, never overwrites admin edits.
 - `scripts/prod.sh`: sync, bootstrap, deploy, status, logs, backup (+ nightly cron, 14 generations) and read-only smoke checks. See `docs/production.md`.
 
+### 2026-11-06: commerce v4 backend (branch `feat/v4-be`)
+- Spec: [review-v4.md](review-v4.md); ADR-021; API in `api-contract.md` ("Commerce v4 additions").
+- **Done (server side):**
+  - Buyer-paid channel surcharge (ceil, default 30 permille for Alipay), order `subtotal/fee/fee_rate`, ledger `surcharge_revenue` and refund reversal.
+  - Cart quote, combined checkout, checkout pay/cancel, checkout notify path sharing one settlement helper, checkout expiry, payables cap.
+  - Buyer/staff cancel with gateway re-query first; staff close needs a reason.
+  - Product "order information" popup config, `orders.buyer_input` (never audited), PATCH input, buyer chat message after payment.
+  - Support welcome/quick questions in site settings, `GET /site/payment-channels`.
+  - Staff `product_card` messages built by the server.
+  - Markdown product descriptions (`description_html`), idempotent seed backfill, `POST /admin/content/images`.
+  - Global per-IP rate limit middleware (default OFF, admin switch, fail open).
+  - Tests: `backend/tests/test_commerce_v4.py` (27 tests). Legacy tests run with a 0 permille surcharge configured in the `env` fixture.
+- **Follow-ups:** file a GitHub issue to encrypt `orders.buyer_input` at rest; payment-auditor and security-reviewer passes on `payments/settle.py`, `orders/cancel.py`, `orders/checkout.py`; reconcile ledger vs gateway for surcharge.
+
 ## Next
 
 ### v3 follow-up

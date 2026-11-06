@@ -254,6 +254,7 @@ async def send_user_message(
     attachment_id: uuid.UUID | None,
     client_msg_id: str,
     store: FileStore | None = None,
+    product_id: uuid.UUID | None = None,
 ) -> tuple[Message, bool]:
     payload: dict[str, Any] | None = None
     existing = await db.scalar(
@@ -267,7 +268,18 @@ async def send_user_message(
         return existing, False
     if conv.status != "open":
         raise InvalidState("Conversation is closed")
-    if type == "text":
+    if type == "product_card":
+        # staff push a product link; the payload comes from the product row, never the client
+        if role != "agent":
+            raise Validation("product_card messages are staff-only")
+        if product_id is None:
+            raise Validation("product_id is required")
+        product = await get_active_product(db, product_id)  # active + same tenant (RLS)
+        buyer = await db.get(User, conv.buyer_id)
+        payload = product_card_payload(product, buyer.locale if buyer else "en")
+        text = None
+        attachment_id = None
+    elif type == "text":
         text = (text or "").strip()
         if not text:
             raise Validation("text is required")

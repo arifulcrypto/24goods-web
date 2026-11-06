@@ -83,6 +83,23 @@ def _format(value: str | None) -> str | None:
     return v or None
 
 
+class BuyerInputConfig(BaseModel):
+    """products.buyer_input: the "Order information" popup (docs/review-v4.md §4)."""
+
+    enabled: bool = False
+    required: bool = True
+    multiline: bool = True
+    max_len: int = Field(2000, ge=1, le=4000)
+    title_i18n: dict[str, str] = Field(default_factory=dict)
+    prompt_i18n: dict[str, str] = Field(default_factory=dict)
+    placeholder_i18n: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("title_i18n", "prompt_i18n", "placeholder_i18n")
+    @classmethod
+    def _texts(cls, v: dict[str, str]) -> dict[str, str]:
+        return _i18n(v, max_len=1000, required=False)
+
+
 class ProductIn(BaseModel):
     title_i18n: dict[str, str]
     description_i18n: dict[str, str] = Field(default_factory=dict)
@@ -99,6 +116,7 @@ class ProductIn(BaseModel):
     usage_i18n: dict[str, str] = Field(default_factory=dict)
     after_sales_hours: int | None = Field(None, ge=0, le=8760)
     group_sort: int = Field(0, ge=-1000, le=1000)
+    buyer_input: BuyerInputConfig | None = None
 
     @field_validator("delivery_format")
     @classmethod
@@ -156,6 +174,7 @@ class ProductPatch(BaseModel):
     usage_i18n: dict[str, str] | None = None
     after_sales_hours: int | None = Field(None, ge=0, le=8760)
     group_sort: int | None = Field(None, ge=-1000, le=1000)
+    buyer_input: BuyerInputConfig | None = None  # explicit null clears the popup
 
     @field_validator("delivery_format")
     @classmethod

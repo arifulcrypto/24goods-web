@@ -352,7 +352,8 @@ async def _refund(db: AsyncSession, order: Order, staff: User, ip: str | None) -
         order_id=order.id,
         memo=f"refund {order.order_no}",
         lines=[
-            Line("sales_revenue", order.amount_minor),
+            Line("sales_revenue", order.subtotal_minor),
+            *([Line("surcharge_revenue", order.fee_minor)] if order.fee_minor > 0 else []),
             Line("gateway_clearing:zpay", -order.amount_minor),
         ],
     )

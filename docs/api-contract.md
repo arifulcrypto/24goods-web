@@ -244,6 +244,54 @@ All `*_html` fields (articles, announcement, product usage) are rendered server-
 | GET `/admin/ledger` | `page` | Paginated `{txn_id, at, account, amount, currency, memo, order_id}` | admin |
 | GET `/admin/audit` | `page` | Paginated `{at, actor, action, target, ip, detail}` | admin |
 
+## Commerce v4 additions (cart, channel fee, cancel, order information, rate limit)
+
+Spec: [review-v4.md](review-v4.md). These rows extend or override the tables above.
+
+**Error envelope.** Machine-readable extras are echoed flat inside `error` and mirrored in `error.data`: `{"error": {"code": "pay_via_checkout", "message": "...", "checkout_no": "C...", "data": {"checkout_no": "C..."}}}`. New codes: `fee_channel_mismatch` 409, `pay_via_checkout` 409 `{checkout_no}`, `already_paid` 409, `buyer_input_required` 422, `out_of_stock` 409 `{product_id}`.
+
+**Money.** `amount = subtotal + fee`, `fee = ceil(subtotal * permille / 1000)` (integer maths), computed by the server at order creation with the channel rate in `tenants.settings.payments.channels` (default `zpay_alipay` enabled at 30 permille; 0-200). `orders.fee_permille` records the applied rate.
+
+**OrderView additions:** `subtotal, fee, fee_rate ("3%"), checkout_no|null, buyer_input|null (owner and staff only), cancel_reason|null`.
+**Product additions:** `description_html` (markdown rendered at write time), `buyer_input` (public config resolved to the request locale, or `null` when the popup is off): `{enabled, required, multiline, max_len, title, prompt, placeholder}`; an empty title falls back to "Order information" / 「下单信息」.
+**AdminProduct addition:** `buyer_input` in the i18n form `{enabled, required, multiline, max_len (1-4000), title_i18n, prompt_i18n, placeholder_i18n}` (each text <= 1000 chars) or `null`; PATCH with `null` clears it.
+
+| Method & path | Body / query | Returns | Notes |
+|---|---|---|---|
+| GET `/site/payment-channels` | `lang` | `[{id, label, fee_rate, permille}]` | Enabled channels only. Shown, never trusted |
+| GET `/site` | | + `support: {welcome, quick_questions[]}` | Resolved to the locale (quick questions fall back to `en` when empty) |
+| POST `/cart/quote` | `{items: [{product_id, qty (1-10), buyer_input?}]}` (1-20) | `{lines: [{product_id, title, cover, unit_price, currency, stock, available, max_qty, needs_input, input_missing, qty, line_subtotal}], subtotal, fee, fee_rate, total, currency}` | No login. Unavailable lines (unknown/draft product, `qty > max_qty`) are flagged `available:false` and left out of the totals. `needs_input` = popup enabled and required; `input_missing` (extra) = required but the request line carried no value. `fee` is the sum of per-line ceilings, i.e. exactly what checkout charges |
+| POST `/checkout` | `{items: [{product_id, qty, buyer_input?}], source?}` | `{checkout: CheckoutView, orders: OrderView[], access_codes: {order_no: code}}` | One order per line + one `checkouts` row, one transaction. 409 `out_of_stock` `{product_id}` (stock summed per product), 422 mixed currency / `buyer_input_required`, 404 unknown/draft product, 409 when the open-payables cap (pending single orders + pending checkouts) is reached. Access codes are returned once |
+| GET `/checkouts/{no}` | | `CheckoutView` | Owner only (404 otherwise) |
+| POST `/checkouts/{no}/pay` | `{channel}` | `{pay_url}` | `out_trade_no = checkout_no`, `money = checkout.amount`; checkout and every order must be `pending_payment` and unexpired (else 409 `invalid_state`) |
+| POST `/checkouts/{no}/cancel` | `{reason?}` | `CheckoutView` | See *Cancel* |
+| POST `/orders/{ref}/pay` | | | An order with a `checkout_id` gets 409 `pay_via_checkout` `{checkout_no}`; a channel whose rate differs from `order.fee_permille` gets 409 `fee_channel_mismatch`; a disabled channel 503 |
+| POST `/orders` | + `buyer_input?` | | Validated against the product config; ignored when the product has no popup |
+| POST `/orders/{ref}/cancel` | `{reason?}` (<= 200) | `OrderView` | See *Cancel* |
+| PATCH `/orders/{ref}/input` | `{buyer_input}` | `OrderView` | Owner; `pending_payment` or `paid`; if `paid` a new buyer chat message "(updated)" is posted |
+
+`CheckoutView = {checkout_no, status (pending_payment|paid|cancelled|expired|manual_review), amount, currency, expires_at, order_nos[], subtotal, fee, fee_rate, channel, paid_at, created_at}`.
+
+**Cancel.** Only `pending_payment`. An order inside a checkout cancels the WHOLE checkout. If a pay URL was ever issued (`channel` set) the gateway is re-queried FIRST (no row locks held): paid -> settled through the normal settlement path and the call answers 409 `already_paid`; query failure -> 503 (retry). Effects: orders `cancelled` + `cancel_reason`, order events, audit, system message `order_cancelled` (`payload.by = "buyer"|"staff"`, text "Order cancelled by buyer" / "Order closed by support: <reason>"). A later notify still records the money and moves the order to `manual_review`.
+
+**Buyer input.** Trimmed, control characters other than `\n\t` stripped, `max_len` enforced (422), required empty -> 422 `buyer_input_required`. Stored in `orders.buyer_input` (plaintext behind RLS, MVP; a follow-up issue tracks encryption at rest). Never logged, never in audit rows (they record `{"buyer_input": true}`). After a successful (non-late) payment a `text` message from the BUYER (`📝 Order G... · <title>\n<value>`, truncated to 2000 chars) is posted into the buyer's open conversation (created if needed), idempotent per order.
+
+**Notify.** `out_trade_no` starting with `C` takes the checkout path with the same pipeline (signature, pid, exact amount vs `checkout.amount_minor`, status, re-query, replay guard), then one `Payment(checkout_id)` and the same per-order transition for each member. If the checkout itself is expired/cancelled every member is late (`manual_review`, money recorded, nothing fulfilled).
+
+**Ledger per payment:** `gateway_clearing:zpay +amount`, `sales_revenue -subtotal`, `surcharge_revenue -fee` (fee > 0) plus the unchanged gateway-cost entry. Refund reversal: `sales_revenue +subtotal`, `surcharge_revenue +fee`, `gateway_clearing:zpay -amount`.
+
+| Admin method & path | Body | Returns | Notes |
+|---|---|---|---|
+| GET/PUT `/admin/site` | + `payments: {channels: {zpay_alipay: {enabled, surcharge_permille (0-200)}}}`, `support: {welcome_i18n: {en, zh-CN}, quick_questions_i18n: {en: string[], zh-CN: string[]}}` (<= 6 each, <= 60 chars), `rate_limit: {enabled, limit (10-10000), window_s (1-3600)}` | same keys | Partial update. `rate_limit` is also mirrored to Redis `cfg:ratelimit:<tenant_id>` |
+| GET `/admin/orders` | `q` also matches `checkout_no` | rows + `subtotal, fee, fee_rate, checkout_no, buyer_input, cancel_reason` | |
+| GET `/admin/orders/{id}` | | + `checkout_orders: [{id, order_no, title, amount, status}]` (when in a checkout), `payment: {channel, trade_no, amount, currency, scope: "order"|"checkout", at}|null` | |
+| PATCH `/admin/orders/{id}/price` | `{amount, reason}` | `Order` | `amount` is the new SUBTOTAL; the fee is recomputed at the order's rate. 409 for a member of a checkout |
+| POST `/admin/orders/{id}/cancel` | `{reason}` (required, 1-500) | `Order` | Same rules as the buyer cancel (whole checkout, gateway re-query first) |
+| POST `/admin/conversations/{id}/messages` | `{client_msg_id, type: "product_card", product_id}` | `Message` | Staff only (buyers get 422). Payload built by the server from the active product of the same tenant (404 otherwise) |
+| POST `/admin/content/images` | multipart `file` | `{id, url: "/api/v1/files/<id>"}` | Staff. Same pipeline as every image (magic bytes, re-encode, EXIF strip, 8 MB); stored as a public attachment |
+
+**Global access-frequency limit** (default OFF): per-IP fixed window on `/api/*`, except the notify path, `/api/v1/realtime/*`, `/api/v1/admin/*` and non-`/api` paths (`/healthz`). Over the limit: HTTP 429, `Retry-After`, body exactly `{"code":429,"msg":"Access is too frequent. Please try again later."}` (not the error envelope). Fails open on Redis errors; config cached in-process 5 s.
+
 ## Internal (never routed by Caddy)
 
 | Service | Endpoint | Purpose |

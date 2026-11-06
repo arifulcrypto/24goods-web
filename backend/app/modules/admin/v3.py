@@ -35,8 +35,9 @@ async def put_site(
     request: Request,
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
+    res: Resources = Depends(get_res),
 ) -> dict:
-    return await content.update_site(db, admin, body, client_ip(request))
+    return await content.update_site(db, admin, body, client_ip(request), res.redis)
 
 
 # ---------------------------------------------------------------- articles

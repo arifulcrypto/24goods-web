@@ -19,11 +19,14 @@ from app.core.db import tenant_session
 from app.core.deps import Page
 from app.core.errors import (
     Conflict,
+    FeeChannelMismatch,
     InvalidState,
     NotFound,
     OutOfStock,
+    PayViaCheckout,
     RateLimited,
     Unavailable,
+    Validation,
 )
 from app.core.i18n import pick
 from app.core.money import to_decimal
@@ -31,19 +34,29 @@ from app.core.ratelimit import release, reserve
 from app.core.resources import Resources
 from app.models import (
     CardStock,
+    Checkout,
     Conversation,
     Message,
     Order,
+    Product,
     Quote,
     Tenant,
     User,
 )
 from app.modules.catalog.service import claimable, get_active_product
 from app.modules.chat import service as chat
-from app.modules.chat.messages import insert_message, order_card_messages, post_system
+from app.modules.chat.messages import (
+    ensure_open_conversation,
+    insert_message,
+    order_card_messages,
+    post_system,
+)
+from app.modules.common.buyerinput import chat_text, normalize_value
 from app.modules.common.orderviews import latest_tickets, one_view, order_views  # noqa: F401
 from app.modules.common.views import REVEALABLE, order_card_payload
+from app.modules.content.site import tenant_settings
 from app.modules.orders.events import add_event, snapshot
+from app.modules.payments.channels import channel_cfg, split_amount
 from app.modules.realtime.publish import publish_order
 
 log = logging.getLogger("app.orders")
@@ -65,6 +78,32 @@ async def available_stock(db: AsyncSession, product_id: uuid.UUID) -> int:
     return int(n or 0)
 
 
+async def count_payables(db: AsyncSession, buyer_id: uuid.UUID) -> int:
+    """Open payables: pending single orders plus pending checkouts (a checkout's member
+    orders do not count on their own)."""
+    singles = await db.scalar(
+        select(func.count(Order.id)).where(
+            Order.buyer_id == buyer_id,
+            Order.status == "pending_payment",
+            Order.checkout_id.is_(None),
+        )
+    )
+    checkouts = await db.scalar(
+        select(func.count(Checkout.id)).where(
+            Checkout.buyer_id == buyer_id, Checkout.status == "pending_payment"
+        )
+    )
+    return int(singles or 0) + int(checkouts or 0)
+
+
+async def enforce_payables_cap(db: AsyncSession, settings: Settings, buyer: User) -> None:
+    """Serialize creation per buyer (row lock), then cap open unpaid payables."""
+    await db.execute(select(User.id).where(User.id == buyer.id).with_for_update())
+    cap = settings.max_pending_orders_instant if buyer.is_instant else settings.max_pending_orders
+    if await count_payables(db, buyer.id) >= cap:
+        raise Conflict(f"At most {cap} unpaid orders; pay or wait for one to expire")
+
+
 async def create_order(
     db: AsyncSession,
     *,
@@ -80,19 +119,24 @@ async def create_order(
     conversation_id: uuid.UUID | None,
     ip: str | None,
     source: str | None = None,
+    buyer_input: str | None = None,
+    fee_permille: int | None = None,
+    checkout_id: uuid.UUID | None = None,
+    expires_at: datetime | None = None,
+    enforce_cap: bool = True,
 ) -> tuple[Order, Message | None]:
-    """Create a pending order. The one-time plaintext access code is left on
-    ``order.access_code_plain`` (never persisted, never logged)."""
-    # Serialize order creation per buyer (row lock), then cap open unpaid orders.
-    await db.execute(select(User.id).where(User.id == buyer.id).with_for_update())
-    pending = await db.scalar(
-        select(func.count(Order.id)).where(
-            Order.buyer_id == buyer.id, Order.status == "pending_payment"
-        )
-    )
-    cap = settings.max_pending_orders_instant if buyer.is_instant else settings.max_pending_orders
-    if int(pending or 0) >= cap:
-        raise Conflict(f"At most {cap} unpaid orders; pay or wait for one to expire")
+    """Create a pending order. ``amount_minor`` is the SUBTOTAL: the channel fee is added
+    here, server-side (``fee = ceil(subtotal * permille / 1000)``) and the order stores the
+    applied rate. The one-time plaintext access code is left on ``order.access_code_plain``
+    (never persisted, never logged)."""
+    if enforce_cap:
+        await enforce_payables_cap(db, settings, buyer)
+    if fee_permille is None:
+        cfg = channel_cfg(await tenant_settings(db, buyer.tenant_id))
+        if not cfg.enabled:
+            raise Unavailable("Payment channel is not available")
+        fee_permille = cfg.permille
+    fee, total = split_amount(amount_minor, fee_permille)
     order_no = new_order_no()
     code = accesscode.generate()
     order = Order(
@@ -106,13 +150,17 @@ async def create_order(
         conversation_id=conversation_id,
         title=title[:200],
         qty=qty,
-        amount_minor=amount_minor,
-        subtotal_minor=amount_minor,  # v4 base: fee split lands with the checkout module
+        amount_minor=total,
+        subtotal_minor=amount_minor,
+        fee_minor=fee,
+        fee_permille=fee_permille,
+        checkout_id=checkout_id,
+        buyer_input=buyer_input,
         currency=currency,
         status="pending_payment",
         version=1,
         delivery_mode=delivery_mode,
-        expires_at=utcnow() + timedelta(minutes=settings.order_ttl_minutes),
+        expires_at=expires_at or utcnow() + timedelta(minutes=settings.order_ttl_minutes),
     )
     db.add(order)
     await db.flush()
@@ -127,7 +175,13 @@ async def create_order(
         target=f"order:{order.id}",
         after=snapshot(order),
         ip=ip,
-        detail={"quote_id": str(quote_id) if quote_id else None, "source": source},
+        detail={
+            "quote_id": str(quote_id) if quote_id else None,
+            "source": source,
+            "checkout_id": str(checkout_id) if checkout_id else None,
+            "fee_permille": fee_permille,
+            **({"buyer_input": True} if buyer_input else {}),  # never the value
+        },
     )
     msg = None
     if conversation_id is not None:
@@ -151,10 +205,12 @@ async def buy_now(
     qty: int,
     ip: str | None,
     source: str | None = None,
+    buyer_input: str | None = None,
 ) -> tuple[Order, Message | None]:
     product = await get_active_product(db, product_id)
+    value = normalize_value(product.buyer_input, buyer_input)
     if product.delivery_mode == "auto_card" and await available_stock(db, product.id) < qty:
-        raise OutOfStock("Not enough stock")
+        raise OutOfStock("Not enough stock", extra={"product_id": str(product.id)})
     conv = await chat.open_conversation_for(db, buyer)
     order, msg = await create_order(
         db,
@@ -170,6 +226,7 @@ async def buy_now(
         conversation_id=conv.id if conv else None,
         ip=ip,
         source=source,
+        buyer_input=value,
     )
     await db.commit()
     return order, msg
@@ -232,18 +289,84 @@ async def list_own(db: AsyncSession, user: User, page: Page, lang: str = "en") -
     return page.wrap(await order_views(db, rows, owner_id=user.id, lang=lang), int(total))
 
 
+async def check_channel(db: AsyncSession, tenant_id: uuid.UUID, channel: str) -> int:
+    """The channel's current surcharge permille; 503 when it is switched off."""
+    cfg = channel_cfg(await tenant_settings(db, tenant_id), channel)
+    if not cfg.enabled:
+        raise Unavailable("Payment channel is not available")
+    return cfg.permille
+
+
 async def pay_url(db: AsyncSession, res: Resources, ref: str, user: User, channel: str) -> str:
     order = await get_owned(db, ref, user, lock=True)
+    if order.checkout_id is not None:
+        # a member order is never paid on its own: its money only arrives via the checkout
+        checkout_no = await db.scalar(
+            select(Checkout.checkout_no).where(Checkout.id == order.checkout_id)
+        )
+        raise PayViaCheckout(
+            "This order is part of a cart checkout; pay the checkout",
+            extra={"checkout_no": checkout_no or ""},
+        )
     if order.status != "pending_payment":
         raise InvalidState("Order is not awaiting payment")
     if order.expires_at is not None and order.expires_at <= utcnow():
         raise InvalidState("Order has expired")
     if not (res.settings.zpay_pid and res.settings.zpay_key):
         raise Unavailable("Payment channel not configured")
+    permille = await check_channel(db, order.tenant_id, channel)
+    if permille != order.fee_permille:
+        raise FeeChannelMismatch("The payment fee changed; please recreate the order")
     order.channel = channel
     url = res.zpay.build_pay_url(order.order_no, order.title, to_decimal(order.amount_minor))
     await db.commit()
     return url
+
+
+async def update_input(
+    db: AsyncSession, ref: str, user: User, value: str | None, ip: str | None
+) -> tuple[Order, Message | None]:
+    """Buyer fixes the order information while the order is pending or paid (not delivered)."""
+    order = await get_owned(db, ref, user, lock=True)
+    if order.status not in ("pending_payment", "paid"):
+        raise InvalidState("The order information can no longer be changed")
+    product = await db.get(Product, order.product_id) if order.product_id else None
+    cfg = product.buyer_input if product else None
+    if not (cfg and cfg.get("enabled")):
+        raise Validation("This order has no order information")
+    new = normalize_value(cfg, value)
+    if new is None:
+        raise Validation("buyer_input is required")
+    order.buyer_input = new
+    order.version += 1
+    await audit(
+        db,
+        tenant_id=order.tenant_id,
+        action="order.input_updated",
+        actor_id=user.id,
+        actor_role=user.role,
+        target=f"order:{order.id}",
+        ip=ip,
+        detail={"buyer_input": True},  # never the value
+    )
+    msg = None
+    if order.status == "paid":  # CS already acted on the first value: tell them it changed
+        conv_id = order.conversation_id or await ensure_open_conversation(
+            db, tenant_id=order.tenant_id, buyer_id=order.buyer_id
+        )
+        order.conversation_id = conv_id
+        msg, _ = await insert_message(
+            db,
+            tenant_id=order.tenant_id,
+            conversation_id=conv_id,
+            sender_id=order.buyer_id,
+            sender_role="buyer",
+            type="text",
+            text=chat_text(order.order_no, order.title, new).replace("📝", "📝 (updated)", 1),
+            client_msg_id=f"order-input:{order.id}:{order.version}",
+        )
+    await db.commit()
+    return order, msg
 
 
 async def confirm(
@@ -362,52 +485,88 @@ async def _call_reveal(
     raise Unavailable("Delivery service unavailable")
 
 
+async def _expire_order(db: AsyncSession, tid: uuid.UUID, order: Order) -> Message | None:
+    before = snapshot(order)
+    order.status = "expired"
+    order.version += 1
+    await add_event(
+        db, order, "pending_payment", "expired", actor_kind="system", reason="payment_timeout"
+    )
+    await audit(
+        db,
+        tenant_id=tid,
+        action="order.expired",
+        target=f"order:{order.id}",
+        before=before,
+        after=snapshot(order),
+    )
+    return await post_system(
+        db,
+        tenant_id=tid,
+        conversation_id=order.conversation_id,
+        event="expired",
+        order_id=str(order.id),
+    )
+
+
 async def expire_pending(
     maker: async_sessionmaker[AsyncSession], res: Resources | None = None
 ) -> int:
-    """Expire pending orders past ``expires_at`` and offered quotes past theirs."""
+    """Expire pending checkouts (with their orders), pending single orders and offered
+    quotes past their ``expires_at``."""
     async with tenant_session(maker, None) as s:
         tenant_ids = list(await s.scalars(select(Tenant.id)))
     total = 0
     for tid in tenant_ids:
         async with tenant_session(maker, tid) as db:
             now = utcnow()
-            rows = list(
+            rows: list[Order] = []
+            msgs: dict[uuid.UUID, Message | None] = {}
+            checkouts = list(
+                await db.scalars(
+                    select(Checkout)
+                    .where(Checkout.status == "pending_payment", Checkout.expires_at < now)
+                    .order_by(Checkout.id)
+                    .with_for_update(skip_locked=True)
+                    .limit(200)
+                )
+            )
+            for co in checkouts:  # checkout first, then its orders ORDER BY id
+                members = list(
+                    await db.scalars(
+                        select(Order)
+                        .where(Order.checkout_id == co.id, Order.status == "pending_payment")
+                        .order_by(Order.id)
+                        .with_for_update()
+                    )
+                )
+                co.status = "expired"
+                await audit(
+                    db,
+                    tenant_id=tid,
+                    action="checkout.expired",
+                    target=f"checkout:{co.id}",
+                    before={"status": "pending_payment"},
+                    after={"status": "expired"},
+                )
+                for order in members:
+                    msgs[order.id] = await _expire_order(db, tid, order)
+                    rows.append(order)
+            singles = list(
                 await db.scalars(
                     select(Order)
-                    .where(Order.status == "pending_payment", Order.expires_at < now)
+                    .where(
+                        Order.status == "pending_payment",
+                        Order.expires_at < now,
+                        Order.checkout_id.is_(None),  # members expire with their checkout
+                    )
                     .with_for_update(skip_locked=True)
                     .limit(500)
                 )
             )
-            msgs: dict[uuid.UUID, Message | None] = {}
-            for order in rows:
-                before = snapshot(order)
-                order.status = "expired"
-                order.version += 1
-                await add_event(
-                    db,
-                    order,
-                    "pending_payment",
-                    "expired",
-                    actor_kind="system",
-                    reason="payment_timeout",
-                )
-                await audit(
-                    db,
-                    tenant_id=tid,
-                    action="order.expired",
-                    target=f"order:{order.id}",
-                    before=before,
-                    after=snapshot(order),
-                )
-                msgs[order.id] = await post_system(
-                    db,
-                    tenant_id=tid,
-                    conversation_id=order.conversation_id,
-                    event="expired",
-                    order_id=str(order.id),
-                )
+            for order in singles:
+                msgs[order.id] = await _expire_order(db, tid, order)
+                rows.append(order)
             expired_quotes = (
                 await db.execute(
                     update(Quote)
