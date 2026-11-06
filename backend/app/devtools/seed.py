@@ -29,6 +29,7 @@ from app.core.vaultkeys import build_sealer
 from app.devtools.covers import cover_png
 from app.devtools.seed_content import (
     ANNOUNCEMENT,
+    ANNOUNCEMENT_PROD,
     ARTICLES,
     PAGES,
     SUPPORT_HOURS,
@@ -370,7 +371,7 @@ async def _products(
     return out
 
 
-async def _content(db: AsyncSession, tid: uuid.UUID, admin: User) -> None:
+async def _content(db: AsyncSession, tid: uuid.UUID, admin: User, *, demo: bool = True) -> None:
     """Fixed pages, tutorial articles, announcement v1 (created once, never overwritten)."""
     for spec in PAGES:
         if await db.scalar(select(Article.id).where(Article.slug == spec["slug"])) is None:
@@ -407,7 +408,7 @@ async def _content(db: AsyncSession, tid: uuid.UUID, admin: User) -> None:
             )
     tenant = await db.get(Tenant, tid)
     if tenant is not None and "announcement" not in (tenant.settings or {}):
-        ann = dict(ANNOUNCEMENT)
+        ann = dict(ANNOUNCEMENT if demo else ANNOUNCEMENT_PROD)
         ann["body_html_i18n"] = render_i18n(ann["body_i18n"])
         tenant.settings = {
             **(tenant.settings or {}),
@@ -417,8 +418,30 @@ async def _content(db: AsyncSession, tid: uuid.UUID, admin: User) -> None:
     await db.commit()
 
 
+async def _run_prod(settings: Settings, database_url: str, admin_pw: str) -> None:
+    """Production seed: tenant, ONE admin, fixed pages, articles, site settings. No demo data."""
+    engine = make_engine(database_url, pool_size=2, max_overflow=0)
+    maker = make_sessionmaker(engine)
+    try:
+        tid = await _tenant(maker, settings)
+        async with tenant_session(maker, tid) as db:
+            email = settings.seed_admin_email.strip().lower()
+            existing = await db.scalar(select(User).where(User.email == email))
+            if existing is None:
+                admin = await _user(db, tid, email, "admin", "Admin", "en", admin_pw)
+            else:  # never reset a password the admin may have changed
+                admin = existing
+            await _content(db, tid, admin, demo=False)
+        log.info("prod seed complete: tenant=%s admin=%s", tid, email)
+    finally:
+        await engine.dispose()
+
+
 async def run(settings: Settings, database_url: str) -> None:
     admin_pw = _password("APP_SEED_ADMIN_PASSWORD")
+    if not settings.seed_demo:
+        await _run_prod(settings, database_url, admin_pw)
+        return
     agent_pw = _password("APP_SEED_AGENT_PASSWORD")
     buyer_pw = _password("APP_SEED_BUYER_PASSWORD")
     sealer = build_sealer(settings)

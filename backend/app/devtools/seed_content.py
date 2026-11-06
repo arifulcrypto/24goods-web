@@ -243,4 +243,15 @@ ANNOUNCEMENT = {
     },
 }
 
+# Production seed: disabled by default; the admin can enable/edit it in the console.
+ANNOUNCEMENT_PROD = {
+    "version": 1,
+    "enabled": False,
+    "title_i18n": {"en": "Welcome to Kesiv", "zh-CN": "欢迎来到 Kesiv"},
+    "body_i18n": {
+        "en": "Please read the Help center before buying.",
+        "zh-CN": "购买前请先阅读帮助中心。",
+    },
+}
+
 SUPPORT_HOURS = {"en": "Daily 09:00–23:00 (UTC+8)", "zh-CN": "每天 09:00–23:00（UTC+8）"}

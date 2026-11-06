@@ -1,0 +1,28 @@
+# Production override (same images and base compose as the demo/dev stack):
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env up -d --wait
+#
+# Edge: Cloudflare (proxied) -> :8088 HTTPS (Origin CA cert + Authenticated Origin Pulls). See docs/production.md.
+# mockpay stays behind `profiles: [demo]` in the base file: never pass --profile demo in prod.
+
+services:
+  postgres:
+    command: >
+      postgres -c shared_buffers=96MB -c work_mem=4MB -c maintenance_work_mem=32MB
+      -c max_connections=40 -c effective_cache_size=256MB -c wal_buffers=2MB
+      -c password_encryption=scram-sha-256 -c log_min_duration_statement=500
+    mem_limit: 512m
+
+  api:
+    mem_limit: 384m
+
+  web:
+    environment:
+      ADMIN_ALLOW_IPS: ${ADMIN_ALLOW_IPS:?run deploy/bootstrap.sh (MODE=prod)}
+    ports: !override
+      - "8088:8088"            # no port 80; the :80 site in Caddyfile.prod is loopback-only (healthcheck)
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+      - ./Caddyfile.prod:/etc/caddy/Caddyfile:ro
+      - ./certs:/certs:ro      # origin.pem, origin.key, cf-origin-pull-ca.pem

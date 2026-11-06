@@ -2,6 +2,8 @@
 # Generate all demo/runtime secrets for deploy/docker-compose.yml.
 #
 #   PUBLIC_BASE_URL=http://203.0.113.10 ./deploy/bootstrap.sh          # first run
+#   MODE=prod PUBLIC_BASE_URL=https://shop.kesiv.com ZPAY_ENV_FILE=/path/zpay.env ./deploy/bootstrap.sh
+#                                                                    # production (docs/production.md)
 #   ./deploy/bootstrap.sh --force                                     # regenerate (wipe volumes too!)
 #
 # Writes (all git-ignored):
@@ -25,9 +27,31 @@ PUBLISH_HTTP="${PUBLISH_HTTP:-80}"
 SITE_ADDRESS="${SITE_ADDRESS:-:80}"
 PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-http://127.0.0.1:${PUBLISH_HTTP}}"
 COOKIE_SECURE="${COOKIE_SECURE:-false}"
+MODE="${MODE:-demo}"             # demo | prod
+ADMIN_ALLOW_IPS="${ADMIN_ALLOW_IPS:-141.98.198.150 38.175.222.75}"   # prod: space-separated IPs/CIDRs
+ADMIN_EMAIL="${ADMIN_EMAIL:-admin@kesiv.com}"
+case "$MODE" in demo|prod) ;; *) echo "MODE must be demo|prod" >&2; exit 1 ;; esac
 APP_UID=999   # uid of user `app` in the API image (see backend/Dockerfile)
 APP_GID=999
 REDIS_UID=999 # uid of user `redis` in redis:7-alpine
+
+if [[ "$MODE" == "prod" ]]; then
+  [[ "$PUBLIC_BASE_URL" == https://* ]] || { echo "prod: PUBLIC_BASE_URL must be https://..." >&2; exit 1; }
+  [[ -n "${ZPAY_ENV_FILE:-}" && -r "$ZPAY_ENV_FILE" ]] || { echo "prod: ZPAY_ENV_FILE must point to a readable file" >&2; exit 1; }
+  zget() { grep -E "^$1=" "$ZPAY_ENV_FILE" | head -1 | cut -d= -f2- | tr -d '\r"' || true; }
+  PROD_ZPAY_PID=$(zget APP_ZPAY_PID); PROD_ZPAY_KEY=$(zget APP_ZPAY_KEY)
+  PROD_ZPAY_GATEWAY=$(zget APP_ZPAY_GATEWAY); PROD_ZPAY_API_BASE=$(zget APP_ZPAY_API_BASE)
+  [[ -n "$PROD_ZPAY_PID" && -n "$PROD_ZPAY_KEY" && "$PROD_ZPAY_GATEWAY" == https://* ]] \
+    || { echo "prod: ZPAY_ENV_FILE needs APP_ZPAY_PID, APP_ZPAY_KEY and an https:// APP_ZPAY_GATEWAY" >&2; exit 1; }
+  [[ -z "$PROD_ZPAY_API_BASE" || "$PROD_ZPAY_API_BASE" == https://* ]] \
+    || { echo "prod: APP_ZPAY_API_BASE must be https:// or empty" >&2; exit 1; }
+  COOKIE_SECURE=true
+  APP_ENV_NAME=prod
+  SEED_DEMO=false
+else
+  APP_ENV_NAME=dev
+  SEED_DEMO=true
+fi
 
 rnd() { openssl rand -hex "${1:-24}"; }
 sha() { printf '%s' "$1" | sha256sum | cut -d' ' -f1; }
@@ -56,6 +80,7 @@ ZPAY_KEY=$(rnd 16)
 APP_POW_KEY=$(head -c 32 /dev/urandom | base64 | tr -d '\n')
 APP_LOOKUP_KEY=$(head -c 32 /dev/urandom | base64 | tr -d '\n')
 ADMIN_PW=$(rnd 9); AGENT_PW=$(rnd 9); BUYER_PW=$(rnd 9)
+if [[ "$MODE" == "prod" ]]; then ADMIN_PW=$(rnd 16); fi   # strong: internet-facing
 
 # ---- Redis ACL (hashed passwords; default user disabled) ---------------------------
 cat > secrets/users.acl <<EOF
@@ -63,8 +88,10 @@ user default off
 user health on #$(sha "$R_HEALTH") resetkeys resetchannels -@all +@connection
 user api on #$(sha "$R_API") ~* &* +@all -@dangerous
 user delivery on #$(sha "$R_DELIVERY") ~rl:* ~reveal:* resetchannels &rt:* -@all +@connection +get +set +incr +incrby +decrby +expire +ttl +multi +exec +discard +publish +eval +evalsha
-user mockpay on #$(sha "$R_MOCK") ~mockpay:* resetchannels -@all +@connection +get +set +del +expire +exists +ttl
 EOF
+if [[ "$MODE" == "demo" ]]; then
+  echo "user mockpay on #$(sha "$R_MOCK") ~mockpay:* resetchannels -@all +@connection +get +set +del +expire +exists +ttl" >> secrets/users.acl
+fi
 as_root chown "$REDIS_UID:$REDIS_UID" secrets/users.acl
 as_root chmod 0400 secrets/users.acl
 
@@ -77,6 +104,7 @@ API_IMAGE=$API_IMAGE
 WEB_IMAGE=$WEB_IMAGE
 PUBLISH_HTTP=$PUBLISH_HTTP
 SITE_ADDRESS=$SITE_ADDRESS
+ADMIN_ALLOW_IPS="$ADMIN_ALLOW_IPS"
 PG_SUPERUSER_PASSWORD=$PG_SUPERUSER_PASSWORD
 APP_OWNER_PASSWORD=$APP_OWNER_PASSWORD
 REDIS_HEALTH_PASSWORD=$R_HEALTH
@@ -84,14 +112,14 @@ EOF
 
 # ---- per-service env (least privilege) ------------------------------------------
 cat > env/migrate.env <<EOF
-APP_ENV=dev
+APP_ENV=$APP_ENV_NAME
 APP_MIGRATE_DATABASE_URL=postgresql+asyncpg://app_owner:$APP_OWNER_PASSWORD@$PG
 APP_DB_API_PASSWORD=$DB_API_PW
 APP_DB_DELIVERY_PASSWORD=$DB_DELIVERY_PW
 EOF
 
 cat > env/seed.env <<EOF
-APP_ENV=dev
+APP_ENV=$APP_ENV_NAME
 APP_MIGRATE_DATABASE_URL=postgresql+asyncpg://app_owner:$APP_OWNER_PASSWORD@$PG
 APP_REDIS_URL=$(redis_url api "$R_API")
 APP_UPLOAD_DIR=/data/uploads
@@ -100,12 +128,15 @@ APP_VAULT_ACTIVE_KID=$APP_VAULT_ACTIVE_KID
 APP_VAULT_FINGERPRINT_KEY=$APP_VAULT_FINGERPRINT_KEY
 APP_QUOTE_HMAC_KEY=$APP_QUOTE_HMAC_KEY
 APP_SEED_ADMIN_PASSWORD=$ADMIN_PW
-APP_SEED_AGENT_PASSWORD=$AGENT_PW
-APP_SEED_BUYER_PASSWORD=$BUYER_PW
+APP_SEED_DEMO=$SEED_DEMO
+APP_SEED_ADMIN_EMAIL=$ADMIN_EMAIL
 EOF
+if [[ "$MODE" == "demo" ]]; then
+  printf 'APP_SEED_AGENT_PASSWORD=%s\nAPP_SEED_BUYER_PASSWORD=%s\n' "$AGENT_PW" "$BUYER_PW" >> env/seed.env
+fi
 
 cat > env/api.env <<EOF
-APP_ENV=dev
+APP_ENV=$APP_ENV_NAME
 APP_DATABASE_URL=postgresql+asyncpg://app_api:$DB_API_PW@$PG
 APP_REDIS_URL=$(redis_url api "$R_API")
 APP_INTERNAL_HOST=0.0.0.0
@@ -121,14 +152,25 @@ APP_INTERNAL_TOKEN=$APP_INTERNAL_TOKEN
 APP_POW_KEY=$APP_POW_KEY
 APP_LOOKUP_KEY=$APP_LOOKUP_KEY
 APP_DELIVERY_URL=http://delivery:8001
+EOF
+if [[ "$MODE" == "prod" ]]; then
+  {
+    echo "APP_ZPAY_PID=$PROD_ZPAY_PID"
+    echo "APP_ZPAY_KEY=$PROD_ZPAY_KEY"
+    echo "APP_ZPAY_GATEWAY=$PROD_ZPAY_GATEWAY"
+    if [[ -n "$PROD_ZPAY_API_BASE" ]]; then echo "APP_ZPAY_API_BASE=$PROD_ZPAY_API_BASE"; fi
+  } >> env/api.env
+else
+  cat >> env/api.env <<EOF2
 APP_ZPAY_PID=1001
 APP_ZPAY_KEY=$ZPAY_KEY
 APP_ZPAY_GATEWAY=/mockpay
 APP_ZPAY_API_BASE=http://mockpay:8002
-EOF
+EOF2
+fi
 
 cat > env/delivery.env <<EOF
-APP_ENV=dev
+APP_ENV=$APP_ENV_NAME
 APP_DELIVERY_DATABASE_URL=postgresql+asyncpg://app_delivery:$DB_DELIVERY_PW@$PG
 APP_REDIS_URL=$(redis_url delivery "$R_DELIVERY")
 APP_VAULT_PRIVATE_KEYS_FILE=/run/secrets/vault_private_keys
@@ -139,8 +181,14 @@ APP_HEALTH_PORT=8001
 APP_REVEAL_MAX_PER_MIN=60
 EOF
 
+if [[ "$MODE" == "prod" ]]; then
+  # Settings' prod guard applies to every process that loads app.core.config
+  for f in migrate seed delivery; do echo "APP_COOKIE_SECURE=true" >> "env/$f.env"; done
+fi
+
+if [[ "$MODE" == "demo" ]]; then
 cat > env/mockpay.env <<EOF
-APP_ENV=dev
+APP_ENV=$APP_ENV_NAME
 APP_REDIS_URL=$(redis_url mockpay "$R_MOCK")
 APP_ZPAY_PID=1001
 APP_ZPAY_KEY=$ZPAY_KEY
@@ -149,12 +197,22 @@ APP_MOCKPAY_PORT=8002
 APP_MOCKPAY_NOTIFY_BASE=http://api:8000
 APP_HEALTH_PORT=8002
 EOF
+fi
 
-cat > secrets/demo-credentials.txt <<EOF
+if [[ "$MODE" == "prod" ]]; then
+  cat > secrets/prod-admin.txt <<EOF
+Kesiv production admin - $PUBLIC_BASE_URL/admin/
+admin : $ADMIN_EMAIL / $ADMIN_PW
+EOF
+  CRED=secrets/prod-admin.txt
+else
+  cat > secrets/demo-credentials.txt <<EOF
 24goods demo (MOCK DATA ONLY) — $PUBLIC_BASE_URL
 buyer : buyer@demo.local / $BUYER_PW      -> $PUBLIC_BASE_URL/
 agent : agent@demo.local / $AGENT_PW      -> $PUBLIC_BASE_URL/admin/
 admin : admin@demo.local / $ADMIN_PW      -> $PUBLIC_BASE_URL/admin/
 EOF
-chmod 600 env/*.env .env secrets/demo-credentials.txt secrets/secrets.env
-echo "bootstrap ok — credentials in deploy/secrets/demo-credentials.txt"
+  CRED=secrets/demo-credentials.txt
+fi
+chmod 600 env/*.env .env "$CRED" secrets/secrets.env
+echo "bootstrap ok — credentials in deploy/$CRED"

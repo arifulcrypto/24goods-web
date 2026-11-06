@@ -1,0 +1,119 @@
+# Kesiv production edge — Caddy 2.11, behind Cloudflare (proxied) on port 8088.
+# Mounted over /etc/caddy/Caddyfile by docker-compose.prod.yml. See docs/production.md, ADR-020.
+#
+#   Visitor --TLS--> Cloudflare --TLS (Origin CA cert, SSL Full strict)--> :8088 here
+#   Cloudflare presents its client cert (Authenticated Origin Pulls); we REQUIRE it,
+#   so a direct hit on the origin IP without that cert fails the TLS handshake.
+#
+# Behaviour is kept in sync with deploy/Caddyfile (security_headers / app snippets); differences:
+#   - no /mockpay
+#   - API gets the real visitor IP (CF-Connecting-IP, only trusted from Cloudflare ranges)
+#   - /admin, /admin/*, /api/v1/admin/* only from ADMIN_ALLOW_IPS (space-separated IPs/CIDRs)
+#
+# Required env (docker-compose.prod.yml): ADMIN_ALLOW_IPS
+# Required files in ./certs (read-only mount at /certs): origin.pem, origin.key (Cloudflare Origin CA),
+#   cf-origin-pull-ca.pem (the CA that signed the client cert Cloudflare presents for this hostname;
+#   our own per-hostname AOP CA, or Cloudflare's shared origin-pull CA if the zone-level cert is used)
+#   Certs are NOT in git; scripts/prod.sh sync copies them from /root/.secrets/prod-certs.
+
+{
+	admin off
+	# TLS is configured explicitly per site; no ACME, no automatic redirects.
+	auto_https off
+
+	servers {
+		# Cloudflare ranges, fetched 2026-11-06 from https://www.cloudflare.com/ips-v4 and /ips-v6.
+		# Refresh occasionally (they change rarely): docs/production.md.
+		trusted_proxies static 173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 103.31.4.0/22 141.101.64.0/18 108.162.192.0/18 190.93.240.0/20 188.114.96.0/20 197.234.240.0/22 198.41.128.0/17 162.158.0.0/15 104.16.0.0/13 104.24.0.0/14 172.64.0.0/13 131.0.72.0/22 2400:cb00::/32 2606:4700::/32 2803:f800::/32 2405:b500::/32 2405:8100::/32 2a06:98c0::/29 2c0f:f248::/32
+		client_ip_headers CF-Connecting-IP
+		trusted_proxies_strict
+		timeouts {
+			read_header 10s
+			idle 2m
+		}
+	}
+}
+
+(security_headers) {
+	# `?` = set only if the upstream didn't: the API's stricter per-response headers
+	# (e.g. `Content-Security-Policy: sandbox` on /api/v1/files/*) must win (security review M6).
+	header {
+		?Strict-Transport-Security "max-age=63072000; includeSubDomains"
+		?X-Content-Type-Options "nosniff"
+		?X-Frame-Options "DENY"
+		?Referrer-Policy "strict-origin-when-cross-origin"
+		?Permissions-Policy "camera=(), geolocation=(), microphone=(self)"
+		?Cross-Origin-Opener-Policy "same-origin"
+		?Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+		-Server
+	}
+}
+
+(app) {
+	import security_headers
+	encode zstd gzip
+	request_body {
+		max_size 10MB
+	}
+
+	# Staff surfaces: allowlisted IPs only (client_ip = real visitor IP from CF-Connecting-IP).
+	@admin_denied {
+		path /admin /admin/* /api/v1/admin/*
+		not client_ip {$ADMIN_ALLOW_IPS}
+	}
+	handle @admin_denied {
+		respond "Forbidden" 403
+	}
+
+	# API (incl. SSE: flush immediately, long-lived; the API pings every 15 s < Cloudflare's 100 s idle cut)
+	handle /api/* {
+		reverse_proxy api:8000 {
+			flush_interval -1
+			header_up X-Forwarded-For {client_ip}
+			transport http {
+				read_timeout 0
+			}
+		}
+	}
+
+	redir /admin /admin/ 308
+	handle_path /admin/* {
+		root * /srv/admin
+		@immutable path /assets/*
+		header @immutable Cache-Control "public, max-age=31536000, immutable"
+		try_files {path} /index.html
+		file_server
+	}
+
+	# Buyer SPA (mobile-first)
+	handle {
+		root * /srv/web
+		@immutable path /assets/*
+		header @immutable Cache-Control "public, max-age=31536000, immutable"
+		@html path / /index.html
+		header @html Cache-Control "no-cache"
+		try_files {path} /index.html
+		file_server
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}
+
+https://:8088 {
+	tls /certs/origin.pem /certs/origin.key {
+		client_auth {
+			mode require_and_verify
+			trust_pool file /certs/cf-origin-pull-ca.pem
+		}
+	}
+	import app
+}
+
+# Container healthcheck only (loopback, not published): wget http://127.0.0.1:80/
+http://:80 {
+	bind 127.0.0.1
+	respond "ok" 200
+}
