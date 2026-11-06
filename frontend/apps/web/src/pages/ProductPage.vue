@@ -17,21 +17,22 @@ import {
 } from '@24goods/shared'
 import { api } from '../api'
 import BuySheet from '../components/BuySheet.vue'
+import BuyerInputSheet from '../components/BuyerInputSheet.vue'
 import MiniStrip from '../components/MiniStrip.vue'
 import { cleanSrc, rememberSrc } from '../lib/attribution'
-import { useAuthStore } from '../stores/auth'
-import { showImagePreview, toastError } from '../ui'
+import { useCartStore } from '../stores/cart'
+import { showImagePreview, showSuccessToast, showToast, toastError } from '../ui'
 
 const { t, locale } = useI18n()
 const route = useRoute()
 const router = useRouter()
-const auth = useAuthStore()
+const cart = useCartStore()
 
 const product = ref<Product | null>(null)
 const loading = ref(true)
 const notFound = ref(false)
 const sheet = ref(false)
-const chatting = ref(false)
+const inputSheet = ref(false)
 const slide = ref(0)
 const related = ref<ProductSummary[]>([])
 
@@ -80,27 +81,31 @@ const as = computed(() => afterSalesBadge(product.value?.after_sales_hours))
 const labels = computed(() => formatLabels(product.value?.delivery_format, product.value?.delivery_separator))
 const redeem = computed(() => safeLinkUrl(product.value?.redeem_url))
 
-function requireLogin(): boolean {
-  if (auth.loggedIn) return true
-  void router.push({ name: 'login', query: { redirect: route.fullPath } })
-  return false
+/** CS entry: /chat creates an instant account when needed (no login redirect). */
+function chat() {
+  if (!product.value) return
+  void router.push({ path: '/chat', query: { product: product.value.id } })
+}
+function report() {
+  void router.push('/chat')
 }
 
-async function chat() {
-  if (!product.value || !requireLogin() || chatting.value) return
-  chatting.value = true
-  try {
-    const conv = await api.conversations.open(product.value.id)
-    await router.push({ path: '/chat', query: { cid: conv.id } })
-  } catch (e) {
-    toastError(e)
-  } finally {
-    chatting.value = false
+function addToCart() {
+  if (!product.value || soldOut.value) return
+  if (product.value.buyer_input?.enabled) {
+    inputSheet.value = true
+    return
   }
+  doAdd(null)
 }
-async function report() {
-  if (!requireLogin()) return
-  await router.push('/chat')
+function doAdd(input: string | null) {
+  if (!product.value) return
+  if (!cart.add(product.value.id, 1, input)) {
+    showToast(t('cart.full'))
+    return
+  }
+  inputSheet.value = false
+  showSuccessToast(t('cart.added'))
 }
 
 function openBuy() {
@@ -111,6 +116,13 @@ function openBuy() {
 function preview(i: number) {
   if (!images.value.length) return
   showImagePreview({ images: images.value, startPosition: i, closeable: true })
+}
+/** Tap-to-preview for images inside the rendered description. */
+function previewDesc(ev: MouseEvent) {
+  const el = ev.target
+  if (!(el instanceof HTMLImageElement)) return
+  const all = Array.from((ev.currentTarget as HTMLElement).querySelectorAll('img')).map((i) => i.src)
+  showImagePreview({ images: all, startPosition: Math.max(0, all.indexOf(el.src)), closeable: true })
 }
 function back() {
   goBack(router, '/')
@@ -178,14 +190,15 @@ function back() {
       <section class="section card ask">
         <span class="ask-q">{{ t('product.questions') }}</span>
         <div class="ask-btns">
-          <button type="button" class="ask-btn" :disabled="chatting" @click="chat"><van-icon name="chat-o" aria-hidden="true" /> {{ t('product.chatUs') }}</button>
+          <button type="button" class="ask-btn" @click="chat"><van-icon name="chat-o" aria-hidden="true" /> {{ t('product.chatUs') }}</button>
           <button type="button" class="ask-btn" @click="report"><van-icon name="warning-o" aria-hidden="true" /> {{ t('product.report') }}</button>
         </div>
       </section>
 
       <section class="section card desc">
         <h2>{{ t('product.description') }}</h2>
-        <p class="desc-text">{{ product.description || t('product.noDescription') }}</p>
+        <SafeHtml v-if="product.description_html" class="desc-html" :html="product.description_html" @click="previewDesc" />
+        <p v-else class="desc-text">{{ product.description || t('product.noDescription') }}</p>
       </section>
       <section v-if="redeem || product.usage_html" class="section card desc">
         <h2>{{ t('delivery.howToUse') }}</h2>
@@ -196,9 +209,21 @@ function back() {
       <div class="bar-spacer" />
 
       <van-action-bar class="dock-bar" safe-area-inset-bottom>
-        <van-action-bar-icon icon="chat-o" :text="t('product.chat')" :disabled="chatting" @click="chat" />
+        <van-action-bar-icon icon="chat-o" :text="t('product.chat')" @click="chat" />
+        <van-action-bar-icon
+          icon="cart-o"
+          :text="t('product.cartShort')"
+          :badge="cart.count ? (cart.count > 99 ? '99+' : cart.count) : ''"
+          to="/cart"
+        />
         <van-action-bar-button
-          type="primary"
+          type="warning"
+          :text="t('product.addToCart')"
+          :disabled="soldOut"
+          @click="addToCart"
+        />
+        <van-action-bar-button
+          type="danger"
           class="buy-btn"
           :text="soldOut ? t('product.outOfStock') : t('product.buyNow')"
           :disabled="soldOut"
@@ -207,6 +232,7 @@ function back() {
       </van-action-bar>
 
       <BuySheet v-model:show="sheet" :product="product" :qty="buyQty" :src="src" />
+      <BuyerInputSheet v-model:show="inputSheet" :config="product.buyer_input ?? null" @confirm="doAdd" />
     </template>
   </div>
 </template>
@@ -363,6 +389,17 @@ function back() {
   overflow-wrap: anywhere;
   color: var(--c-text-2);
   line-height: 1.7;
+}
+.desc-html {
+  line-height: 1.7;
+  color: var(--c-text-2);
+  overflow-wrap: anywhere;
+}
+.desc-html :deep(img) {
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+  cursor: zoom-in;
 }
 .bar-spacer {
   height: calc(64px + var(--safe-bottom));

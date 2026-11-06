@@ -11,12 +11,10 @@ import MiniStrip from '../components/MiniStrip.vue'
 import ProductList from '../components/ProductList.vue'
 import SupportPill from '../components/SupportPill.vue'
 import { useProductFeed } from '../composables/useProductFeed'
-import { useAuthStore } from '../stores/auth'
 
 const VIEW_KEY = 'kesiv.view'
 const { t, locale } = useI18n()
 const router = useRouter()
-const auth = useAuthStore()
 const categories = ref<Category[]>([])
 const category = ref('')
 const refreshing = ref(false)
@@ -95,7 +93,7 @@ function buy(p: ProductSummary) {
   buySheet.value = true
 }
 function openSupport() {
-  void router.push(auth.loggedIn ? '/chat' : { name: 'login', query: { redirect: '/chat' } })
+  void router.push('/chat')
 }
 </script>
 

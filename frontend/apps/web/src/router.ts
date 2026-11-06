@@ -7,11 +7,13 @@ declare module 'vue-router' {
     /** Requires a signed-in user. */
     auth?: boolean
     /** Show the bottom tabbar. */
-    tab?: 'home' | 'messages' | 'orders' | 'me'
+    tab?: 'home' | 'messages' | 'cart' | 'orders' | 'me'
     /** Use the wider 960 px column (Home / Search grids). */
     wide?: boolean
     /** Signed-in users are bounced away (login/register). */
     guestOnly?: boolean
+    /** Hide the floating CS bubble (chat, login, register). */
+    nobubble?: boolean
   }
 }
 
@@ -23,13 +25,15 @@ const routes: RouteRecordRaw[] = [
   { path: '/lookup', name: 'lookup', component: () => import('./pages/LookupPage.vue') },
   { path: '/help', name: 'help', component: () => import('./pages/HelpPage.vue') },
   { path: '/a/:slug', name: 'article', component: () => import('./pages/ArticlePage.vue') },
-  { path: '/chat', name: 'chat', component: () => import('./pages/ChatPage.vue'), meta: { auth: true } },
+  // /chat needs no sign-in: the page creates an instant account when there is none (review-v4 §5).
+  { path: '/chat', name: 'chat', component: () => import('./pages/ChatPage.vue'), meta: { nobubble: true } },
+  { path: '/cart', name: 'cart', component: () => import('./pages/CartPage.vue'), meta: { tab: 'cart' } },
   { path: '/messages', name: 'messages', component: () => import('./pages/MessagesPage.vue'), meta: { auth: true, tab: 'messages' } },
   { path: '/orders', name: 'orders', component: () => import('./pages/OrdersPage.vue'), meta: { auth: true, tab: 'orders' } },
   { path: '/orders/:id', name: 'order', component: () => import('./pages/OrderDetailPage.vue'), meta: { auth: true } },
   { path: '/me', name: 'me', component: () => import('./pages/MePage.vue'), meta: { tab: 'me' } },
-  { path: '/login', name: 'login', component: () => import('./pages/LoginPage.vue'), meta: { guestOnly: true } },
-  { path: '/register', name: 'register', component: () => import('./pages/RegisterPage.vue'), meta: { guestOnly: true } },
+  { path: '/login', name: 'login', component: () => import('./pages/LoginPage.vue'), meta: { guestOnly: true, nobubble: true } },
+  { path: '/register', name: 'register', component: () => import('./pages/RegisterPage.vue'), meta: { guestOnly: true, nobubble: true } },
   { path: '/:pathMatch(.*)*', name: 'not-found', component: () => import('./pages/NotFoundPage.vue') },
 ]
 

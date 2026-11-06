@@ -171,3 +171,11 @@ a {
   margin: 0 auto;
   max-width: var(--shell-w);
 }
+
+/* URL confirm dialog: the full link must stay readable */
+.link-confirm .van-dialog__message {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+  text-align: start;
+}

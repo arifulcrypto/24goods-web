@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * Renders linkify() segments as Vue nodes (never v-html). Chips: URL (confirm → open), email /
+ * Renders linkify() segments as Vue nodes (no raw HTML). Chips: URL (confirm → open), email /
  * order no. / number / code (copy + specific toast). UI-neutral: dialog + toast come from the
  * injected SmartTextAdapter.
  */
@@ -9,6 +9,7 @@ import { useI18n } from 'vue-i18n'
 import { copyText } from '../../util'
 import { linkify, type Segment } from '../linkify'
 import { openExternal, useSmartTextAdapter } from '../smartText'
+import './chat.css'
 
 const props = defineProps<{ text: string | null | undefined; code?: boolean; viewOrder?: boolean }>()
 const emit = defineEmits<{ openOrderNo: [orderNo: string] }>()

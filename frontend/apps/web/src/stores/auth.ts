@@ -1,12 +1,14 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import type { Locale, PowSolution, User } from '@24goods/shared'
+import type { InstantCredentials, Locale, PowSolution, User } from '@24goods/shared'
 import { isApiError } from '@24goods/shared'
 import { api } from '../api'
 
 export const useAuthStore = defineStore('auth', () => {
   const user = ref<User | null>(null)
   const ready = ref(false)
+  /** Credentials of an instant account created in this tab (memory only, shown once). */
+  const guestCreds = ref<InstantCredentials | null>(null)
   let loading: Promise<void> | null = null
 
   const loggedIn = computed(() => !!user.value)
@@ -43,6 +45,13 @@ export const useAuthStore = defineStore('auth', () => {
     ready.value = true
     return user.value
   }
+  async function instant(pow: PowSolution): Promise<InstantCredentials> {
+    const r = await api.auth.instant({ pow })
+    user.value = r.user
+    ready.value = true
+    guestCreds.value = r.credentials
+    return r.credentials
+  }
   function setUser(u: User) {
     user.value = u
     ready.value = true
@@ -52,6 +61,7 @@ export const useAuthStore = defineStore('auth', () => {
       await api.auth.logout()
     } finally {
       user.value = null
+      guestCreds.value = null
     }
   }
   /** Called by the global 401 handler. */
@@ -59,5 +69,5 @@ export const useAuthStore = defineStore('auth', () => {
     user.value = null
   }
 
-  return { user, ready, loggedIn, isStaff, init, login, register, logout, clear, setUser }
+  return { user, ready, guestCreds, instant, loggedIn, isStaff, init, login, register, logout, clear, setUser }
 })

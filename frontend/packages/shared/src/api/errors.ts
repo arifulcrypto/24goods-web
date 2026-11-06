@@ -97,8 +97,10 @@ export function errorFromBody(status: number, body: unknown): ApiError {
 
 /** The extra `details` payload of an error envelope (e.g. `{checkout_no}`, `{product_id}`), if any. */
 export function errorExtra(e: unknown): Record<string, unknown> {
-  if (isApiError(e) && e.details && typeof e.details === 'object') return e.details as Record<string, unknown>
-  return {}
+  if (!isApiError(e) || !e.details || typeof e.details !== 'object') return {}
+  const d = e.details as Record<string, unknown>
+  const nested = d.details && typeof d.details === 'object' ? (d.details as Record<string, unknown>) : {}
+  return { ...nested, ...d }
 }
 
 /** i18n key for an error (falls back to errors.unknown). Use with the shared bundle. */

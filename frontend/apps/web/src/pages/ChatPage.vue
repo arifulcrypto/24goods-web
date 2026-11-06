@@ -9,12 +9,20 @@ import {
   isApiError,
   safePayUrl,
   type Conversation,
+  type Product,
   type QuoteCardPayload,
 } from '@24goods/shared'
 import { AgentStatusDot, ChatMessageList, useConversation } from '@24goods/shared/chat'
 import { api } from '../api'
+import BuySheet from '../components/BuySheet.vue'
 import ChatComposer from '../components/ChatComposer.vue'
 import ChatDelivery from '../components/ChatDelivery.vue'
+import CredentialsSheet from '../components/CredentialsSheet.vue'
+import PowStatus from '../components/PowStatus.vue'
+import { useEnsureAccount } from '../composables/useEnsureAccount'
+import { isPowAbort } from '../composables/usePow'
+import { useAuthStore } from '../stores/auth'
+import { useSiteStore } from '../stores/site'
 import { stashAccessCode } from '../lib/attribution'
 import { useConversationsStore } from '../stores/conversations'
 import { useRealtimeStore } from '../stores/realtime'
@@ -27,6 +35,14 @@ const router = useRouter()
 const convs = useConversationsStore()
 const rt = useRealtimeStore()
 const support = useSupportStore()
+const auth = useAuthStore()
+const site = useSiteStore()
+const account = useEnsureAccount()
+const connecting = ref(false)
+const connectFailed = ref(false)
+const buyProduct = ref<Product | null>(null)
+const buySheet = ref(false)
+const showCreds = ref(false)
 
 const conv = ref<Conversation | null>(null)
 const busyQuoteId = ref<string | null>(null)
@@ -54,6 +70,29 @@ const statusHint = computed(() => {
   if (status.value === 'offline') return t('support.offlineHint')
   return ''
 })
+const offline = computed(() => status.value === 'offline')
+const offlineText = computed(() => {
+  const h = site.site?.support_hours
+  return h ? t('cs.offline', { hours: h }) : t('cs.offlineNoHours')
+})
+const welcome = computed(() => site.site?.support?.welcome?.trim() || t('cs.welcomeDefault'))
+const quick = computed(() => (site.site?.support?.quick_questions ?? []).filter((q) => q.trim()).slice(0, 6))
+const guestId = computed(() => (auth.user?.is_instant ? (auth.user.handle ?? '') : ''))
+function saveLogin() {
+  if (auth.guestCreds) showCreds.value = true
+  else void router.push('/me')
+}
+function credsDone() {
+  showCreds.value = false
+}
+async function onBuyProduct(id: string) {
+  try {
+    buyProduct.value = await api.product(id)
+    buySheet.value = true
+  } catch (e) {
+    toastError(e)
+  }
+}
 const closed = computed(() => conv.value?.status === 'closed')
 const imageUrls = computed(() =>
   chat.messages.value.filter((m) => m.type === 'image' && m.attachment).map((m) => m.attachment!.url),
@@ -67,10 +106,21 @@ function markReadIfVisible() {
 
 async function openConversation() {
   opening.value = true
+  connectFailed.value = false
   try {
+    // /chat needs no sign-in: create an instant account silently when there is none.
+    if (!auth.loggedIn) {
+      connecting.value = true
+      try {
+        await account.ensure()
+      } finally {
+        connecting.value = false
+      }
+    }
     let id = typeof route.query.cid === 'string' ? route.query.cid : ''
     if (!id) {
-      const c = await api.conversations.open()
+      const productId = typeof route.query.product === 'string' && route.query.product ? route.query.product : undefined
+      const c = await api.conversations.open(productId)
       conv.value = c
       id = c.id
       void router.replace({ path: '/chat', query: { cid: id } })
@@ -83,7 +133,8 @@ async function openConversation() {
     await list.value?.scrollToBottom()
     markReadIfVisible()
   } catch (e) {
-    toastError(e)
+    connectFailed.value = true
+    if (!isPowAbort(e)) toastError(e)
   } finally {
     opening.value = false
   }
@@ -123,6 +174,7 @@ function onVisibility() {
 
 onMounted(() => {
   void support.load()
+  void site.load()
   void openConversation()
   document.addEventListener('visibilitychange', onVisibility)
 })
@@ -238,36 +290,59 @@ function deliveredOrderId(it: { kind: string; message?: { type: string; payload:
       <span class="head-btn" aria-hidden="true" />
     </header>
 
+    <div v-if="guestId" class="notice guest">
+      <span>{{ t('cs.guestBanner', { id: guestId }) }}</span>
+      <button type="button" class="notice-btn" @click="saveLogin">{{ t('cs.saveLogin') }}</button>
+    </div>
+    <div v-if="offline" class="notice offline" role="status">{{ offlineText }}</div>
+
     <ChatMessageList
       ref="list"
       :items="chat.items.value"
       mode="buyer"
-      :loading="opening || chat.loading.value"
+      :loading="(opening && !connecting) || chat.loading.value"
       :loading-older="chat.loadingOlder.value"
       :has-more="chat.hasMore.value"
       :busy-quote-id="busyQuoteId"
       @reach-top="loadOlder"
       @preview="preview"
+      view-order
       @open-product="(id) => router.push(`/p/${encodeURIComponent(id)}`)"
+      @buy-product="onBuyProduct"
+      @open-order-no="(no) => router.push(`/orders/${encodeURIComponent(no)}`)"
       @open-order="(id) => router.push(`/orders/${encodeURIComponent(id)}`)"
       @accept-quote="acceptQuote"
       @retry="chat.retry"
       @discard="chat.discard"
     >
       <template #empty>
-        <van-empty image="default" :description="t('chat.empty')">
-          <div class="chips" role="group" :aria-label="t('chat.chips.label')">
-            <button type="button" class="chip" @click="chip('presales')">{{ t('chat.chips.presales') }}</button>
-            <button type="button" class="chip" @click="chip('order')">{{ t('chat.chips.order') }}</button>
-            <button type="button" class="chip" @click="chip('delivery')">{{ t('chat.chips.delivery') }}</button>
+        <div v-if="connecting" class="connecting" role="status">
+          <van-loading size="20" /> <span>{{ t('cs.connecting') }}</span>
+          <PowStatus :solving="account.solving.value" :progress="account.progress.value" />
+        </div>
+        <button v-else-if="connectFailed" type="button" class="connecting retry" @click="openConversation">
+          {{ t('cs.connectFailed') }}
+        </button>
+        <div v-else class="gc-row welcome">
+          <span class="gc-avatar" aria-hidden="true">{{ (conv?.assigned_agent?.display_name || t('chat.title')).charAt(0).toUpperCase() }}</span>
+          <div class="gc-col">
+            <div class="gc-line"><div class="gc-bubble">{{ welcome }}</div></div>
+            <div v-if="!quick.length" class="chips" role="group" :aria-label="t('chat.chips.label')">
+              <button type="button" class="chip" @click="chip('presales')">{{ t('chat.chips.presales') }}</button>
+              <button type="button" class="chip" @click="chip('order')">{{ t('chat.chips.order') }}</button>
+              <button type="button" class="chip" @click="chip('delivery')">{{ t('chat.chips.delivery') }}</button>
+            </div>
           </div>
-        </van-empty>
+        </div>
       </template>
       <template #item-extra="{ item }">
         <ChatDelivery v-if="deliveredOrderId(item)" :order-id="deliveredOrderId(item)!" />
       </template>
     </ChatMessageList>
 
+    <div v-if="!closed && quick.length" class="quick" role="group" :aria-label="t('chat.chips.label')">
+      <button v-for="q in quick" :key="q" type="button" class="chip" @click="onSendText(q)">{{ q }}</button>
+    </div>
     <div v-if="closed" class="closed-bar">
       <span>{{ t('chat.closed') }}</span>
       <van-button size="small" round type="primary" @click="startNew">{{ t('chat.startNew') }}</van-button>
@@ -281,6 +356,8 @@ function deliveredOrderId(it: { kind: string; message?: { type: string; payload:
       @send-voice="onSendVoice"
       @focus="list?.scrollToBottom()"
     />
+    <BuySheet v-model:show="buySheet" :product="buyProduct" />
+    <CredentialsSheet :show="showCreds" :credentials="auth.guestCreds" @done="credsDone" />
   </div>
 </template>
 
@@ -350,6 +427,74 @@ function deliveredOrderId(it: { kind: string; message?: { type: string; payload:
   border-top: 1px solid var(--c-line);
   color: var(--c-text-2);
   font-size: 13px;
+}
+.connecting {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 32px 16px;
+  color: var(--c-text-2);
+  font-size: 13px;
+}
+.connecting.retry {
+  width: 100%;
+  min-height: 44px;
+  border: 0;
+  background: none;
+  color: var(--c-price);
+  font: inherit;
+  cursor: pointer;
+}
+.notice {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 12px;
+  min-height: 36px;
+  font-size: 12px;
+}
+.notice.guest {
+  background: var(--c-accent-soft);
+  color: var(--c-accent-ink);
+}
+.notice.offline {
+  background: #fff4e5;
+  color: #8a4b00;
+  padding: 8px 12px;
+}
+.notice-btn {
+  flex: none;
+  min-height: 44px;
+  padding: 0 4px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.quick {
+  flex: none;
+  display: flex;
+  gap: 8px;
+  padding: 6px 12px;
+  overflow-x: auto;
+  background: var(--c-surface);
+  border-top: 1px solid var(--c-line);
+}
+.quick .chip {
+  flex: none;
+  max-width: 80vw;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.welcome {
+  margin-top: 8px;
 }
 .chips {
   display: flex;

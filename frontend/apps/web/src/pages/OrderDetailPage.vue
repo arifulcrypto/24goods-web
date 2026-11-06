@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { DeliveryView } from '@24goods/shared/ui'
+import { SmartText } from '@24goods/shared/chat'
 import {
   BRAND,
   canRequestAfterSales,
@@ -15,21 +16,27 @@ import {
   formatMoney,
   isApiError,
   safeAssetUrl,
-  safePayUrl,
   type AfterSales,
+  type BuyerInputConfig,
+  type CheckoutView,
   type Order,
 } from '@24goods/shared'
 import { api } from '../api'
 import AfterSalesSheet from '../components/AfterSalesSheet.vue'
 import AfterSalesStatus from '../components/AfterSalesStatus.vue'
+import BuyerInputSheet from '../components/BuyerInputSheet.vue'
+import FeeLines from '../components/FeeLines.vue'
+import { cancelPending, payCheckout, payOrder } from '../lib/orderActions'
 import { dropAccessCode, readAccessCode } from '../lib/attribution'
 import { useRealtimeStore } from '../stores/realtime'
-import { closeToast, confirm, showImagePreview, showLoadingToast, showSuccessToast, showToast, toastError } from '../ui'
+import { useSiteStore } from '../stores/site'
+import { confirm, showImagePreview, showSuccessToast, showToast, toastError } from '../ui'
 
 const { t, te, locale } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const rt = useRealtimeStore()
+const site = useSiteStore()
 
 const order = ref<Order | null>(null)
 const attachmentUrl = computed(() => safeAssetUrl(order.value?.manual_delivery?.attachment?.url))
@@ -79,6 +86,7 @@ const offs = [
     if (order.value && !TERMINAL.has(order.value.status)) void fetchOrder(true)
   }),
 ]
+void site.loadChannels()
 onBeforeUnmount(() => {
   offs.forEach((off) => off())
   clearInterval(timer)
@@ -132,17 +140,102 @@ async function pay() {
   if (!o || paying.value) return
   paying.value = true
   try {
-    const { pay_url } = await api.orders.pay(o.id)
-    const safe = safePayUrl(pay_url)
-    if (!safe) throw new Error('unsafe pay_url')
-    showLoadingToast({ message: t('order.paying'), forbidClick: true, duration: 0 })
-    window.location.assign(safe)
-  } catch (e) {
-    closeToast()
-    toastError(e)
+    await payOrder(o)
+  } catch {
     void fetchOrder(true)
   } finally {
     paying.value = false
+  }
+}
+async function payTogether() {
+  const no = order.value?.checkout_no
+  if (!no || paying.value) return
+  paying.value = true
+  try {
+    await payCheckout(no)
+  } catch {
+    void fetchOrder(true)
+  } finally {
+    paying.value = false
+  }
+}
+const cancelling = ref(false)
+async function cancelIt() {
+  const o = order.value
+  if (!o || cancelling.value) return
+  cancelling.value = true
+  try {
+    await cancelPending(o, checkout.value?.order_nos.length ?? 0)
+  } finally {
+    cancelling.value = false
+    void fetchOrder(true)
+  }
+}
+
+// ---- combined checkout (siblings) ----
+const checkout = ref<CheckoutView | null>(null)
+const siblings = ref<Order[]>([])
+watch(
+  () => order.value?.checkout_no,
+  async (no) => {
+    checkout.value = null
+    siblings.value = []
+    if (!no) return
+    try {
+      const c = await api.checkout.get(no)
+      checkout.value = c
+      const others = c.order_nos.filter((n) => n !== order.value?.order_no).slice(0, 20)
+      siblings.value = (await Promise.all(others.map((n) => api.orders.get(n).catch(() => null)))).filter(
+        (x): x is Order => !!x,
+      )
+    } catch {
+      /* optional block */
+    }
+  },
+  { immediate: true },
+)
+
+// ---- order information (buyer_input) ----
+const infoSheet = ref(false)
+const infoBusy = ref(false)
+const infoConfig = ref<BuyerInputConfig | null>(null)
+const canEditInput = computed(() => order.value?.status === 'pending_payment' || order.value?.status === 'paid')
+const FALLBACK_INPUT: BuyerInputConfig = {
+  enabled: true,
+  required: true,
+  multiline: true,
+  max_len: 2000,
+  title: '',
+  prompt: '',
+  placeholder: '',
+}
+async function editInput() {
+  const o = order.value
+  if (!o) return
+  let cfg = FALLBACK_INPUT
+  if (o.product_id) {
+    try {
+      const p = await api.product(o.product_id)
+      if (p.buyer_input?.enabled) cfg = { ...p.buyer_input, prompt: '' }
+    } catch {
+      /* use the fallback */
+    }
+  }
+  infoConfig.value = cfg
+  infoSheet.value = true
+}
+async function saveInput(v: string) {
+  const o = order.value
+  if (!o || infoBusy.value) return
+  infoBusy.value = true
+  try {
+    order.value = await api.orders.setInput(o.id, v)
+    infoSheet.value = false
+    showSuccessToast(t('orderInfo.saved'))
+  } catch (e) {
+    toastError(e)
+  } finally {
+    infoBusy.value = false
   }
 }
 
@@ -244,9 +337,52 @@ function gotCode() {
           </span>
           <span v-if="order.quote_id" class="muted small">{{ t('order.fromQuote') }}</span>
         </div>
-        <div class="o-amount">
+        <FeeLines
+          v-if="order.subtotal && order.fee"
+          class="o-fees"
+          :subtotal="order.subtotal"
+          :fee="order.fee"
+          :currency="order.currency"
+          :label="site.channel?.label"
+          :rate="order.fee_rate"
+          hide-when-free
+        />
+        <div v-else class="o-amount">
           <span class="muted">{{ t('order.amount') }}</span>
           <span class="price big">{{ formatMoney(order.amount, order.currency, locale) }}</span>
+        </div>
+        <p v-if="order.status === 'cancelled' && order.cancel_reason" class="muted small reason">
+          {{ t('cancel.reason', { reason: order.cancel_reason }) }}
+        </p>
+      </section>
+
+      <section v-if="order.buyer_input || canEditInput" class="section card pad">
+        <div class="bi-head">
+          <h2 class="h2">{{ t('orderInfo.title') }}</h2>
+          <span class="bi-actions">
+            <button v-if="order.buyer_input" type="button" class="link-act" @click="copy(order.buyer_input)">{{ t('common.copy') }}</button>
+            <button v-if="canEditInput && order.product_id" type="button" class="link-act" @click="editInput">{{ t('orderInfo.edit') }}</button>
+          </span>
+        </div>
+        <p v-if="order.buyer_input" class="bi-value"><SmartText :text="order.buyer_input" /></p>
+        <p v-else class="muted small">{{ t('orderInfo.empty') }}</p>
+      </section>
+
+      <section v-if="order.checkout_no" class="section card pad">
+        <h2 class="h2">{{ t('cancel.siblings') }}</h2>
+        <p class="muted small">{{ t('cancel.inCheckout', { no: order.checkout_no }) }}</p>
+        <RouterLink
+          v-for="s in siblings"
+          :key="s.id"
+          :to="`/orders/${encodeURIComponent(s.id)}`"
+          class="sib"
+        >
+          <span class="sib-title">{{ s.title }}</span>
+          <span class="price">{{ formatMoney(s.amount, s.currency, locale) }}</span>
+        </RouterLink>
+        <div v-if="checkout" class="sib-total">
+          <span class="muted">{{ t('cancel.checkoutTotal') }}</span>
+          <span class="price">{{ formatMoney(checkout.amount, checkout.currency, locale) }}</span>
         </div>
       </section>
 
@@ -324,18 +460,23 @@ function gotCode() {
       <div v-if="order.status === 'pending_payment'" class="bar-spacer" />
 
       <div v-if="order.status === 'pending_payment'" class="dock action-dock">
-        <span class="price">{{ formatMoney(order.amount, order.currency, locale) }}</span>
+        <div class="pay-info">
+          <span class="price">{{ formatMoney(checkout && order.checkout_no ? checkout.amount : order.amount, order.currency, locale) }}</span>
+          <span v-if="countdown" class="cd">{{ t('order.payWithin', { time: countdown }) }}</span>
+        </div>
+        <van-button round plain class="cancel-btn" :loading="cancelling" @click="cancelIt">{{ t('cancel.action') }}</van-button>
         <van-button
           round
           type="primary"
           class="action-btn"
           :loading="paying"
           :disabled="!countdown && !!order.expires_at"
-          @click="pay"
+          @click="order.checkout_no ? payTogether() : pay()"
         >
-          {{ t('order.pay') }}
+          {{ order.checkout_no ? t('cancel.payTogether', { n: checkout?.order_nos.length ?? siblings.length + 1 }) : t('order.pay') }}
         </van-button>
       </div>
+      <BuyerInputSheet v-model:show="infoSheet" :config="infoConfig" :initial="order.buyer_input" :busy="infoBusy" @confirm="saveInput" />
       <AfterSalesSheet v-model:show="asSheet" :order-id="order.id" @created="ticketCreated" />
     </template>
   </div>
@@ -501,8 +642,77 @@ function gotCode() {
   font-size: 18px;
 }
 .action-btn {
-  min-width: 140px;
+  min-width: 120px;
   font-weight: 700;
+}
+.pay-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+.cd {
+  font-size: 12px;
+  color: var(--c-text-2);
+  font-variant-numeric: tabular-nums;
+}
+.cancel-btn {
+  flex: none;
+}
+.o-fees {
+  margin-top: 8px;
+}
+.reason {
+  margin: 8px 0 0;
+}
+.bi-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.bi-actions {
+  display: flex;
+  gap: 4px;
+}
+.link-act {
+  min-height: 44px;
+  padding: 0 8px;
+  border: 0;
+  background: none;
+  color: var(--c-price);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.bi-value {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 200px;
+  overflow: auto;
+  font-size: 13px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.sib {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  text-decoration: none;
+  color: inherit;
+  border-top: 1px solid var(--c-line);
+}
+.sib-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.sib-total {
+  display: flex;
+  justify-content: space-between;
+  padding-top: 8px;
+  border-top: 1px solid var(--c-line);
 }
 .ac-row {
   display: flex;

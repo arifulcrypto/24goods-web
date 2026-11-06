@@ -1,6 +1,6 @@
 /**
  * Pure tokenizer for "smart text" (review-v4 §7). No DOM, no HTML: callers render the segments as
- * Vue nodes (never v-html). Every pattern is linear-time (no nested/ambiguous quantifiers).
+ * Vue nodes (no raw HTML). Every pattern is linear-time (no nested/ambiguous quantifiers).
  */
 export type SegmentKind = 'text' | 'url' | 'email' | 'order_no' | 'number' | 'code'
 
