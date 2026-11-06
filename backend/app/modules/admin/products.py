@@ -93,6 +93,8 @@ async def create(db: AsyncSession, body: ProductIn, admin: User, ip: str | None)
         tenant_id=admin.tenant_id,
         title_i18n=body.title_i18n,
         description_i18n=body.description_i18n or {"en": "", "zh-CN": ""},
+        description_html_i18n=render_i18n(body.description_i18n or {"en": "", "zh-CN": ""}),
+        buyer_input=body.buyer_input.model_dump() if body.buyer_input else None,
         images=body.images,
         price_minor=price,
         floor_price_minor=floor,
@@ -161,6 +163,7 @@ async def patch(
         p.title_i18n = data["title_i18n"]
     if data.get("description_i18n") is not None:
         p.description_i18n = data["description_i18n"]
+        p.description_html_i18n = render_i18n(data["description_i18n"])
     for key in ("delivery_mode", "category", "status", "delivery_separator", "group_sort"):
         if data.get(key) is not None:
             setattr(p, key, data[key])
@@ -168,6 +171,9 @@ async def patch(
     for key in ("delivery_format", "redeem_url", "after_sales_hours"):
         if key in data:
             setattr(p, key, data[key])
+    if "buyer_input" in data:  # explicit null clears the popup
+        bi = body.buyer_input
+        p.buyer_input = bi.model_dump() if bi is not None else None
     if data.get("usage_i18n") is not None:
         p.usage_i18n = data["usage_i18n"]
         p.usage_html_i18n = render_i18n(data["usage_i18n"])

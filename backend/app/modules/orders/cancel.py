@@ -1,0 +1,187 @@
+"""Cancel / close a payable (docs/review-v4.md §3).
+
+Shared by the buyer endpoints and the staff "Close order": only ``pending_payment``; an
+order inside a checkout cancels the WHOLE checkout (a partial cancel would change the amount
+owed); and if a pay URL was ever issued the gateway is re-queried FIRST (Alipay's "query
+before close" rule): paid -> settle through the normal path and answer 409 ``already_paid``;
+query failure -> 503 so the caller retries.
+"""
+
+from __future__ import annotations
+
+import uuid
+from decimal import Decimal
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.audit import audit
+from app.core.errors import AlreadyPaid, InvalidState, NotFound, Unavailable
+from app.core.resources import Resources
+from app.models import Checkout, Message, Order, User
+from app.modules.chat.messages import post_system
+from app.modules.orders.events import add_event, snapshot
+from app.modules.orders.service import broadcast_order
+from app.modules.payments.settle import (
+    PAID_STATES,
+    NotifyOutcome,
+    apply_checkout_payment,
+    apply_order_payment,
+    lock_checkout,
+)
+from app.payments.zpay import ZPayQueryError
+
+
+async def _load_group(
+    db: AsyncSession, order_id: uuid.UUID | None, checkout_id: uuid.UUID | None
+) -> tuple[Checkout | None, list[Order]]:
+    """Lock the payable: checkout FOR UPDATE then orders ORDER BY id FOR UPDATE."""
+    if checkout_id is None:
+        assert order_id is not None
+        checkout_id = await db.scalar(select(Order.checkout_id).where(Order.id == order_id))
+        if checkout_id is None:
+            order = await db.scalar(select(Order).where(Order.id == order_id).with_for_update())
+            if order is None:
+                raise NotFound("Order not found")
+            return None, [order]
+    exists = await db.scalar(select(Checkout.id).where(Checkout.id == checkout_id))
+    if exists is None:
+        raise NotFound("Checkout not found")
+    return await lock_checkout(db, checkout_id)
+
+
+def _status(co: Checkout | None, orders: list[Order]) -> str:
+    return co.status if co is not None else orders[0].status
+
+
+async def _settle_if_paid(
+    db: AsyncSession,
+    res: Resources,
+    co: Checkout | None,
+    order: Order | None,
+    out_trade_no: str,
+    amount_minor: int,
+) -> NotifyOutcome | None:
+    """Re-query the gateway (no row locks held). If it says paid, settle and return the
+    outcome; if it says unpaid, ``None``; if the query fails, 503."""
+    try:
+        q = await res.zpay.query_order(out_trade_no)
+    except ZPayQueryError:
+        raise Unavailable("Could not verify the payment status; please try again") from None
+    if not (q.found and q.paid) or q.out_trade_no != out_trade_no:
+        return None
+    paid: Decimal = q.money if q.money is not None else Decimal(amount_minor) / 100
+    raw = {"out_trade_no": out_trade_no, "money": str(paid), "trade_no": q.trade_no}
+    if co is not None:
+        return await apply_checkout_payment(db, res.settings, co.id, q.trade_no, paid, raw, None)
+    assert order is not None
+    return await apply_order_payment(db, res.settings, order.id, q.trade_no, paid, raw, None)
+
+
+async def cancel_group(
+    db: AsyncSession,
+    res: Resources,
+    *,
+    order_id: uuid.UUID | None = None,
+    checkout_id: uuid.UUID | None = None,
+    actor: User,
+    by: str,  # "buyer" | "staff"
+    reason: str | None,
+    ip: str | None,
+) -> tuple[Checkout | None, list[Order]]:
+    co, orders = await _load_group(db, order_id, checkout_id)
+    if _status(co, orders) != "pending_payment":
+        raise InvalidState("Only orders awaiting payment can be cancelled")
+
+    issued = co.channel if co is not None else orders[0].channel
+    if issued and res.settings.zpay_pid and res.settings.zpay_key:
+        no = co.checkout_no if co is not None else orders[0].order_no
+        amount = co.amount_minor if co is not None else orders[0].amount_minor
+        first_order = orders[0] if co is None else None
+        co_ref, oid, cid = co, order_id, checkout_id
+        await db.rollback()  # never hold row locks across the network call
+        outcome = await _settle_if_paid(db, res, co_ref, first_order, no, amount)
+        if outcome is not None:
+            for o in outcome.orders or ([outcome.order] if outcome.order else []):
+                await broadcast_order(
+                    res,
+                    db,
+                    o,
+                    [m for m in outcome.messages if m and m.conversation_id == o.conversation_id],
+                )
+            raise AlreadyPaid("This order has already been paid")
+        co, orders = await _load_group(db, oid, cid)
+        st = _status(co, orders)
+        if st in PAID_STATES or st == "manual_review":
+            raise AlreadyPaid("This order has already been paid")
+        if st != "pending_payment":
+            raise InvalidState("Only orders awaiting payment can be cancelled")
+
+    clean = (reason or "").strip() or None
+    msgs: list[Message | None] = []
+    for o in orders:
+        before = snapshot(o)
+        o.status = "cancelled"
+        o.cancel_reason = clean[:200] if clean else None
+        o.version += 1
+        await add_event(
+            db,
+            o,
+            "pending_payment",
+            "cancelled",
+            actor_id=actor.id,
+            reason=(clean or f"{by}_cancelled")[:500],
+        )
+        await audit(
+            db,
+            tenant_id=o.tenant_id,
+            action="order.cancelled",
+            actor_id=actor.id,
+            actor_role=actor.role,
+            target=f"order:{o.id}",
+            before=before,
+            after=snapshot(o),
+            ip=ip,
+            detail={
+                "reason": clean,
+                "by": by,
+                "checkout_id": str(o.checkout_id) if o.checkout_id else None,
+            },
+        )
+        text = (
+            "Order cancelled by buyer"
+            if by == "buyer"
+            else f"Order closed by support: {clean}"
+            if clean
+            else "Order closed by support"
+        )
+        msgs.append(
+            await post_system(
+                db,
+                tenant_id=o.tenant_id,
+                conversation_id=o.conversation_id,
+                event="order_cancelled",
+                text=text,
+                order_id=str(o.id),
+                reason=clean,
+                by=by,
+            )
+        )
+    if co is not None:
+        co.status = "cancelled"
+        await audit(
+            db,
+            tenant_id=co.tenant_id,
+            action="checkout.cancelled",
+            actor_id=actor.id,
+            actor_role=actor.role,
+            target=f"checkout:{co.id}",
+            before={"status": "pending_payment"},
+            after={"status": "cancelled"},
+            ip=ip,
+            detail={"reason": clean, "by": by, "orders": len(orders)},
+        )
+    await db.commit()
+    for o, m in zip(orders, msgs, strict=True):
+        await broadcast_order(res, db, o, [m])
+    return co, orders

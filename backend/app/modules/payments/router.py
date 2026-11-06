@@ -45,8 +45,13 @@ async def notify_zpay(
         return PlainTextResponse("fail", status_code=200)
     params = await _params(request)
     outcome = await handle_notify(db, res, tenant_id, params, ip)
-    if outcome.order is not None:
-        await broadcast_order(res, db, outcome.order, outcome.messages)
+    for o in outcome.orders or ([outcome.order] if outcome.order is not None else []):
+        await broadcast_order(
+            res,
+            db,
+            o,
+            [m for m in outcome.messages if m and m.conversation_id == o.conversation_id],
+        )
     return PlainTextResponse(outcome.reply, status_code=200)
 
 
@@ -54,5 +59,5 @@ async def notify_zpay(
 async def return_zpay(request: Request) -> RedirectResponse:
     """Display only: never fulfils. Sends the browser to the order page."""
     order_no = request.query_params.get("out_trade_no", "")
-    target = f"/orders/{order_no}" if _ORDER_NO.match(order_no) else "/orders"
+    target = f"/orders/{order_no}" if _ORDER_NO.match(order_no) else "/orders"  # checkout -> list
     return RedirectResponse(target, status_code=302)

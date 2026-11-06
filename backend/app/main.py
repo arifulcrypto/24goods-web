@@ -14,6 +14,7 @@ from fastapi import APIRouter, FastAPI
 
 from app.core.config import get_settings
 from app.core.error_handlers import install_error_handlers
+from app.core.globallimit import GlobalRateLimitMiddleware
 from app.core.memtrim import trim
 from app.core.middleware import (
     SECURITY_HEADERS,
@@ -32,6 +33,7 @@ from app.modules.chat.router import router as chat_router
 from app.modules.content.router import router as content_router
 from app.modules.lookup.router import router as lookup_router
 from app.modules.me.router import router as me_router
+from app.modules.orders.checkout_router import router as checkout_router
 from app.modules.orders.router import router as orders_router
 from app.modules.orders.service import expire_pending
 from app.modules.payments.router import NOTIFY_PATH
@@ -41,7 +43,7 @@ from app.modules.uploads.router import router as uploads_router
 
 log = logging.getLogger("app.main")
 
-UPLOAD_PATHS = re.compile(r"^/api/v1/(uploads|admin/products/[^/]+/images)$")
+UPLOAD_PATHS = re.compile(r"^/api/v1/(uploads|admin/products/[^/]+/images|admin/content/images)$")
 JSON_BODY_LIMIT = 2 * 1024 * 1024 + 64 * 1024  # card import: 5000 lines fit comfortably
 UPLOAD_BODY_LIMIT = 8 * 1024 * 1024 + 64 * 1024
 
@@ -90,6 +92,7 @@ def api_router() -> APIRouter:
         catalog_router,
         chat_router,
         orders_router,
+        checkout_router,
         payments_router,
         uploads_router,
         realtime_router,
@@ -141,7 +144,7 @@ def create_app(res: Resources | None = None, *, background: bool = True) -> Fast
     async def healthz() -> dict[str, str]:
         return {"status": "ok"}
 
-    # Added inner-most first: Core (outermost) -> BodyLimit -> CSRF -> routes.
+    # Added inner-most first: Core (outermost) -> GlobalRateLimit -> BodyLimit -> CSRF -> routes.
     app.add_middleware(CSRFMiddleware, exempt=[NOTIFY_PATH])
     app.add_middleware(
         BodyLimitMiddleware,
@@ -149,6 +152,7 @@ def create_app(res: Resources | None = None, *, background: bool = True) -> Fast
         upload_limit=UPLOAD_BODY_LIMIT,
         upload_paths=UPLOAD_PATHS,
     )
+    app.add_middleware(GlobalRateLimitMiddleware)  # after Core: client IP is resolved
     app.add_middleware(CoreMiddleware, trusted=settings.trusted_proxy_networks)
     return app
 

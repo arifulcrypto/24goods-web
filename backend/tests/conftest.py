@@ -150,7 +150,8 @@ TABLES = (
     "after_sales, articles, "
     "audit_log, outbox, ledger_entries, deliveries, card_stock, card_batches, payments, "
     "order_events, "
-    "orders, quotes, messages, conversations, attachments, products, agent_status, users, "
+    "orders, checkouts, quotes, messages, conversations, attachments, products, agent_status, "
+    "users, "
     "custom_domains, tenants"
 )
 
@@ -342,7 +343,13 @@ async def env(services: Services) -> AsyncIterator[Env]:
     await s.redis.flushdb()
     owner_maker = make_sessionmaker(s.owner_engine)
     async with tenant_session(owner_maker, None) as db:
-        t1 = Tenant(slug="platform", name="Platform")
+        # Legacy tests assert exact gateway amounts: they run with no buyer surcharge. The v4
+        # tests set (or delete) the config explicitly -- see tests/test_commerce_v4.py.
+        t1 = Tenant(
+            slug="platform",
+            name="Platform",
+            settings={"payments": {"channels": {"zpay_alipay": {"surcharge_permille": 0}}}},
+        )
         t2 = Tenant(slug="other", name="Other tenant", kind="reseller")
         db.add_all([t1, t2])
         await db.commit()

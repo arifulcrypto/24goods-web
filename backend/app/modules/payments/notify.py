@@ -13,51 +13,43 @@ import logging
 import time
 import uuid
 from collections.abc import Mapping
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 
 from redis.asyncio import Redis
-from sqlalchemy import select, update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import audit
-from app.core.money import percent_of, to_decimal
+from app.core.money import to_decimal
 from app.core.resources import Resources
-from app.models import Message, Order, Outbox, Payment, Product
-from app.modules.chat.messages import post_system
-from app.modules.orders.events import add_event, snapshot
-from app.modules.payments.ledger import Line, post_txn
+from app.models import Checkout, Order
+from app.modules.payments.settle import (
+    FAIL,
+    PAID_STATES,
+    SUCCESS,
+    NotifyOutcome,
+    apply_checkout_payment,
+    apply_order_payment,
+    checkout_to_manual_review,
+    safe_params,
+    to_manual_review,
+)
 from app.payments import epay
-from app.payments.zpay import CHANNEL, ZPayQueryError
+from app.payments.zpay import ZPayQueryError
 
 log = logging.getLogger("app.payments.notify")
 
-SUCCESS, FAIL = "success", "fail"
+CHECKOUT_PREFIX = "C"  # checkout_no = "C" + 12 base32; order_no = "G" + 12 base32
 REPLAY_TTL_S = 24 * 3600
 # In-flight lock: if the process dies mid-settle the lock lapses and ZPay's next retry
 # (+15 s/+30 s/+180 s ...) is processed instead of being rejected for 24 h.
 INFLIGHT_TTL_S = 60
-PAID_STATES = frozenset({"paid", "delivered", "completed"})
 SECURITY_REJECTS = frozenset({"bad_signature", "merchant_mismatch", "order_mismatch"})
-
-
-@dataclass
-class NotifyOutcome:
-    reply: str
-    order: Order | None = None
-    messages: list[Message | None] = field(default_factory=list)
 
 
 def replay_key(params: Mapping[str, str]) -> str:
     canon = epay.canonical_string(params) + "&sign=" + str(params.get("sign", ""))
     return "notify:zpay:" + hashlib.sha256(canon.encode()).hexdigest()
-
-
-def safe_params(params: Mapping[str, str]) -> dict[str, str]:
-    """Notify params as stored for audit (no secrets in them, but bound the size)."""
-    return {str(k)[:32]: str(v)[:256] for k, v in list(params.items())[:30]}
 
 
 AUDIT_SAMPLE_WINDOW_S = 60
@@ -97,55 +89,6 @@ async def _security_event(
     await db.commit()
 
 
-async def _to_manual_review(
-    db: AsyncSession, order_id: uuid.UUID, reason: str, ip: str | None, detail: dict
-) -> NotifyOutcome:
-    await db.rollback()
-    order = await db.scalar(select(Order).where(Order.id == order_id).with_for_update())
-    assert order is not None
-    msgs: list[Message | None] = []
-    if order.status in ("pending_payment", "expired", "cancelled"):
-        before = snapshot(order)
-        prev = order.status
-        order.status = "manual_review"
-        order.version += 1
-        await add_event(db, order, prev, "manual_review", actor_kind="gateway", reason=reason)
-        await audit(
-            db,
-            tenant_id=order.tenant_id,
-            action="payment.manual_review",
-            actor_role="gateway",
-            target=f"order:{order.id}",
-            before=before,
-            after=snapshot(order),
-            ip=ip,
-            detail={"reason": reason, **detail},
-            severity="warning",
-        )
-        msgs.append(
-            await post_system(
-                db,
-                tenant_id=order.tenant_id,
-                conversation_id=order.conversation_id,
-                event="manual_review",
-                order_id=str(order.id),
-            )
-        )
-    else:
-        await audit(
-            db,
-            tenant_id=order.tenant_id,
-            action="payment.anomaly",
-            actor_role="gateway",
-            target=f"order:{order.id}",
-            ip=ip,
-            detail={"reason": reason, **detail},
-            severity="warning",
-        )
-    await db.commit()
-    return NotifyOutcome(SUCCESS, order, msgs)
-
-
 async def handle_notify(
     db: AsyncSession, res: Resources, tenant_id: uuid.UUID, params: dict[str, str], ip: str | None
 ) -> NotifyOutcome:
@@ -161,24 +104,42 @@ async def handle_notify(
         )
         return NotifyOutcome(FAIL)
 
-    order_no = params.get("out_trade_no", "")
-    order = await db.scalar(select(Order).where(Order.order_no == order_no))
-    if order is None:
+    out_trade_no = params.get("out_trade_no", "")
+    is_checkout = out_trade_no.startswith(CHECKOUT_PREFIX)
+    order: Order | None = None
+    checkout: Checkout | None = None
+    if is_checkout:
+        checkout = await db.scalar(select(Checkout).where(Checkout.checkout_no == out_trade_no))
+        known = checkout is not None
+    else:
+        order = await db.scalar(select(Order).where(Order.order_no == out_trade_no))
+        known = order is not None
+    if not known:
         await _security_event(
             res.redis,
             db,
             tenant_id,
             "payment.notify_unknown_order",
             ip,
-            {"out_trade_no": order_no[:32]},
+            {"out_trade_no": out_trade_no[:32]},
         )
         return NotifyOutcome(FAIL)
 
-    expected = epay.ExpectedOrder(
-        out_trade_no=order.order_no,
-        merchant_id=zpay.config.pid,
-        amount=to_decimal(order.amount_minor),
-    )
+    if checkout is not None:
+        target_id, target = checkout.id, f"checkout:{checkout.id}"
+        expected = epay.ExpectedOrder(
+            out_trade_no=checkout.checkout_no,
+            merchant_id=zpay.config.pid,
+            amount=to_decimal(checkout.amount_minor),
+        )
+    else:
+        assert order is not None
+        target_id, target = order.id, f"order:{order.id}"
+        expected = epay.ExpectedOrder(
+            out_trade_no=order.order_no,
+            merchant_id=zpay.config.pid,
+            amount=to_decimal(order.amount_minor),
+        )
     try:
         trade_no = zpay.verify_notify(params, expected)
     except epay.NotifyRejected as rej:
@@ -192,29 +153,36 @@ async def handle_notify(
                 tenant_id=tenant_id,
                 action="payment.notify_not_paid",
                 actor_role="gateway",
-                target=f"order:{order.id}",
+                target=target,
                 ip=ip,
                 detail=detail,
             )
             await db.commit()
             return NotifyOutcome(SUCCESS, order)
-        return await _to_manual_review(db, order.id, rej.reason, ip, detail)
+        if checkout is not None:
+            return await checkout_to_manual_review(db, target_id, rej.reason, ip, detail)
+        return await to_manual_review(db, target_id, rej.reason, ip, detail)
 
     # Replay guard: identical notifies are processed at most once. The key starts as a
     # short in-flight lock and becomes a 24 h "done" marker only after settling.
     rkey = replay_key(params)
     first = await res.redis.set(rkey, b"inflight", nx=True, ex=INFLIGHT_TTL_S)
     if not first:
-        order_id = order.id
         await db.rollback()
-        current = await db.scalar(select(Order.status).where(Order.id == order_id))
-        # Acknowledge once the order is settled; otherwise ask the gateway to retry later.
+        if is_checkout:
+            current = await db.scalar(select(Checkout.status).where(Checkout.id == target_id))
+        else:
+            current = await db.scalar(select(Order.status).where(Order.id == target_id))
+        # Acknowledge once settled; otherwise ask the gateway to retry later.
         return NotifyOutcome(
-            SUCCESS if current in PAID_STATES | {"manual_review", "refunded"} else FAIL
+            SUCCESS if current in PAID_STATES | {"paid", "manual_review", "refunded"} else FAIL
         )
 
     try:
-        outcome = await _settle(db, res, order.id, trade_no, params, ip)
+        if is_checkout:
+            outcome = await _settle_checkout(db, res, target_id, trade_no, params, ip)
+        else:
+            outcome = await _settle(db, res, target_id, trade_no, params, ip)
         await res.redis.set(rkey, b"done", ex=REPLAY_TTL_S)
         return outcome
     except ZPayQueryError:
@@ -226,19 +194,12 @@ async def handle_notify(
         raise
 
 
-async def _settle(
-    db: AsyncSession,
-    res: Resources,
-    order_id: uuid.UUID,
-    trade_no: str,
-    params: dict[str, str],
-    ip: str | None,
-) -> NotifyOutcome:
-    try:
-        paid_amount = Decimal(params["money"])
-    except (KeyError, InvalidOperation):  # pragma: no cover - verify_notify checked it
-        return await _to_manual_review(db, order_id, "bad_amount", ip, {})
-    await db.rollback()  # never hold row locks across the network call below
+async def requery_mismatch(
+    res: Resources, params: dict[str, str], trade_no: str, paid_amount: Decimal
+) -> dict | None:
+    """Server-to-server re-query. ``None`` when the gateway confirms exactly this payment,
+    else the audit detail. Raises ZPayQueryError on transport/protocol failure. The caller
+    must NOT hold row locks (network call)."""
     q = await res.zpay.query_order(params["out_trade_no"])
     if (
         not q.found
@@ -247,172 +208,59 @@ async def _settle(
         or q.trade_no != trade_no
         or q.out_trade_no != params["out_trade_no"]
     ):
-        return await _to_manual_review(
-            db,
-            order_id,
-            "requery_mismatch",
-            ip,
-            {
-                "requery": {
-                    "found": q.found,
-                    "paid": q.paid,
-                    "money": str(q.money),
-                    "trade_no": q.trade_no[:64],
-                    "out_trade_no": q.out_trade_no[:32],
-                },
-                "params": safe_params(params),
+        return {
+            "requery": {
+                "found": q.found,
+                "paid": q.paid,
+                "money": str(q.money),
+                "trade_no": q.trade_no[:64],
+                "out_trade_no": q.out_trade_no[:32],
             },
-        )
+            "params": safe_params(params),
+        }
+    return None
 
-    order = await db.scalar(select(Order).where(Order.id == order_id).with_for_update())
-    assert order is not None
-    amount_minor = int(paid_amount * 100)
 
-    if order.status in PAID_STATES or order.status == "manual_review":
-        existing = await db.scalar(select(Payment).where(Payment.order_id == order.id))
-        if existing is None or existing.gateway_trade_no != trade_no:
-            await audit(
-                db,
-                tenant_id=order.tenant_id,
-                action="payment.duplicate",
-                actor_role="gateway",
-                target=f"order:{order.id}",
-                ip=ip,
-                detail={"trade_no": trade_no[:64]},
-                severity="warning",
-            )
-            await db.commit()
-        else:
-            await db.rollback()
-        return NotifyOutcome(SUCCESS, order)
-
-    # Late payments (order expired/cancelled, however late) are still RECORDED
-    # (Payment + ledger) and held in manual_review: received money must never vanish.
-    late = order.status in ("expired", "cancelled")
-    if order.status == "refunded":
-        existing = await db.scalar(select(Payment).where(Payment.order_id == order.id))
-        if existing is not None and existing.gateway_trade_no == trade_no:
-            await db.rollback()  # benign duplicate of the notify that was refunded later
-            return NotifyOutcome(SUCCESS, order)
-    if order.status not in ("pending_payment", "expired", "cancelled"):
-        await audit(
-            db,
-            tenant_id=order.tenant_id,
-            action="payment.unexpected_state",
-            actor_role="gateway",
-            target=f"order:{order.id}",
-            ip=ip,
-            detail={"trade_no": trade_no[:64], "status": order.status},
-            severity="critical",
-        )
-        await db.commit()
-        return NotifyOutcome(SUCCESS, order)
-    if amount_minor != order.amount_minor:  # price changed after the pay URL was issued
-        return await _to_manual_review(
-            db, order.id, "amount_changed", ip, {"paid_minor": amount_minor}
-        )
-
-    db.add(
-        Payment(
-            tenant_id=order.tenant_id,
-            order_id=order.id,
-            channel=CHANNEL,
-            gateway_trade_no=trade_no[:64],
-            amount_minor=amount_minor,
-            currency=order.currency,
-            raw=safe_params({k: v for k, v in params.items() if k != "sign"}),
-        )
-    )
+def _paid_amount(params: dict[str, str]) -> Decimal | None:
     try:
-        await db.flush()
-    except IntegrityError:
-        # UNIQUE(channel, trade_no) / UNIQUE(order_id): someone else settled it first.
-        await db.rollback()
-        return NotifyOutcome(SUCCESS)
+        return Decimal(params["money"])
+    except (KeyError, InvalidOperation):  # pragma: no cover - verify_notify checked it
+        return None
 
-    before = snapshot(order)
-    prev = order.status
-    order.status = "manual_review" if late else "paid"
-    order.paid_at = datetime.now(timezone.utc)
-    order.channel = CHANNEL
-    order.version += 1
-    await add_event(
-        db,
-        order,
-        prev,
-        order.status,
-        actor_kind="gateway",
-        reason="late_payment" if late else f"zpay:{trade_no[:40]}",
+
+async def _settle(
+    db: AsyncSession,
+    res: Resources,
+    order_id: uuid.UUID,
+    trade_no: str,
+    params: dict[str, str],
+    ip: str | None,
+) -> NotifyOutcome:
+    paid_amount = _paid_amount(params)
+    if paid_amount is None:  # pragma: no cover
+        return await to_manual_review(db, order_id, "bad_amount", ip, {})
+    await db.rollback()  # never hold row locks across the network call below
+    bad = await requery_mismatch(res, params, trade_no, paid_amount)
+    if bad is not None:
+        return await to_manual_review(db, order_id, "requery_mismatch", ip, bad)
+    return await apply_order_payment(db, res.settings, order_id, trade_no, paid_amount, params, ip)
+
+
+async def _settle_checkout(
+    db: AsyncSession,
+    res: Resources,
+    checkout_id: uuid.UUID,
+    trade_no: str,
+    params: dict[str, str],
+    ip: str | None,
+) -> NotifyOutcome:
+    paid_amount = _paid_amount(params)
+    if paid_amount is None:  # pragma: no cover
+        return await checkout_to_manual_review(db, checkout_id, "bad_amount", ip, {})
+    await db.rollback()
+    bad = await requery_mismatch(res, params, trade_no, paid_amount)
+    if bad is not None:
+        return await checkout_to_manual_review(db, checkout_id, "requery_mismatch", ip, bad)
+    return await apply_checkout_payment(
+        db, res.settings, checkout_id, trade_no, paid_amount, params, ip
     )
-    await post_txn(
-        db,
-        tenant_id=order.tenant_id,
-        currency=order.currency,
-        order_id=order.id,
-        memo=f"zpay payment {order.order_no}",
-        lines=[Line("gateway_clearing:zpay", amount_minor), Line("sales_revenue", -amount_minor)],
-    )
-    fee = percent_of(amount_minor, res.settings.zpay_fee_permille)
-    if fee > 0:
-        await post_txn(
-            db,
-            tenant_id=order.tenant_id,
-            currency=order.currency,
-            order_id=order.id,
-            memo=f"zpay fee {order.order_no}",
-            lines=[Line("fees:zpay", fee), Line("gateway_clearing:zpay", -fee)],
-        )
-    msgs: list[Message | None] = []
-    if late:
-        msgs.append(
-            await post_system(
-                db,
-                tenant_id=order.tenant_id,
-                conversation_id=order.conversation_id,
-                event="manual_review",
-                order_id=str(order.id),
-            )
-        )
-    else:
-        db.add(
-            Outbox(
-                tenant_id=order.tenant_id,
-                topic="order.paid",
-                key=str(order.id),
-                payload={"order_id": str(order.id), "tenant_id": str(order.tenant_id)},
-            )
-        )
-        if order.product_id:
-            await db.execute(
-                update(Product)
-                .where(Product.id == order.product_id)
-                .values(sold=Product.sold + order.qty)
-            )
-        msgs.append(
-            await post_system(
-                db,
-                tenant_id=order.tenant_id,
-                conversation_id=order.conversation_id,
-                event="paid",
-                text=(
-                    "Payment received. An agent will deliver your order shortly."
-                    if order.delivery_mode == "manual"
-                    else None
-                ),
-                order_id=str(order.id),
-                awaiting_delivery=order.delivery_mode == "manual",
-            )
-        )
-    await audit(
-        db,
-        tenant_id=order.tenant_id,
-        action="payment.settled",
-        actor_role="gateway",
-        target=f"order:{order.id}",
-        before=before,
-        after=snapshot(order),
-        ip=ip,
-        detail={"trade_no": trade_no[:64], "late": late},
-    )
-    await db.commit()
-    return NotifyOutcome(SUCCESS, order, msgs)

@@ -8,8 +8,9 @@ from app.core.deps import Page, client_ip, current_user, get_db, get_lang, get_p
 from app.core.ratelimit import enforce
 from app.core.resources import Resources
 from app.models import User
+from app.modules.orders import cancel as cancel_svc
 from app.modules.orders import service
-from app.modules.orders.schemas import BuyNowIn, PayIn
+from app.modules.orders.schemas import BuyerCancelIn, BuyNowIn, InputIn, PayIn
 
 router = APIRouter(prefix="/orders", tags=["orders"])
 
@@ -27,7 +28,14 @@ async def buy_now(
 ) -> dict:
     await enforce(res.redis, "order:create", str(user.id), *ORDER_ACTIONS)
     order, msg = await service.buy_now(
-        db, res.settings, user, body.product_id, body.qty, client_ip(request), body.src
+        db,
+        res.settings,
+        user,
+        body.product_id,
+        body.qty,
+        client_ip(request),
+        body.src,
+        body.buyer_input,
     )
     code = getattr(order, "access_code_plain", None)  # shown exactly once
     await service.broadcast_order(res, db, order, [msg])
@@ -111,5 +119,47 @@ async def confirm(
     res: Resources = Depends(get_res),
 ) -> dict:
     order, msg = await service.confirm(db, ref, user, client_ip(request))
+    await service.broadcast_order(res, db, order, [msg])
+    return await service.one_view(db, order, user.id, lang)
+
+
+@router.post("/{ref}/cancel")
+async def cancel(
+    ref: str,
+    request: Request,
+    body: BuyerCancelIn | None = None,
+    lang: str = Depends(get_lang),
+    user: User = Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+    res: Resources = Depends(get_res),
+) -> dict:
+    """Buyer cancels a pending order; inside a checkout this cancels the whole checkout."""
+    await enforce(res.redis, "order:cancel", str(user.id), *ORDER_ACTIONS)
+    order = await service.get_owned(db, ref, user)
+    await cancel_svc.cancel_group(
+        db,
+        res,
+        order_id=order.id,
+        actor=user,
+        by="buyer",
+        reason=body.reason if body else None,
+        ip=client_ip(request),
+    )
+    await db.refresh(order)
+    return await service.one_view(db, order, user.id, lang)
+
+
+@router.patch("/{ref}/input")
+async def update_input(
+    ref: str,
+    body: InputIn,
+    request: Request,
+    lang: str = Depends(get_lang),
+    user: User = Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+    res: Resources = Depends(get_res),
+) -> dict:
+    await enforce(res.redis, "order:input", str(user.id), *ORDER_ACTIONS)
+    order, msg = await service.update_input(db, ref, user, body.buyer_input, client_ip(request))
     await service.broadcast_order(res, db, order, [msg])
     return await service.one_view(db, order, user.id, lang)

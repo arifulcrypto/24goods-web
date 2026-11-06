@@ -125,3 +125,25 @@ async def order_card_messages(
         )
     )
     return list(rows)
+
+
+async def ensure_open_conversation(
+    db: AsyncSession, *, tenant_id: uuid.UUID, buyer_id: uuid.UUID
+) -> uuid.UUID:
+    """The buyer's open conversation, created if there is none (no commit here)."""
+    from sqlalchemy import text
+
+    await db.execute(
+        insert(Conversation)
+        .values(tenant_id=tenant_id, buyer_id=buyer_id, status="open")
+        .on_conflict_do_nothing(
+            index_elements=["tenant_id", "buyer_id"], index_where=text("status = 'open'")
+        )
+    )
+    conv_id = await db.scalar(
+        select(Conversation.id).where(
+            Conversation.buyer_id == buyer_id, Conversation.status == "open"
+        )
+    )
+    assert conv_id is not None
+    return conv_id

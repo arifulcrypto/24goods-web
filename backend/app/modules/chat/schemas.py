@@ -12,9 +12,10 @@ class ConversationIn(BaseModel):
 
 class MessageIn(BaseModel):
     client_msg_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_.:-]+$")
-    type: Literal["text", "image", "voice", "file"]
+    type: Literal["text", "image", "voice", "file", "product_card"]
     text: str | None = Field(None, max_length=2000)
     attachment_id: uuid.UUID | None = None
+    product_id: uuid.UUID | None = None  # product_card (staff only): payload is built server-side
 
 
 class ReadIn(BaseModel):
