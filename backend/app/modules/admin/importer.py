@@ -38,7 +38,7 @@ class FetchIn(BaseModel):
 
 class ParseIn(BaseModel):
     text: str | None = Field(default=None, max_length=300_000)
-    html: str | None = Field(default=None, max_length=safefetch.PAGE_MAX_BYTES)
+    html: str | None = Field(default=None, max_length=1_000_000)  # 1 MB of pasted HTML
     base_url: str | None = Field(default=None, max_length=2000)
 
 
@@ -85,7 +85,11 @@ async def import_parse(
     if not (body.html and body.html.strip()) and not (body.text and body.text.strip()):
         raise Validation("text or html is required")
     cfg = await _import_cfg(db, admin)
-    return importer.parse_pasted(text=body.text, html=body.html, base_url=body.base_url, cfg=cfg)
+    return await anyio.to_thread.run_sync(
+        lambda: importer.parse_pasted(
+            text=body.text, html=body.html, base_url=body.base_url, cfg=cfg
+        )
+    )
 
 
 @router.post("/content/images/fetch")

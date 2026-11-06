@@ -27,7 +27,7 @@ from app.core.config import Settings
 from app.core.email_templates import render_template, site_name
 from app.core.errors import ApiError
 from app.core.features import FeatureDisabled
-from app.core.ratelimit import enforce, hit, ident_hash
+from app.core.ratelimit import count, enforce, hit, ident_hash
 from app.core.resources import Resources
 from app.core.security import hash_password
 from app.models import User
@@ -58,11 +58,17 @@ def _mac(settings: Settings, purpose: str, tenant_id: uuid.UUID, email: str, cod
 async def issue(
     redis: Redis, settings: Settings, tenant_id: uuid.UUID, email: str, purpose: Purpose
 ) -> str | None:
-    """A fresh code, or ``None`` when this email is over its request budget."""
-    ok_min, _ = await hit(redis, "ecode:min", ident_hash(f"{tenant_id}:{email}"), 1, 60)
-    ok_day, _ = await hit(redis, "ecode:day", ident_hash(f"{tenant_id}:{email}"), 10, 86400)
-    if not (ok_min and ok_day):
+    """A fresh code, or ``None`` when this email is in cooldown / over its daily send budget.
+    A refused request never replaces (or extends) an outstanding code, and only actual sends
+    count towards the daily cap."""
+    ident = ident_hash(f"{tenant_id}:{email}")
+    ok_min, _ = await hit(redis, "ecode:min", ident, 1, 60)
+    if not ok_min:
         return None
+    sent_today, _ = await count(redis, "ecode:day", ident, 86400)
+    if sent_today >= 10:
+        return None
+    await hit(redis, "ecode:day", ident, 10, 86400)
     code = f"{secrets.randbelow(1_000_000):06d}"
     key = _key(purpose, tenant_id, email)
     async with redis.pipeline(transaction=True) as pipe:
@@ -73,6 +79,18 @@ async def issue(
     return code
 
 
+# Atomic attempt accounting: count first, refuse past the cap (and burn the code) BEFORE any
+# comparison happens; returns the stored MAC for a constant-time compare in Python.
+_ATTEMPT = """
+local stored = redis.call('HGET', KEYS[1], 'mac')
+if not stored then return false end
+local n = redis.call('HINCRBY', KEYS[1], 'n', 1)
+if n > tonumber(ARGV[1]) then redis.call('DEL', KEYS[1]) return false end
+if n >= tonumber(ARGV[1]) then redis.call('PEXPIRE', KEYS[1], 5000) end
+return stored
+"""
+
+
 async def verify(
     redis: Redis,
     settings: Settings,
@@ -81,18 +99,16 @@ async def verify(
     purpose: Purpose,
     code: str | None,
 ) -> bool:
-    """Constant-time check; consumes the code on success and after the 5th wrong attempt."""
+    """Constant-time check; consumes the code on success and after the last allowed attempt."""
     key = _key(purpose, tenant_id, email)
     if not code or not code.isdigit() or len(code) != 6:
         return False
-    attempts = await redis.hincrby(key, "n", 1)
-    stored = await redis.hget(key, "mac")
-    if stored is None:
-        await redis.delete(key)
+    stored = await redis.eval(_ATTEMPT, 1, key, MAX_ATTEMPTS)
+    if not stored:
         return False
     stored_s = stored.decode() if isinstance(stored, bytes) else str(stored)
     ok = hmac.compare_digest(stored_s, _mac(settings, purpose, tenant_id, email, code))
-    if ok or attempts >= MAX_ATTEMPTS:
+    if ok:
         await redis.delete(key)
     return ok
 

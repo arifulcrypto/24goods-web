@@ -829,3 +829,150 @@ async def test_audit_filters_csv_and_purge(env):
     assert (await admin.get(f"{API}/admin/audit", params={"action": "settings"})).json()[
         "total"
     ] >= 1
+
+
+# ------------------------------------------------------------------ security-review fixes
+async def _google_callback(env, claims, monkeypatch, *, start_params=None, client=None):
+    from urllib.parse import parse_qs, urlsplit
+
+    async def token_post(url, data=None, timeout=None, **kw):
+        return httpx.Response(200, json={"id_token": _id_token(claims)})
+
+    monkeypatch.setattr(env.res.http, "post", token_post)
+    c = client or env.client()
+    r = await c.get(f"{API}/auth/oauth/google/start", params=start_params or {})
+    state = parse_qs(urlsplit(r.headers["location"]).query)["state"][0]
+    return c, await c.get(f"{API}/auth/oauth/google/callback", params={"code": "c", "state": state})
+
+
+def _claims(**over):
+    base = {
+        "iss": "https://accounts.google.com",
+        "aud": "cid.apps.google",
+        "exp": int(time.time()) + 600,
+        "sub": "g-sub-x",
+        "email": "victim@example.com",
+        "email_verified": True,
+        "name": "V",
+    }
+    return {**base, **over}
+
+
+async def test_google_link_unverified_account_is_taken_over_safely(env, monkeypatch):
+    admin, _ = await env.login("admin")
+    await setup_google(env, admin)
+    squatter = await env.user("buyer", email="victim@example.com")  # never verified
+    old_session = await env.res.sessions.create(squatter.id, env.tenant_id, "buyer")
+    _, r = await _google_callback(env, _claims(), monkeypatch)
+    assert r.status_code == 302
+    assert await env.res.sessions.get(old_session) is None  # attacker's session revoked
+    bad = await env.client().post(
+        f"{API}/auth/login", json={"email": "victim@example.com", "password": PASSWORD}
+    )
+    assert bad.status_code == 401  # attacker's password rotated away
+    assert await env.scalar("SELECT email_verified FROM users WHERE email='victim@example.com'")
+    # a user already linked to ANOTHER google account is refused
+    r2 = (await _google_callback(env, _claims(sub="g-sub-other"), monkeypatch))[1]
+    assert r2.status_code == 400 and r2.json()["error"]["code"] == "oauth_failed"
+    assert (
+        await env.scalar("SELECT google_sub FROM users WHERE email='victim@example.com'")
+        == "g-sub-x"
+    )
+
+
+async def test_google_signup_respects_registration_and_terms(env, monkeypatch):
+    admin, _ = await env.login("admin")
+    await setup_google(env, admin)
+    await put_site(env, admin, {"features": {"registration": False}})
+    r = (await _google_callback(env, _claims(email="new1@example.com", sub="s1"), monkeypatch))[1]
+    assert r.status_code == 403 and r.json()["error"]["code"] == "feature_disabled"
+    await put_site(env, admin, {"features": {"registration": True}, "legal": {"enabled": True}})
+    r = (await _google_callback(env, _claims(email="new2@example.com", sub="s2"), monkeypatch))[1]
+    assert r.status_code == 302 and r.headers["location"] == "/login?error=terms_required"
+    assert await env.scalar("SELECT count(*) FROM users WHERE email='new2@example.com'") == 0
+    r = (
+        await _google_callback(
+            env, _claims(email="new3@example.com", sub="s3"), monkeypatch, start_params={"agree": 1}
+        )
+    )[1]
+    assert r.status_code == 302 and r.headers["location"] == "/"
+    assert await env.scalar("SELECT count(*) FROM users WHERE email='new3@example.com'") == 1
+
+
+async def test_email_code_attempt_cap_and_cooldown_keeps_code(env):
+    s, t, email = env.res.settings, env.tenant_id, "cap@example.com"
+    redis = env.res.redis
+    code = await codes.issue(redis, s, t, email, "register")
+    assert code
+    # cooldown: a second request neither sends nor replaces the outstanding code
+    assert await codes.issue(redis, s, t, email, "register") is None
+    wrong = "000000" if code != "000000" else "111111"
+    for _ in range(codes.MAX_ATTEMPTS):
+        assert not await codes.verify(redis, s, t, email, "register", wrong)
+    # the code is burned: even the right one fails after the cap
+    assert not await codes.verify(redis, s, t, email, "register", code)
+    # a refused (cooldown) request does not count towards the daily cap
+    await redis.flushdb()
+    assert await codes.issue(redis, s, t, "d@example.com", "reset")
+    for _ in range(5):
+        await codes.issue(redis, s, t, "d@example.com", "reset")
+    from app.core.ratelimit import count, ident_hash
+
+    n, _ = await count(redis, "ecode:day", ident_hash(f"{t}:d@example.com"), 86400)
+    assert n == 1
+
+
+async def test_turnstile_hostname_must_match(env, monkeypatch):
+    admin, _ = await env.login("admin")
+    await env.user("buyer", email="h@example.com")
+    await enable_turnstile(env, admin)
+    creds = {"email": "h@example.com", "password": PASSWORD}
+
+    async def post(url, data=None, timeout=None, **kw):
+        return httpx.Response(200, json={"success": True, "hostname": post.host})
+
+    monkeypatch.setattr(env.res.http, "post", post)
+    c = env.client()
+    post.host = "evil.example"
+    r = await c.post(f"{API}/auth/login", json={**creds, "turnstile_token": "h1"})
+    assert r.status_code == 400
+    post.host = "testserver"  # the request Host (and PUBLIC_BASE_URL host)
+    r = await c.post(f"{API}/auth/login", json={**creds, "turnstile_token": "h2"})
+    assert r.status_code == 200
+
+
+async def test_mailer_refuses_private_smtp_hosts():
+    from app.core.mailer import MailError, SmtpConfig, send_mail
+
+    cfg = SmtpConfig("127.0.0.1", 25, "", "", "a@b.co", "", "none", allow_private=False)
+    with pytest.raises(MailError, match="blocked_host"):
+        await send_mail(cfg, "x@y.co", "s", "b")
+
+
+async def test_audit_purge_function_binds_to_pinned_tenant(env):
+    from datetime import datetime, timezone
+
+    from sqlalchemy import func, select
+    from sqlalchemy.exc import DBAPIError
+
+    old = datetime.now(timezone.utc) - timedelta(days=400)
+    async with env.api_session(env.tenant_id) as db:
+        with pytest.raises(DBAPIError):
+            await db.scalar(select(func.purge_audit_log(env.other_tenant_id, old)))
+    async with env.api_session(env.tenant_id) as db:
+        with pytest.raises(DBAPIError):  # 30-day floor
+            await db.scalar(select(func.purge_audit_log(env.tenant_id, datetime.now(timezone.utc))))
+
+
+async def test_import_parse_caps_html_at_1mb(env):
+    admin, _ = await env.login("admin")
+    r = await admin.post(f"{API}/admin/products/import/parse", json={"html": "x" * 1_000_001})
+    assert r.status_code == 422
+
+
+async def test_reseller_mask_handle_shows_one_char():
+    from types import SimpleNamespace
+
+    from app.modules.reseller.service import mask_handle
+
+    assert mask_handle(SimpleNamespace(handle=None, email="alice@example.com")) == "a***"

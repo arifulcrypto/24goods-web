@@ -63,6 +63,7 @@ async def register(
         raise TermsRequired("You must accept the terms to register")
     verified = False
     if section(ts, "security")["email_verify_on_register"]:
+        await enforce(res.redis, "register:code:ip", client_ip(request) or "-", 10, 60)
         if not await codes.verify(
             res.redis, res.settings, tenant_id, body.email, "register", body.email_code
         ):

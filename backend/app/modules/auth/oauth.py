@@ -99,6 +99,7 @@ def _state_key(state: str) -> str:
 async def start(
     request: Request,
     next: str | None = Query(None, max_length=300),
+    agree: int = Query(0, ge=0, le=1),  # the web passes 1 after showing the terms
     tenant_id: uuid.UUID = Depends(get_tenant_id),
     db: AsyncSession = Depends(get_db),
     res: Resources = Depends(get_res),
@@ -109,7 +110,14 @@ async def start(
     verifier = secrets.token_urlsafe(48)
     await res.redis.set(
         _state_key(state),
-        json.dumps({"v": verifier, "next": safe_next(next), "tid": str(tenant_id)}),
+        json.dumps(
+            {
+                "v": verifier,
+                "next": safe_next(next),
+                "tid": str(tenant_id),
+                "agree": bool(agree),
+            }
+        ),
         ex=STATE_TTL_S,
     )
     params = {
@@ -214,15 +222,26 @@ async def callback(
 
     user = await db.scalar(select(User).where(User.google_sub == sub).with_for_update())
     created = False
+    revoke_sessions = False
     if user is None:
         user = await db.scalar(select(User).where(User.email == email).with_for_update())
         if user is not None:  # link the Google identity to the existing verified-email account
             if user.role in STAFF_ROLES:
                 raise Forbidden("Staff accounts cannot sign in with Google")
+            if user.google_sub and user.google_sub != sub:
+                raise OAuthFailed("This account is linked to a different Google account")
+            if not user.email_verified:
+                # pre-hijack guard: whoever registered this address first never proved they own
+                # it, so their password and sessions are void once the real owner links Google
+                user.pw_hash = await hash_password(secrets.token_urlsafe(32))
+                revoke_sessions = True
             user.google_sub = sub
             user.email_verified = True
         else:
             ts = await tenant_settings(db, tenant_id)
+            require_feature(ts, "registration")  # Google sign-UP is registration too
+            if section(ts, "legal")["enabled"] and not saved.get("agree"):
+                return RedirectResponse("/login?error=terms_required", status_code=302)
             user = User(
                 tenant_id=tenant_id,
                 email=email,
@@ -255,7 +274,10 @@ async def callback(
         ip=ip,
         detail={"created": created},
     )
+    uid = user.id
     await db.commit()
+    if revoke_sessions:
+        await res.sessions.revoke_user_sessions(uid)
     await res.sessions.delete(res.sessions.token_from(request.cookies))
     token = await res.sessions.create(user.id, user.tenant_id, user.role)
     resp = RedirectResponse(safe_next(saved.get("next")), status_code=302)

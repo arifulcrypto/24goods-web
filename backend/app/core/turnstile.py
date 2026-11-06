@@ -12,6 +12,7 @@ import hashlib
 import logging
 import uuid
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 from fastapi import Request
@@ -26,6 +27,11 @@ log = logging.getLogger("app.turnstile")
 
 SITEVERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
 TOKEN_TTL_S = 300
+TEST_SECRET_PREFIXES = (
+    "1x0000000000000000000000000000000",
+    "2x0000000000000000000000000000000",
+    "3x0000000000000000000000000000000",
+)
 MAX_TOKEN_LEN = 2048
 
 
@@ -61,8 +67,18 @@ async def require_turnstile(
         data["remoteip"] = ip
     try:
         r = await res.http.post(SITEVERIFY_URL, data=data, timeout=5.0)
-        ok = r.status_code == 200 and r.json().get("success") is True
-    except (httpx.HTTPError, ValueError):
+        body = r.json()
+        ok = r.status_code == 200 and body.get("success") is True
+        # the token must have been issued for one of OUR hostnames (Cloudflare test secrets
+        # always answer example.com, so the check is skipped for them)
+        host = body.get("hostname") if isinstance(body, dict) else None
+        if ok and host and not secret.startswith(TEST_SECRET_PREFIXES):
+            allowed = {
+                (urlsplit(res.settings.public_base_url).hostname or "").lower(),
+                (request.headers.get("host") or "").rsplit(":", 1)[0].lower().strip("[]"),
+            } - {""}
+            ok = str(host).lower() in allowed
+    except (httpx.HTTPError, ValueError, AttributeError):
         ok = False
     if not ok:
         raise TurnstileFailed("Human verification failed")

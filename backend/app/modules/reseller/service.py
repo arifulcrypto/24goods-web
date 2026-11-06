@@ -492,7 +492,7 @@ def mask_handle(u: User | None) -> str:
     if u is None:
         return "***"
     base = u.handle or u.email.split("@", 1)[0]
-    return base[:2] + "***"
+    return base[:1] + "***"
 
 
 async def list_orders(db: AsyncSession, r: Reseller, page: Page) -> dict[str, Any]:

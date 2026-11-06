@@ -5,6 +5,8 @@ from __future__ import annotations
 from typing import Any
 from urllib.parse import urlsplit
 
+import anyio.to_thread
+
 from app.core import safefetch
 
 from . import extract, sites
@@ -87,7 +89,7 @@ async def import_from_url(
     host = urlsplit(final).hostname or ""
     if "json" in page.content_type:
         raise safefetch.FetchError("URL is not a product page")
-    p, root = extract.parse_html(page.text(), final)
+    p, root = await anyio.to_thread.run_sync(extract.parse_html, page.text(), final)
     sites.apply_html_adapter(host, root, final, p)
     # client-rendered shell: nothing but <title>/meta and an empty mount point
     if not p.price_minor and root.find("h1") is None:

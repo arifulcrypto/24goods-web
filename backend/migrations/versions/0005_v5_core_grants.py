@@ -21,12 +21,18 @@ def upgrade() -> None:
         "GRANT UPDATE (processed_at, attempts, last_error, available_at) ON outbox TO app_api"
     )
     # Retention purge (settings audit.retention_days). Only rows older than 30 days can ever be
-    # deleted, only for the tenant the session is pinned to (FORCE RLS still applies).
+    # deleted, only for the tenant the session is pinned to (checked against
+    # app.tenant_id, not the argument).
     op.execute(
         """CREATE FUNCTION purge_audit_log(p_tenant uuid, p_before timestamptz) RETURNS bigint
         LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
         DECLARE n bigint;
+                pinned uuid := NULLIF(current_setting('app.tenant_id', true), '')::uuid;
         BEGIN
+            -- never trust the argument: the session's pinned tenant is the only one allowed
+            IF pinned IS NULL OR p_tenant IS DISTINCT FROM pinned THEN
+                RAISE EXCEPTION 'audit purge: tenant mismatch';
+            END IF;
             IF p_before > now() - interval '30 days' THEN
                 RAISE EXCEPTION 'audit retention below 30 days is not allowed';
             END IF;
