@@ -18,15 +18,18 @@ import {
 import { api } from '../api'
 import BuySheet from '../components/BuySheet.vue'
 import BuyerInputSheet from '../components/BuyerInputSheet.vue'
+import ManualPromise from '../components/ManualPromise.vue'
 import MiniStrip from '../components/MiniStrip.vue'
 import { cleanSrc, rememberSrc } from '../lib/attribution'
 import { useCartStore } from '../stores/cart'
+import { useSiteStore } from '../stores/site'
 import { showImagePreview, showSuccessToast, showToast, toastError } from '../ui'
 
 const { t, locale } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const cart = useCartStore()
+const site = useSiteStore()
 
 const product = ref<Product | null>(null)
 const loading = ref(true)
@@ -174,7 +177,8 @@ function back() {
         </div>
         <h1 class="title">{{ product.title }}</h1>
         <div class="facts">
-          <span :class="isAuto ? 'badge-instant' : 'badge-manual'">{{ t(`deliveryMode.${product.delivery_mode}`) }}</span>
+          <span v-if="isAuto" class="badge-instant">{{ t(`deliveryMode.${product.delivery_mode}`) }}</span>
+          <ManualPromise v-else :eta="product.delivery_eta_hours" compact />
           <span v-if="isAuto && product.stock !== null" class="muted">
             {{ soldOut ? t('product.outOfStock') : t('product.stock', { n: product.stock }) }}
           </span>
@@ -184,7 +188,8 @@ function back() {
         <p v-if="labels.length" class="fmt">
           <strong>{{ t('product.deliveryFormat') }}</strong> {{ labels.join(' · ') }}
         </p>
-        <p class="hint muted">{{ isAuto ? t('product.instantHint') : t('product.manualHint') }}</p>
+        <p v-if="isAuto" class="hint muted">{{ t('product.instantHint') }}</p>
+        <ManualPromise v-else class="hint" :eta="product.delivery_eta_hours" />
       </section>
 
       <section class="section card ask">
@@ -211,12 +216,14 @@ function back() {
       <van-action-bar class="dock-bar" safe-area-inset-bottom>
         <van-action-bar-icon icon="chat-o" :text="t('product.chat')" @click="chat" />
         <van-action-bar-icon
+          v-if="site.features.cart"
           icon="cart-o"
           :text="t('product.cartShort')"
           :badge="cart.count ? (cart.count > 99 ? '99+' : cart.count) : ''"
           to="/cart"
         />
         <van-action-bar-button
+          v-if="site.features.cart"
           type="warning"
           :text="t('product.addToCart')"
           :disabled="soldOut"

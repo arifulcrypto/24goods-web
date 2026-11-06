@@ -15,6 +15,8 @@ import {
 } from '@24goods/shared'
 import { api } from '../api'
 import PowStatus from '../components/PowStatus.vue'
+import TurnstileBox from '../components/TurnstileBox.vue'
+import { useTurnstile } from '../composables/useTurnstile'
 import { isPowAbort, usePow } from '../composables/usePow'
 import { confirm, toastError } from '../ui'
 
@@ -22,6 +24,7 @@ const { t, locale } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const pow = usePow()
+const ts = useTurnstile('lookup')
 
 const orderNo = ref(typeof route.query.no === 'string' ? route.query.no.trim().slice(0, 64) : '')
 const code = ref('')
@@ -46,10 +49,11 @@ async function find() {
   failed.value = ''
   codes.value = []
   try {
+    const token = ts.require()
     const solution = await pow.run('lookup')
     const no = orderNo.value.trim()
     const ac = normCode(code.value)
-    order.value = await api.lookup.find({ order_no: no, access_code: ac, pow: solution })
+    order.value = await api.lookup.find({ order_no: no, access_code: ac, pow: solution }, token)
     usedCode = ac
     recent.value = addLookup(no)
   } catch (e) {
@@ -58,6 +62,7 @@ async function find() {
     if (isApiError(e) && (e.code === 'not_found' || e.code === 'forbidden' || e.code === 'validation')) failed.value = t('lookup.notFound')
     else toastError(e)
   } finally {
+    ts.reset()
     busy.value = false
   }
 }
@@ -98,6 +103,7 @@ onBeforeUnmount(reset)
       <label class="lbl" for="lk-code">{{ t('lookup.accessCode') }}</label>
       <input id="lk-code" v-model="code" class="inp mono" autocomplete="off" autocapitalize="characters" maxlength="24" :placeholder="t('lookup.accessCodeHint')" />
       <p v-if="failed" class="err" role="alert">{{ failed }}</p>
+      <TurnstileBox :ts="ts" />
       <PowStatus :solving="pow.solving.value" :progress="pow.progress.value" />
       <van-button block round type="primary" size="large" native-type="submit" :loading="busy" :disabled="!valid">
         {{ t('lookup.submit') }}

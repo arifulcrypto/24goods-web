@@ -3,7 +3,7 @@ import { computed, onActivated, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { LogoMark } from '@24goods/shared/ui'
-import { BRAND, clearRecent, recentIds, type Category, type ProductSummary } from '@24goods/shared'
+import { BRAND, clearRecent, recentIds, safeAssetUrl, storeInitial, type Category, type ProductSummary } from '@24goods/shared'
 import { api } from '../api'
 import Announcement from '../components/Announcement.vue'
 import BuySheet from '../components/BuySheet.vue'
@@ -11,6 +11,7 @@ import MiniStrip from '../components/MiniStrip.vue'
 import ProductList from '../components/ProductList.vue'
 import SupportPill from '../components/SupportPill.vue'
 import { useProductFeed } from '../composables/useProductFeed'
+import { useSiteStore } from '../stores/site'
 
 const VIEW_KEY = 'kesiv.view'
 const { t, locale } = useI18n()
@@ -25,8 +26,17 @@ const recommended = ref<ProductSummary[]>([])
 const buying = ref<ProductSummary | null>(null)
 const buySheet = ref(false)
 
-const brandTitle = computed(() => (locale.value === 'zh-CN' ? `${BRAND.nameZh} ${BRAND.name}` : BRAND.name))
-const tagline = computed(() => BRAND.tagline[locale.value === 'zh-CN' ? 'zh-CN' : 'en'])
+const site = useSiteStore()
+const loc = computed(() => (locale.value === 'zh-CN' ? 'zh-CN' : 'en'))
+// v5: storefront name > Settings → General override > brand.ts
+const brandTitle = computed(() => {
+  if (site.storefront) return site.storefront.store_name
+  if (site.site?.general?.site_name_i18n?.[loc.value]?.trim()) return site.siteName
+  return loc.value === 'zh-CN' ? `${BRAND.nameZh} ${BRAND.name}` : BRAND.name
+})
+const tagline = computed(() => site.whiteLabel ? '' : site.site?.general?.subtitle_i18n?.[loc.value]?.trim() || BRAND.tagline[loc.value])
+const storeLogo = computed(() => safeAssetUrl(site.storefront?.logo_url))
+const welcome = computed(() => site.storefront?.welcome ?? null)
 
 function readView(): 'list' | 'grid' {
   try {
@@ -102,16 +112,19 @@ function openSupport() {
     <header class="hero">
       <div class="hero-top">
         <div class="brand">
-          <LogoMark :size="32" />
+          <img v-if="storeLogo" :src="storeLogo" class="store-logo" width="32" height="32" alt="" />
+          <span v-else-if="site.whiteLabel" class="store-mono" aria-hidden="true">{{ storeInitial(site.storefront?.store_name) }}</span>
+          <LogoMark v-else :size="32" />
           <div class="brand-text">
             <span class="brand-name">{{ brandTitle }}</span>
-            <span class="brand-tag">{{ tagline }}</span>
+            <span v-if="tagline" class="brand-tag">{{ tagline }}</span>
           </div>
         </div>
         <SupportPill @click="openSupport" />
       </div>
+      <p v-if="welcome" class="store-welcome">{{ welcome }}</p>
       <nav class="links" :aria-label="t('home.quickLinks')">
-        <RouterLink to="/lookup"><van-icon name="search" aria-hidden="true" />{{ t('home.lookup') }}</RouterLink>
+        <RouterLink v-if="site.features.lookup" to="/lookup"><van-icon name="search" aria-hidden="true" />{{ t('home.lookup') }}</RouterLink>
         <RouterLink to="/help"><van-icon name="question-o" aria-hidden="true" />{{ t('home.help') }}</RouterLink>
         <button type="button" @click="openSupport"><van-icon name="service-o" aria-hidden="true" />{{ t('home.support') }}</button>
       </nav>
@@ -327,5 +340,24 @@ function openSupport() {
     padding-left: 16px;
     padding-right: 16px;
   }
+}
+.store-mono {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: #1f1f1f;
+  color: var(--c-accent);
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+}
+.store-logo {
+  border-radius: 8px;
+  object-fit: cover;
+}
+.store-welcome {
+  margin: 8px 0 0;
+  font-size: 13px;
+  overflow-wrap: anywhere;
 }
 </style>

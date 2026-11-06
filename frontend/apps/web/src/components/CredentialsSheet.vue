@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useSiteStore } from '../stores/site'
 import { BRAND, copyText, downloadText, type InstantCredentials } from '@24goods/shared'
 import { showToast } from '../ui'
 
@@ -16,12 +17,13 @@ watch(
 async function copy(s: string) {
   showToast((await copyText(s)) ? t('common.copied') : t('common.copyFailed'))
 }
+const site = useSiteStore()
 function save() {
   const c = props.credentials
   if (!c) return
   downloadText(
-    `${BRAND.name.toLowerCase()}-credentials.txt`,
-    `${BRAND.name}\n${t('cred.login')}: ${c.login}\n${t('cred.password')}: ${c.password}\n`,
+    `${site.whiteLabel ? 'account' : BRAND.name.toLowerCase()}-credentials.txt`,
+    `${site.headerName}\n${t('cred.login')}: ${c.login}\n${t('cred.password')}: ${c.password}\n`,
   )
 }
 </script>

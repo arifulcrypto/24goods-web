@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ProductThumb } from '@24goods/shared/ui'
 import {
-  computeFee,
+  feeBreakdown,
   moneyParts,
   multiplyAmount,
   type BuyerInputConfig,
@@ -16,8 +16,12 @@ import { useAuthStore } from '../stores/auth'
 import { useSiteStore } from '../stores/site'
 import BuyerInputSheet from './BuyerInputSheet.vue'
 import FeeLines from './FeeLines.vue'
+import ManualPromise from './ManualPromise.vue'
+import PromoField, { type AppliedPromo } from './PromoField.vue'
+import TurnstileBox from './TurnstileBox.vue'
 import { recalledSrc, stashAccessCode } from '../lib/attribution'
 import { usePow, isPowAbort } from '../composables/usePow'
+import { useTurnstile } from '../composables/useTurnstile'
 import CredentialsSheet from './CredentialsSheet.vue'
 import PowStatus from './PowStatus.vue'
 import { toastError } from '../ui'
@@ -30,6 +34,8 @@ const router = useRouter()
 const auth = useAuthStore()
 const site = useSiteStore()
 const pow = usePow()
+const ts = useTurnstile('instant_account')
+const promo = ref<AppliedPromo | null>(null)
 
 const qty = ref(1)
 const submitting = ref(false)
@@ -48,7 +54,9 @@ const maxQty = computed(() => {
   return MAX_QTY
 })
 const subtotal = computed(() => (p.value ? (multiplyAmount(p.value.price, qty.value) ?? p.value.price) : '0.00'))
-const fee = computed(() => computeFee(subtotal.value, site.permille) ?? '0.00')
+const discountMinor = computed(() => (promo.value && !promo.value.stale ? promo.value.discount_minor : 0))
+const bd = computed(() => feeBreakdown(subtotal.value, discountMinor.value, site.permille))
+const promoItems = computed(() => (p.value ? [{ product_id: p.value.id, qty: qty.value }] : []))
 const needsInput = computed(() => p.value?.buyer_input?.enabled === true)
 
 watch(
@@ -57,6 +65,7 @@ watch(
     if (v) {
       qty.value = Math.min(Math.max(1, Math.floor(props.qty ?? 1)), maxQty.value)
       inputValue.value = null
+      promo.value = null
       void site.loadChannels()
     }
   },
@@ -80,7 +89,7 @@ async function placeOrder() {
   submitting.value = true
   try {
     // Price is decided by the server; only product id + qty (+ attribution tag) are sent.
-    const order = await api.orders.create(x.id, qty.value, props.src ?? recalledSrc(), inputValue.value)
+    const order = await api.orders.create(x.id, qty.value, props.src ?? recalledSrc(), inputValue.value, promo.value?.code)
     stashAccessCode(order.id, order.access_code)
     emit('update:show', false)
     await router.push(`/orders/${encodeURIComponent(order.id)}`)
@@ -111,14 +120,16 @@ async function continueAsGuest() {
   if (submitting.value || pow.solving.value) return
   submitting.value = true
   try {
+    const token = ts.require()
     const solution = await pow.run('instant')
-    const r = await api.auth.instant({ pow: solution })
+    const r = await api.auth.instant(token ? { pow: solution, turnstile_token: token } : { pow: solution })
     auth.setUser(r.user)
     creds.value = r.credentials
     showCreds.value = true
   } catch (e) {
     if (!isPowAbort(e)) toastError(e)
   } finally {
+    ts.reset()
     submitting.value = false
   }
 }
@@ -155,10 +166,14 @@ async function credsDone() {
         </div>
         <van-stepper v-model="qty" :min="1" :max="maxQty" integer :input-width="48" :button-size="36" />
       </div>
+      <ManualPromise v-if="p.delivery_mode === 'manual'" class="sheet-manual" :eta="p.delivery_eta_hours" />
+      <PromoField v-model="promo" :items="promoItems" />
+      <p v-if="promo?.stale" class="muted small">{{ t('promo.stale') }}</p>
       <div class="sheet-fees">
         <FeeLines
           :subtotal="subtotal"
-          :fee="fee"
+          :discount-minor="discountMinor"
+          :fee="bd.fee"
           :currency="p.currency"
           :label="site.channel?.label"
           :rate="site.channel?.fee_rate"
@@ -171,9 +186,11 @@ async function credsDone() {
         </van-button>
       </template>
       <template v-else>
-        <p class="muted small guest-note">{{ t('buy.guestNote') }}</p>
+        <p v-if="site.features.guest_checkout" class="muted small guest-note">{{ t('buy.guestNote') }}</p>
         <PowStatus :solving="pow.solving.value" :progress="pow.progress.value" />
+        <TurnstileBox v-if="site.features.guest_checkout" :ts="ts" />
         <van-button
+          v-if="site.features.guest_checkout"
           block
           round
           type="primary"
@@ -183,7 +200,7 @@ async function credsDone() {
         >
           {{ t('buy.continueGuest') }}
         </van-button>
-        <van-button block round plain size="large" class="signin" @click="signIn">{{ t('me.login') }}</van-button>
+        <van-button block round :type="site.features.guest_checkout ? undefined : 'primary'" :plain="site.features.guest_checkout" size="large" class="signin" @click="signIn">{{ t('me.login') }}</van-button>
       </template>
     </div>
   </van-popup>
@@ -226,6 +243,9 @@ async function credsDone() {
 .sheet-row:last-of-type {
   border-bottom: 0;
   margin-bottom: 12px;
+}
+.sheet-manual {
+  padding: 8px 0;
 }
 .sheet-fees {
   padding: 12px 0;
