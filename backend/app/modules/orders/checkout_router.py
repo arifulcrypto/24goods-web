@@ -43,6 +43,15 @@ async def cart_quote(
     ident = client_ip(request) or (str(user.id) if user is not None else None)
     if ident is not None:  # no IP and no session: no shared bucket
         await enforce(res.redis, "cart:quote", ident, 60, 60)
+    if body.promo_code and body.promo_code.strip():
+        # a quote with a code is a code oracle: it shares the /promo/validate bucket
+        await enforce(
+            res.redis,
+            "promo:validate",
+            str(user.id) if user is not None else (ident or "-"),
+            20,
+            60,
+        )
     return await svc.quote_cart(
         db, tenant_id, body.items, lang, promo_code=body.promo_code, user=user, storefront=sf
     )

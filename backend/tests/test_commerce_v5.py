@@ -14,7 +14,7 @@ from app.core import storefront
 from app.models import PromoCode, Reseller
 from app.modules.orders.service import expire_pending
 from app.modules.promo.service import PromoError, PromoLine, allocate, compute
-from tests.helpers import buy, pay_order, simulate_gateway_payment
+from tests.helpers import buy, notify_params, pay_order, simulate_gateway_payment
 from tests.test_commerce_v4 import checkout, line, set_fee, set_settings
 
 API = "/api/v1"
@@ -507,15 +507,12 @@ async def test_storefront_order_markup_ledger_refund_and_visibility(env):
     # buyer on main store pays base price (header cannot be used to lower)
     o2 = await buy(buyer, p)
     assert o2["subtotal"] == "19.90" and o2["reseller"] is None
-    # staff cannot change price of... (reseller order markup is clamped) -> see below
+    # staff cannot reprice a reseller order with markup (settlement split would change)
     o3 = (await buyer.post(f"{API}/orders", json={"product_id": str(p.id)}, headers=hs)).json()
     r = await staff.patch(
         f"{API}/admin/orders/{o3['id']}/price", json={"amount": "1.00", "reason": "deal"}
     )
-    assert r.status_code == 200, r.text
-    assert (
-        await env.scalar("SELECT reseller_markup_minor FROM orders WHERE id=:i", i=o3["id"]) == 100
-    )
+    assert r.status_code == 409, r.text
 
 
 async def test_conversation_gets_reseller_id(env):
@@ -743,3 +740,428 @@ async def test_payout_rejected_frees_balance_and_cross_reseller_isolation(env):
     assert (await buyer.get(f"{API}/reseller/me")).json() is None
     assert (await buyer.get(f"{API}/reseller/orders")).status_code == 404
     assert (await ob.get(f"{API}/reseller/orders")).json()["total"] == 0
+
+
+# ------------------------------------------------------------------ audit-fix tests
+NOTIFY = "/api/v1/pay/notify/zpay"
+
+
+async def notify(env, gw, no: str, money: str, trade: str) -> str:
+    gw.paid[no] = (money, trade)
+    r = await env.client(csrf=False).get(NOTIFY, params=notify_params(no, money, trade_no=trade))
+    return r.text
+
+
+async def expire_now(env, table: str, where: str = "true") -> None:
+    async with env.owner_session() as db:
+        await db.execute(
+            text(f"UPDATE {table} SET expires_at = now() - interval '1 hour' WHERE {where}")  # noqa: S608
+        )
+        await db.commit()
+    await expire_pending(env.res.maker, env.res)
+
+
+async def test_late_payment_after_promo_expiry_recounts_the_redemption(env, gw):
+    await set_fee(env, 30)
+    admin, _ = await env.login("admin")
+    await make_promo(admin, code="LATE1", per_user_limit=3)
+    p = await env.product(mode="manual", price=1990, floor=100)
+    buyer, _ = await env.login("buyer")
+    o = await buy(buyer, p, promo_code="LATE1")
+    r = await buyer.post(f"{API}/orders/{o['id']}/pay", json={"channel": "zpay_alipay"})
+    assert r.status_code == 200  # a pay URL is out
+    await expire_now(env, "orders")
+    assert await env.scalar("SELECT used_count FROM promo_codes") == 0
+    assert await env.scalar("SELECT status FROM promo_redemptions") == "released"
+    assert await notify(env, gw, o["order_no"], o["amount"], "TLATEPROMO") == "success"
+    assert (await buyer.get(f"{API}/orders/{o['id']}")).json()["status"] == "manual_review"
+    # money was received at the discounted price: redemption is used again, counter restored
+    assert await env.scalar("SELECT status FROM promo_redemptions") == "used"
+    assert await env.scalar("SELECT used_count FROM promo_codes") == 1
+    assert await ledger_sum(env, "promo_discount") == 199
+    await assert_ledger_balanced(env)
+
+
+async def test_promo_manual_review_paths_mark_the_redemption_used(env, gw):
+    await set_fee(env, 30)
+    admin, _ = await env.login("admin")
+    await make_promo(admin, code="REV1", per_user_limit=5)
+    a = await env.product(mode="manual", price=1990, floor=100)
+    b = await env.product(mode="manual", price=990, floor=100)
+    buyer, _ = await env.login("buyer")
+    # (a) wrong amount first (held, nothing recorded), then the verified payment arrives:
+    # the Payment is recorded in review and the redemption becomes used
+    body = (await checkout(buyer, [line(a), line(b)], promo_code="REV1")).json()
+    no = body["checkout"]["checkout_no"]
+    assert await env.scalar("SELECT status FROM promo_redemptions") == "reserved"
+    assert await notify(env, gw, no, "1.00", "TDRIFT") == "success"
+    assert (await buyer.get(f"{API}/checkouts/{no}")).json()["status"] == "manual_review"
+    assert await env.scalar("SELECT count(*) FROM payments") == 0
+    assert await notify(env, gw, no, body["checkout"]["amount"], "TRIGHT") == "success"
+    assert await env.scalar("SELECT count(*) FROM payments") == 1
+    assert await env.scalar("SELECT status FROM promo_redemptions") == "used"
+    # (b) a member order paid directly: its checkout redemption must not be released later
+    body = (await checkout(buyer, [line(a), line(b)], promo_code="REV1")).json()
+    member = body["orders"][0]
+    assert await notify(env, gw, member["order_no"], member["amount"], "TMEMBER") == "success"
+    assert (await buyer.get(f"{API}/orders/{member['id']}")).json()["status"] == "manual_review"
+    co_no = body["checkout"]["checkout_no"]
+    red = await env.scalar(
+        "SELECT r.status FROM promo_redemptions r JOIN checkouts c ON c.id=r.checkout_id "
+        "WHERE c.checkout_no=:n",
+        n=co_no,
+    )
+    assert red == "used"
+    await assert_ledger_balanced(env)
+
+
+def test_payment_lines_skip_zero_amounts_and_balance():
+    from app.models import Order
+    from app.modules.payments.settle import payment_lines
+
+    rid = uuid.uuid4()
+    o = Order(
+        kind="goods",
+        subtotal_minor=300,
+        discount_minor=0,
+        fee_minor=0,
+        amount_minor=300,
+        reseller_id=rid,
+        reseller_markup_minor=300,  # markup == subtotal -> sales_revenue is 0
+    )
+    lines = payment_lines(o)
+    assert all(ln.amount_minor != 0 for ln in lines)
+    assert sum(ln.amount_minor for ln in lines) == 0
+    assert {ln.account for ln in lines} == {"gateway_clearing:zpay", f"reseller_payable:{rid}"}
+
+
+async def test_reprice_refusals_for_promo_markup_and_signup_orders(env):
+    await set_settings(env, {**FEATURES, "resellers": {"signup_fee_minor": 5000}})
+    admin, _ = await env.login("admin")
+    staff, _ = await env.login("agent")
+    await make_promo(admin, code="NOPRICE")
+    _rb, ru = await env.login("buyer")
+    await make_reseller(env, ru, "shopa", kind="fixed", value=100)
+    p = await env.product(mode="manual", price=1990, floor=100)
+    buyer, _ = await env.login("buyer")
+    promo_o = await buy(buyer, p, promo_code="NOPRICE")
+    mk_o = (
+        await buyer.post(
+            f"{API}/orders", json={"product_id": str(p.id)}, headers={"X-Storefront": "shopa"}
+        )
+    ).json()
+    applicant, _ = await env.login("buyer")
+    so = (
+        await applicant.post(f"{API}/reseller/apply", json={"slug": "newst", "store_name": "N"})
+    ).json()["signup_order"]
+    for oid in (promo_o["id"], mk_o["id"], so["id"]):
+        r = await staff.patch(
+            f"{API}/admin/orders/{oid}/price", json={"amount": "10.00", "reason": "x"}
+        )
+        assert r.status_code == 409, (oid, r.text)
+
+
+async def _apply(client, slug="st1", name="St"):
+    r = await client.post(f"{API}/reseller/apply", json={"slug": slug, "store_name": name})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+async def test_signup_notify_replay_is_idempotent(env, gw):
+    await set_settings(env, {**FEATURES, "resellers": {"signup_fee_minor": 5000}})
+    buyer, _ = await env.login("buyer")
+    so = (await _apply(buyer))["signup_order"]
+    assert (
+        await buyer.post(f"{API}/orders/{so['id']}/pay", json={"channel": "zpay_alipay"})
+    ).status_code == 200
+    assert await notify(env, gw, so["order_no"], so["amount"], "TSU1") == "success"
+    assert await notify(env, gw, so["order_no"], so["amount"], "TSU1") == "success"  # replay
+    assert await env.scalar("SELECT count(*) FROM payments") == 1
+    assert await ledger_sum(env, "reseller_signup_revenue") == -5000
+    assert await env.scalar("SELECT status FROM resellers") == "active"
+    assert await env.scalar("SELECT status FROM orders WHERE kind='reseller_signup'") == "completed"
+    await assert_ledger_balanced(env)
+
+
+async def test_signup_late_payment_is_held_then_staff_activates_or_refunds(env, gw):
+    await set_settings(env, {**FEATURES, "resellers": {"signup_fee_minor": 5000}})
+    admin, _ = await env.login("admin")
+    buyer, _ = await env.login("buyer")
+    so = (await _apply(buyer))["signup_order"]
+    await buyer.post(f"{API}/orders/{so['id']}/pay", json={"channel": "zpay_alipay"})
+    await expire_now(env, "orders")
+    assert await env.scalar("SELECT status FROM orders WHERE kind='reseller_signup'") == "expired"
+    assert await notify(env, gw, so["order_no"], so["amount"], "TSULATE") == "success"
+    assert await env.scalar("SELECT status FROM orders WHERE kind='reseller_signup'") == (
+        "manual_review"
+    )
+    assert await env.scalar("SELECT status FROM resellers") == "pending_payment"  # not "completed"
+    # re-apply now gets a NEW order (the old one is terminal-ish? no: manual_review is open)
+    again = await _apply(buyer)
+    assert again["signup_order"]["order_no"] == so["order_no"]
+    # only admins resolve; activate
+    agent, _ = await env.login("agent")
+    assert (
+        await agent.post(f"{API}/admin/orders/{so['id']}/resolve", json={"action": "activate"})
+    ).status_code == 403
+    r = await admin.post(
+        f"{API}/admin/orders/{so['id']}/resolve", json={"action": "activate", "note": "ok"}
+    )
+    assert r.status_code == 200, r.text
+    assert await env.scalar("SELECT status FROM resellers") == "active"
+    assert await env.scalar("SELECT status FROM orders WHERE kind='reseller_signup'") == "completed"
+    # a second resolve is refused
+    r = await admin.post(f"{API}/admin/orders/{so['id']}/resolve", json={"action": "refund"})
+    assert r.status_code == 409
+    await assert_ledger_balanced(env)
+
+
+async def test_signup_refund_resolution_mirrors_the_ledger(env, gw):
+    await set_fee(env, 30)
+    await set_settings(env, {**FEATURES, "resellers": {"signup_fee_minor": 5000}})
+    admin, _ = await env.login("admin")
+    buyer, _ = await env.login("buyer")
+    so = (await _apply(buyer))["signup_order"]
+    await buyer.post(f"{API}/orders/{so['id']}/pay", json={"channel": "zpay_alipay"})
+    await expire_now(env, "orders")
+    assert await notify(env, gw, so["order_no"], so["amount"], "TSUREF") == "success"
+    assert await ledger_sum(env, "reseller_signup_revenue") == -5000
+    r = await admin.post(
+        f"{API}/admin/orders/{so['id']}/resolve", json={"action": "refund", "note": "dup"}
+    )
+    assert r.status_code == 200 and r.json()["status"] == "refunded"
+    for acct in ("reseller_signup_revenue", "surcharge_revenue", "gateway_clearing:zpay"):
+        assert await ledger_sum(env, acct) == 0, acct
+    assert await env.scalar("SELECT status FROM resellers") == "pending_payment"
+    assert (
+        await env.scalar(
+            "SELECT count(*) FROM audit_log WHERE action='order.signup_refunded' "
+            "AND (detail->>'manual_refund')::bool"
+        )
+        == 1
+    )
+    await assert_ledger_balanced(env)
+
+
+async def test_signup_paid_for_an_already_active_store_is_held(env, gw):
+    await set_settings(env, {**FEATURES, "resellers": {"signup_fee_minor": 5000}})
+    buyer, _ = await env.login("buyer")
+    so = (await _apply(buyer))["signup_order"]
+    await buyer.post(f"{API}/orders/{so['id']}/pay", json={"channel": "zpay_alipay"})
+    async with env.owner_session() as db:  # store activated by other means meanwhile
+        await db.execute(text("UPDATE resellers SET status='active', activated_at=now()"))
+        await db.commit()
+    assert await notify(env, gw, so["order_no"], so["amount"], "TSUACT") == "success"
+    assert await env.scalar("SELECT status FROM orders WHERE kind='reseller_signup'") == (
+        "manual_review"
+    )
+    assert (
+        await env.scalar(
+            "SELECT count(*) FROM audit_log WHERE action='reseller.signup_manual_review' "
+            "AND severity='critical'"
+        )
+        == 1
+    )
+    await assert_ledger_balanced(env)
+
+
+async def test_waive_with_an_outstanding_paid_pay_url_does_not_cancel_over_money(env, gw):
+    await set_settings(env, {**FEATURES, "resellers": {"signup_fee_minor": 5000}})
+    admin, _ = await env.login("admin")
+    buyer, _ = await env.login("buyer")
+    so = (await _apply(buyer))["signup_order"]
+    await buyer.post(f"{API}/orders/{so['id']}/pay", json={"channel": "zpay_alipay"})
+    gw.paid[so["order_no"]] = (so["amount"], "TWAIVE")  # gateway says: paid (notify not yet in)
+    rid = await env.scalar("SELECT id FROM resellers")
+    r = await admin.patch(f"{API}/admin/resellers/{rid}", json={"status": "active"})
+    assert r.status_code == 409 and r.json()["error"]["code"] == "already_paid"
+    # the re-query settled the payment: store active through the sign-up, order completed
+    assert await env.scalar("SELECT status FROM resellers") == "active"
+    assert await env.scalar("SELECT status FROM orders WHERE kind='reseller_signup'") == "completed"
+    assert await env.scalar("SELECT count(*) FROM payments") == 1
+    await assert_ledger_balanced(env)
+
+
+async def test_reapply_after_fee_becomes_free_closes_the_old_order(env, gw):
+    await set_settings(env, {**FEATURES, "resellers": {"signup_fee_minor": 5000}})
+    buyer, _ = await env.login("buyer")
+    so = (await _apply(buyer))["signup_order"]
+    await set_settings(env, {"resellers": {"signup_fee_minor": 0}})
+    me = await _apply(buyer, "st1", "St Free")
+    assert me["status"] == "active" and me["signup_order"] is None
+    assert await env.scalar("SELECT status FROM orders WHERE kind='reseller_signup'") == "cancelled"
+    # the old pay URL can no longer settle it as a normal sale
+    assert so["order_no"]
+
+
+async def test_reapply_reuses_open_order_and_creates_new_only_after_terminal(env, gw):
+    await set_settings(env, {**FEATURES, "resellers": {"signup_fee_minor": 5000}})
+    buyer, _ = await env.login("buyer")
+    first = (await _apply(buyer))["signup_order"]
+    await expire_now(env, "orders")  # -> expired (terminal)
+    second = (await _apply(buyer, "st1", "Again"))["signup_order"]
+    assert second["order_no"] != first["order_no"]
+    assert await env.scalar("SELECT count(*) FROM orders WHERE status='pending_payment'") == 1
+    # the OLD one paid late is held, never activating on its own
+    assert await notify(env, gw, first["order_no"], first["amount"], "TOLD") == "success"
+    assert (
+        await env.scalar("SELECT status FROM orders WHERE order_no=:n", n=first["order_no"])
+        == "manual_review"
+    )
+    assert await env.scalar("SELECT status FROM resellers") == "pending_payment"
+
+
+async def test_double_payout_decide_is_refused_and_concurrent_safe(env):
+    await set_settings(
+        env, {**FEATURES, "resellers": {"settle_after_hours": 0, "min_payout_minor": 100}}
+    )
+    rb, ru = await env.login("buyer")
+    await make_reseller(env, ru, "shopa", kind="fixed", value=400)
+    p = await env.product(mode="manual", price=1000, floor=100)
+    buyer, _ = await env.login("buyer")
+    staff, _ = await env.login("agent")
+    admin, _ = await env.login("admin")
+    o = await _earn(env, buyer, staff, p)
+    await rb.patch(f"{API}/reseller/me", json={"payout_account": {"name": "A", "account": "x"}})
+    pid = (await rb.post(f"{API}/reseller/payouts", json={"amount_minor": 400})).json()["id"]
+    rs = await asyncio.gather(
+        *[
+            admin.post(f"{API}/admin/payouts/{pid}/decide", json={"action": "paid"})
+            for _ in range(3)
+        ]
+    )
+    assert sorted(r.status_code for r in rs) == [200, 409, 409]
+    assert await ledger_sum(env, "cash:payouts") == -400
+    await assert_ledger_balanced(env)
+    del o
+
+
+async def _earn(env, buyer, staff, p, slug="shopa"):
+    o = (
+        await buyer.post(
+            f"{API}/orders", json={"product_id": str(p.id)}, headers={"X-Storefront": slug}
+        )
+    ).json()
+    await pay_order(env, buyer, o)
+    await staff.post(f"{API}/admin/orders/{o['id']}/deliver", json={"text": "ok"})
+    assert (await buyer.post(f"{API}/orders/{o['id']}/confirm")).status_code == 200
+    return o
+
+
+async def test_payout_paid_rechecks_balance_after_a_refund_unless_forced(env):
+    await set_settings(
+        env, {**FEATURES, "resellers": {"settle_after_hours": 0, "min_payout_minor": 100}}
+    )
+    rb, ru = await env.login("buyer")
+    await make_reseller(env, ru, "shopa", kind="fixed", value=400)
+    p = await env.product(mode="manual", price=1000, floor=100)
+    buyer, _ = await env.login("buyer")
+    staff, _ = await env.login("agent")
+    admin, _ = await env.login("admin")
+    o = await _earn(env, buyer, staff, p)
+    await rb.patch(f"{API}/reseller/me", json={"payout_account": {"name": "A", "account": "x"}})
+    pid = (await rb.post(f"{API}/reseller/payouts", json={"amount_minor": 400})).json()["id"]
+    # the order is refunded after the request
+    t = await buyer.post(
+        f"{API}/orders/{o['id']}/after-sales",
+        json={"reason": "invalid_code", "description": "x", "attachment_ids": []},
+    )
+    assert t.status_code == 200, t.text
+    r = await admin.post(
+        f"{API}/admin/after-sales/{t.json()['id']}/action", json={"action": "refund"}
+    )
+    assert r.status_code == 200, r.text
+    r = await admin.post(f"{API}/admin/payouts/{pid}/decide", json={"action": "paid"})
+    assert r.status_code == 409 and r.json()["error"]["code"] == "insufficient_balance"
+    assert await ledger_sum(env, "cash:payouts") == 0
+    r = await admin.post(
+        f"{API}/admin/payouts/{pid}/decide", json={"action": "paid", "force": True, "note": "ok"}
+    )
+    assert r.status_code == 200
+    assert (
+        await env.scalar(
+            "SELECT count(*) FROM audit_log WHERE action='payout.paid' AND severity='critical' "
+            "AND (detail->>'forced_over_balance')::bool"
+        )
+        == 1
+    )
+    await assert_ledger_balanced(env)
+
+
+async def test_refund_of_a_promo_order_keeps_redemption_used_and_balances(env):
+    await set_fee(env, 30)
+    admin, _ = await env.login("admin")
+    staff, _ = await env.login("agent")
+    await make_promo(admin, code="RFND1", per_user_limit=3)
+    p = await env.product(mode="manual", price=1990, floor=100)
+    buyer, _ = await env.login("buyer")
+    o = await buy(buyer, p, promo_code="RFND1")
+    await pay_order(env, buyer, o)
+    await staff.post(f"{API}/admin/orders/{o['id']}/deliver", json={"text": "ok"})
+    t = await buyer.post(
+        f"{API}/orders/{o['id']}/after-sales",
+        json={"reason": "invalid_code", "description": "x", "attachment_ids": []},
+    )
+    r = await admin.post(
+        f"{API}/admin/after-sales/{t.json()['id']}/action", json={"action": "refund"}
+    )
+    assert r.status_code == 200, r.text
+    for acct in ("sales_revenue", "promo_discount", "surcharge_revenue", "gateway_clearing:zpay"):
+        assert await ledger_sum(env, acct) == 0, acct
+    assert await env.scalar("SELECT status FROM promo_redemptions") == "used"
+    assert await env.scalar("SELECT used_count FROM promo_codes") == 1
+    await assert_ledger_balanced(env)
+
+
+async def test_anonymous_promo_errors_are_opaque_and_quote_shares_the_bucket(env):
+    admin, _ = await env.login("admin")
+    await make_promo(admin, code="OFF2", enabled=False)
+    p = await env.product(mode="manual", price=1990, floor=100)
+    anon = env.client()
+    items = [{"product_id": str(p.id), "qty": 1}]
+    r = await anon.post(f"{API}/promo/validate", json={"code": "OFF2", "items": items})
+    assert r.status_code == 422 and r.json()["error"]["code"] == "promo_invalid"
+    await make_promo(admin, code="BIG2", min_subtotal_minor=999999)
+    r = await anon.post(f"{API}/promo/validate", json={"code": "BIG2", "items": items})
+    assert r.json()["error"]["code"] == "promo_invalid"  # not promo_min_subtotal
+    q = (
+        await anon.post(f"{API}/cart/quote", json={"items": [line(p)], "promo_code": "BIG2"})
+    ).json()
+    assert q["promo"] == {"error": "promo_invalid"}
+    # 3 requests used so far in the shared bucket; burn the rest
+    codes = []
+    for _ in range(20):
+        r = await anon.post(f"{API}/cart/quote", json={"items": [line(p)], "promo_code": "ZZZ"})
+        codes.append(r.status_code)
+    assert 429 in codes
+    # a quote without a code is not limited by that bucket
+    assert (await anon.post(f"{API}/cart/quote", json={"items": [line(p)]})).status_code == 200
+
+
+async def test_missing_redemption_row_is_audited_on_release(env):
+    admin, _ = await env.login("admin")
+    await make_promo(admin, code="GONE1")
+    p = await env.product(mode="manual", price=1990, floor=100)
+    buyer, _ = await env.login("buyer")
+    o = await buy(buyer, p, promo_code="GONE1")
+    async with env.owner_session() as db:
+        await db.execute(text("DELETE FROM promo_redemptions"))
+        await db.commit()
+    assert (await buyer.post(f"{API}/orders/{o['id']}/cancel", json={})).status_code == 200
+    assert (
+        await env.scalar(
+            "SELECT count(*) FROM audit_log WHERE action='promo.redemption_missing' "
+            "AND severity='warning'"
+        )
+        == 1
+    )
+    # and a counter underflow is reported instead of clamped silently
+    o2 = await buy(buyer, p, promo_code="GONE1")
+    async with env.owner_session() as db:
+        await db.execute(text("UPDATE promo_codes SET used_count = 0"))
+        await db.commit()
+    assert (await buyer.post(f"{API}/orders/{o2['id']}/cancel", json={})).status_code == 200
+    assert (
+        await env.scalar("SELECT count(*) FROM audit_log WHERE action='promo.used_count_underflow'")
+        == 1
+    )

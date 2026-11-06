@@ -92,7 +92,9 @@ def payment_lines(order: Order) -> list[Line]:
             lines.append(Line("promo_discount", order.discount_minor))
     if order.fee_minor > 0:
         lines.append(Line("surcharge_revenue", -order.fee_minor))
-    return lines
+    # a zero-amount line (e.g. sales_revenue when markup == subtotal) is not allowed by
+    # post_txn: dropping it keeps the transaction balanced, so settlement can never raise
+    return [ln for ln in lines if ln.amount_minor != 0]
 
 
 async def post_payment_ledger(db: AsyncSession, settings: Settings, order: Order) -> None:
@@ -333,7 +335,12 @@ async def settle_member(
             )
             msgs.append(m)
     if order.checkout_id is None:  # a checkout's redemption is settled by apply_checkout_payment
-        await promo_svc.mark_used(db, order_id=order.id)
+        await promo_svc.mark_used(
+            db,
+            order_id=order.id,
+            tenant_id=order.tenant_id,
+            expect=order.promo_code_id is not None,
+        )
     await audit(
         db,
         tenant_id=order.tenant_id,
@@ -399,6 +406,14 @@ async def _record_unrecorded_payment(
         return False
     if amount_minor == order.amount_minor:
         await post_payment_ledger(db, settings, order)
+    if order.promo_code_id is not None:  # a Payment is recorded: the discount was honoured
+        await promo_svc.mark_used(
+            db,
+            order_id=order.id if order.checkout_id is None else None,
+            checkout_id=order.checkout_id,
+            tenant_id=order.tenant_id,
+            expect=True,
+        )
     await audit(
         db,
         tenant_id=order.tenant_id,
@@ -580,6 +595,10 @@ async def apply_checkout_payment(
                     await post_payment_ledger(db, settings, o)
             co.paid_at = co.paid_at or datetime.now(timezone.utc)
             co.channel = CHANNEL
+            if co.promo_code_id is not None:
+                await promo_svc.mark_used(
+                    db, checkout_id=co.id, tenant_id=co.tenant_id, expect=True
+                )
             await audit(
                 db,
                 tenant_id=co.tenant_id,
@@ -637,6 +656,8 @@ async def apply_checkout_payment(
         co.status = "manual_review"
         co.paid_at = datetime.now(timezone.utc)
         co.channel = CHANNEL
+        if co.promo_code_id is not None:  # Payment recorded above
+            await promo_svc.mark_used(db, checkout_id=co.id, tenant_id=co.tenant_id, expect=True)
         for o in orders:
             msgs += await _order_to_manual_review(
                 db, o, "amount_changed", ip, {"paid_minor": amount_minor}
@@ -679,7 +700,9 @@ async def apply_checkout_payment(
                 severity="critical",
             )
     await apply_sold(db, sold)
-    await promo_svc.mark_used(db, checkout_id=co.id)  # reserved (or released-late) -> used
+    await promo_svc.mark_used(  # reserved (or released-late) -> used
+        db, checkout_id=co.id, tenant_id=co.tenant_id, expect=co.promo_code_id is not None
+    )
     co.status = "manual_review" if co_late else "paid"
     co.paid_at = datetime.now(timezone.utc)
     co.channel = CHANNEL

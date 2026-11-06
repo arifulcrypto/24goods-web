@@ -173,7 +173,12 @@ async def quote_cart(
             alloc = ev.allocation
             promo = {"code": ev.promo.code, "discount_minor": ev.discount_minor}
         except ApiError as exc:
-            promo = {"error": exc.code}
+            # anonymous callers learn nothing about which codes exist / their limits
+            promo = {
+                "error": "promo_invalid"
+                if user is None and exc.code.startswith("promo_")
+                else exc.code
+            }
     subtotal = fee = discount = 0
     for (idx, _p, sub), disc in zip(avail, alloc, strict=True):
         # MONEY: fee on the discounted line, exactly as create_checkout will charge it

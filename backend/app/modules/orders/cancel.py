@@ -194,10 +194,11 @@ async def cancel_group(
             )
         )
     # promo: reserved -> released (-used_count), buyer and staff cancel alike
+    has_promo = (co.promo_code_id is not None) if co is not None else bool(orders[0].promo_code_id)
     if co is not None:
-        await promo_svc.release(db, checkout_id=co.id)
+        await promo_svc.release(db, checkout_id=co.id, tenant_id=tid, expect=has_promo)
     else:
-        await promo_svc.release(db, order_id=orders[0].id)
+        await promo_svc.release(db, order_id=orders[0].id, tenant_id=tid, expect=has_promo)
     if co is not None:
         co.status = "cancelled"
         await audit(

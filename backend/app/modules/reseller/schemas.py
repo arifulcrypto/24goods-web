@@ -92,6 +92,12 @@ class AdminResellerPatch(BaseModel):
 class DecideIn(BaseModel):
     action: Literal["paid", "rejected"]
     note: str = Field("", max_length=200)
+    force: bool = False  # pay out even if it exceeds the balance recomputed now (audited)
+
+
+class ResolveIn(BaseModel):
+    action: Literal["activate", "refund"]
+    note: str = Field("", max_length=200)
 
 
 __all__ = [

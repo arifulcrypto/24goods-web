@@ -19,6 +19,7 @@ MONEY RULES (read by the payment auditor):
 
 from __future__ import annotations
 
+import logging
 import re
 import secrets
 import uuid
@@ -34,6 +35,7 @@ from app.core.errors import ApiError, Conflict, NotFound, Validation
 from app.core.money import fmt
 from app.models import Product, PromoCode, PromoRedemption, User
 
+log = logging.getLogger("app.promo")
 CODE_RE = re.compile(r"^[A-Z0-9][A-Z0-9_-]{2,31}$")
 _CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
@@ -251,40 +253,102 @@ async def _redemption(
     return await db.scalar(select(PromoRedemption).where(cond).with_for_update())
 
 
+async def _unexpected(
+    db: AsyncSession, tenant_id: uuid.UUID, action: str, detail: dict[str, Any]
+) -> None:
+    """A promo order whose redemption bookkeeping is not as expected: never silent."""
+    log.warning("promo bookkeeping anomaly action=%s detail=%s", action, detail)
+    await audit(
+        db,
+        tenant_id=tenant_id,
+        action=action,
+        detail=detail,
+        severity="warning",
+    )
+
+
+def _target(order_id: uuid.UUID | None, checkout_id: uuid.UUID | None) -> dict[str, Any]:
+    return {
+        "order_id": str(order_id) if order_id else None,
+        "checkout_id": str(checkout_id) if checkout_id else None,
+    }
+
+
 async def release(
-    db: AsyncSession, *, order_id: uuid.UUID | None = None, checkout_id: uuid.UUID | None = None
+    db: AsyncSession,
+    *,
+    order_id: uuid.UUID | None = None,
+    checkout_id: uuid.UUID | None = None,
+    tenant_id: uuid.UUID | None = None,
+    expect: bool = False,
 ) -> bool:
     """reserved -> released (-used_count) when the payable is cancelled or expires unpaid.
-    Idempotent: only a ``reserved`` row is touched."""
+    Idempotent: only a ``reserved`` row is touched. ``expect`` = the payable carries a promo,
+    so a missing / odd redemption row or a counter underflow is logged and audited."""
     red = await _redemption(db, order_id, checkout_id)
-    if red is None or red.status != "reserved":
+    if red is None:
+        if expect and tenant_id is not None:
+            await _unexpected(
+                db, tenant_id, "promo.redemption_missing", _target(order_id, checkout_id)
+            )
+        return False
+    if red.status != "reserved":
+        if expect and red.status == "used":
+            await _unexpected(
+                db,
+                red.tenant_id,
+                "promo.release_unexpected_state",
+                {**_target(order_id, checkout_id), "status": red.status},
+            )
         return False
     red.status = "released"
-    await db.execute(
+    # guarded decrement: never below zero, and an underflow is an anomaly, not a clamp
+    dec = await db.execute(
         update(PromoCode)
-        .where(PromoCode.id == red.promo_code_id, PromoCode.tenant_id == red.tenant_id)
-        .values(used_count=func.greatest(PromoCode.used_count - 1, 0))
+        .where(
+            PromoCode.id == red.promo_code_id,
+            PromoCode.tenant_id == red.tenant_id,
+            PromoCode.used_count > 0,
+        )
+        .values(used_count=PromoCode.used_count - 1)
+        .returning(PromoCode.id)
     )
+    if dec.first() is None:
+        await _unexpected(
+            db,
+            red.tenant_id,
+            "promo.used_count_underflow",
+            {**_target(order_id, checkout_id), "promo_code_id": str(red.promo_code_id)},
+        )
     await audit(
         db,
         tenant_id=red.tenant_id,
         action="promo.released",
         target=f"promo:{red.promo_code_id}",
-        detail={
-            "order_id": str(order_id) if order_id else None,
-            "checkout_id": str(checkout_id) if checkout_id else None,
-        },
+        detail=_target(order_id, checkout_id),
     )
     return True
 
 
 async def mark_used(
-    db: AsyncSession, *, order_id: uuid.UUID | None = None, checkout_id: uuid.UUID | None = None
+    db: AsyncSession,
+    *,
+    order_id: uuid.UUID | None = None,
+    checkout_id: uuid.UUID | None = None,
+    tenant_id: uuid.UUID | None = None,
+    expect: bool = False,
 ) -> None:
     """reserved -> used on settlement. A redemption already ``released`` (late payment of an
-    expired order: the money WAS received at the discounted price) is re-counted."""
+    expired order: the money WAS received at the discounted price) is re-counted. Called on
+    EVERY path that records a Payment for a promo payable."""
     red = await _redemption(db, order_id, checkout_id)
-    if red is None or red.status == "used":
+    if red is None:
+        if expect and tenant_id is not None:
+            await _unexpected(
+                db, tenant_id, "promo.redemption_missing", _target(order_id, checkout_id)
+            )
+        return
+    if red.status == "used":
         return
     if red.status == "released":
         await db.execute(
@@ -298,11 +362,7 @@ async def mark_used(
         tenant_id=red.tenant_id,
         action="promo.used",
         target=f"promo:{red.promo_code_id}",
-        detail={
-            "order_id": str(order_id) if order_id else None,
-            "checkout_id": str(checkout_id) if checkout_id else None,
-            "discount_minor": red.discount_minor,
-        },
+        detail={**_target(order_id, checkout_id), "discount_minor": red.discount_minor},
     )
 
 
