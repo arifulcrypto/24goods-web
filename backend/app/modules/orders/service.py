@@ -639,7 +639,12 @@ async def expire_pending(
                     )
                 )
                 co.status = "expired"
-                await promo_svc.release(db, checkout_id=co.id)  # reserved -> released
+                await promo_svc.release(  # reserved -> released
+                    db,
+                    checkout_id=co.id,
+                    tenant_id=tid,
+                    expect=co.promo_code_id is not None,
+                )
                 await audit(
                     db,
                     tenant_id=tid,
@@ -664,7 +669,12 @@ async def expire_pending(
                 )
             )
             for order in singles:
-                await promo_svc.release(db, order_id=order.id)  # reserved -> released
+                await promo_svc.release(  # reserved -> released
+                    db,
+                    order_id=order.id,
+                    tenant_id=tid,
+                    expect=order.promo_code_id is not None,
+                )
                 msgs[order.id] = await _expire_order(db, tid, order)
                 rows.append(order)
             expired_quotes = (

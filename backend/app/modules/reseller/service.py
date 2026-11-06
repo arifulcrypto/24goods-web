@@ -14,11 +14,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import storefront
 from app.core.audit import audit
-from app.core.config import Settings
 from app.core.deps import Page
-from app.core.errors import Conflict, Forbidden, InvalidState, NotFound, Validation
+from app.core.errors import (
+    AlreadyPaid,
+    Conflict,
+    Forbidden,
+    InvalidState,
+    NotFound,
+    Validation,
+)
 from app.core.i18n import pick
 from app.core.money import fmt
+from app.core.resources import Resources
 from app.core.security import STAFF_ROLES
 from app.core.settings_v5 import section
 from app.models import (
@@ -33,7 +40,7 @@ from app.modules.catalog.service import apply_search, escape_like, prepare_searc
 from app.modules.chat import service as chat
 from app.modules.common.views import iso
 from app.modules.content.site import tenant_settings
-from app.modules.orders.events import add_event
+from app.modules.orders import cancel as cancel_svc
 from app.modules.orders.service import create_order, one_view
 from app.modules.payments.ledger import Line, post_txn
 from app.modules.reseller.pricing import markup_per_unit
@@ -46,7 +53,14 @@ def _now() -> datetime:
 
 
 # ------------------------------------------------------------------ balances / stats
-async def balances(db: AsyncSession, r: Reseller, rcfg: dict[str, Any]) -> dict[str, int]:
+async def balances(
+    db: AsyncSession,
+    r: Reseller,
+    rcfg: dict[str, Any],
+    *,
+    exclude_payout: uuid.UUID | None = None,
+    raw: bool = False,
+) -> dict[str, int]:
     """MONEY: ``pending`` = markup of paid/delivered orders + completed orders younger than
     ``settle_after_hours``; ``available`` = markup of completed orders older than that, minus
     payouts requested or paid (never below 0: a refund after payout is a clawback on the
@@ -87,15 +101,20 @@ async def balances(db: AsyncSession, r: Reseller, rcfg: dict[str, Any]) -> dict[
                 select(
                     ResellerPayout.status, func.coalesce(func.sum(ResellerPayout.amount_minor), 0)
                 )
-                .where(ResellerPayout.reseller_id == r.id, ResellerPayout.tenant_id == r.tenant_id)
+                .where(
+                    ResellerPayout.reseller_id == r.id,
+                    ResellerPayout.tenant_id == r.tenant_id,
+                    *([ResellerPayout.id != exclude_payout] if exclude_payout else []),
+                )
                 .group_by(ResellerPayout.status)
             )
         ).all()
     )
     paid, requested = int(pay.get("paid", 0)), int(pay.get("requested", 0))
+    avail = int(ready) - paid - requested
     return {
         "pending_minor": int(pending),
-        "available_minor": max(0, int(ready) - paid - requested),
+        "available_minor": avail if raw else max(0, avail),
         "paid_minor": paid,
     }
 
@@ -187,9 +206,12 @@ def _check_markup(kind: str, value: int, rcfg: dict[str, Any]) -> None:
 
 
 # ------------------------------------------------------------------ apply
+NON_TERMINAL = ("pending_payment", "paid", "manual_review")
+
+
 async def apply(
     db: AsyncSession,
-    settings: Settings,
+    res: Resources,
     user: User,
     *,
     slug: str,
@@ -197,17 +219,64 @@ async def apply(
     contact: str | None,
     ip: str | None,
 ) -> tuple[Reseller, dict[str, Any] | None, dict[str, Any]]:
-    """Create (or re-use while pending) the store and, when the fee is > 0, its sign-up order."""
+    """Create (or re-use while pending) the store and, when the fee is > 0, its sign-up order.
+
+    A superseded sign-up order is never left payable: an existing NON-TERMINAL order is
+    re-used (whatever the fee is now); a new order is only created when the old one is
+    cancelled / expired / refunded / completed. With a fee of 0 an outstanding pending order
+    is closed first through ``cancel_group`` (gateway re-query: a paid answer settles it
+    instead). Lock order: order, then reseller.
+    """
+    settings = res.settings
     if user.is_instant or user.role in STAFF_ROLES:
         raise Forbidden("Register a full buyer account to open a store")
-    ts = await tenant_settings(db, user.tenant_id)
+    uid, tid = user.id, user.tenant_id
+    ts = await tenant_settings(db, tid)
     rcfg = section(ts, "resellers")
     if slug in set(rcfg["reserved_slugs"]) or slug.split("-")[0] in {"www", "api", "admin"}:
         raise Validation("This store address is reserved", code="slug_reserved")
+    fee = int(rcfg["signup_fee_minor"])
+
+    async def mine() -> Reseller | None:
+        return await db.scalar(
+            select(Reseller).where(Reseller.user_id == uid, Reseller.tenant_id == tid)
+        )
+
+    r0 = await mine()
+    if r0 is not None and r0.status != "pending_payment":
+        raise Conflict("You already have a reseller store", code="reseller_exists")
+    if fee == 0 and r0 is not None and r0.signup_order_id is not None:
+        o0 = await db.scalar(
+            select(Order).where(Order.id == r0.signup_order_id, Order.tenant_id == tid)
+        )
+        if o0 is not None and o0.status == "pending_payment":
+            try:
+                await cancel_svc.cancel_group(
+                    db,
+                    res,
+                    order_id=o0.id,
+                    actor=user,
+                    by="buyer",
+                    reason="store is free now",
+                    ip=ip,
+                )
+            except AlreadyPaid:
+                pass  # settled (store activated): re-read below -> reseller_exists
+            await db.refresh(user)
+            r0 = await mine()
+            if r0 is not None and r0.status != "pending_payment":
+                raise Conflict("You already have a reseller store", code="reseller_exists")
+    # W1: lock the sign-up ORDER first (settlement locks order -> reseller), then the store
+    old: Order | None = None
+    if r0 is not None and r0.signup_order_id is not None:
+        old = await db.scalar(
+            select(Order)
+            .where(Order.id == r0.signup_order_id, Order.tenant_id == tid)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
     r = await db.scalar(
-        select(Reseller)
-        .where(Reseller.user_id == user.id, Reseller.tenant_id == user.tenant_id)
-        .with_for_update()
+        select(Reseller).where(Reseller.user_id == uid, Reseller.tenant_id == tid).with_for_update()
     )
     if r is not None and r.status != "pending_payment":
         raise Conflict("You already have a reseller store", code="reseller_exists")
@@ -216,78 +285,68 @@ async def apply(
         taken_stmt = taken_stmt.where(Reseller.id != r.id)
     if await db.scalar(taken_stmt) is not None:
         raise Conflict("This store address is taken", code="slug_taken")
-    fee = int(rcfg["signup_fee_minor"])
     now = _now()
+    open_old = old is not None and old.status in NON_TERMINAL
+    activate_now = fee == 0 and not open_old
     if r is None:
         r = Reseller(
-            tenant_id=user.tenant_id,
-            user_id=user.id,
+            tenant_id=tid,
+            user_id=uid,
             slug=slug,
             store_name=store_name,
             contact=contact,
-            status="active" if fee == 0 else "pending_payment",
+            status="active" if activate_now else "pending_payment",
             markup_kind=rcfg["default_markup_kind"],
             markup_value=rcfg["default_markup_value"],
-            activated_at=now if fee == 0 else None,
+            activated_at=now if activate_now else None,
         )
         db.add(r)
     else:
         r.slug, r.store_name, r.contact = slug, store_name, contact
-        if fee == 0:
+        if activate_now:
             r.status, r.activated_at = "active", now
     try:
         await db.flush()
     except IntegrityError:
         await db.rollback()
+        if await mine() is not None:
+            raise Conflict("You already have a reseller store", code="reseller_exists") from None
         raise Conflict("This store address is taken", code="slug_taken") from None
     order_view: dict[str, Any] | None = None
-    if fee > 0:
-        old = (
-            await db.scalar(
-                select(Order)
-                .where(Order.id == r.signup_order_id, Order.tenant_id == user.tenant_id)
-                .with_for_update()
-            )
-            if r.signup_order_id
-            else None
+    if open_old:
+        assert old is not None
+        order_view = await one_view(db, old, uid, user.locale)  # re-use, never a second order
+    elif fee > 0:
+        conv = await chat.open_conversation_for(db, user)
+        # MONEY: sign-up fee from settings only; fee rule + CHECK as any order, no promo,
+        # no reseller attribution, delivery_mode 'system' (never reaches the worker)
+        order, _msg = await create_order(
+            db,
+            settings=settings,
+            buyer=user,
+            title=f"Reseller sign-up: {store_name}"[:200],
+            amount_minor=fee,
+            currency="CNY",
+            qty=1,
+            delivery_mode="system",
+            product_id=None,
+            quote_id=None,
+            conversation_id=conv.id if conv else None,
+            ip=ip,
+            kind="reseller_signup",
         )
-        if (
-            old is not None
-            and old.status == "pending_payment"
-            and (old.expires_at is None or old.expires_at > now)
-        ):
-            order = old  # re-use the open sign-up order
-        else:
-            conv = await chat.open_conversation_for(db, user)
-            # MONEY: sign-up fee from settings only; fee rule + CHECK as any order, no promo,
-            # no reseller attribution, delivery_mode 'system' (never reaches the worker)
-            order, _msg = await create_order(
-                db,
-                settings=settings,
-                buyer=user,
-                title=f"Reseller sign-up: {store_name}"[:200],
-                amount_minor=fee,
-                currency="CNY",
-                qty=1,
-                delivery_mode="system",
-                product_id=None,
-                quote_id=None,
-                conversation_id=conv.id if conv else None,
-                ip=ip,
-                kind="reseller_signup",
-            )
-            r.signup_order_id = order.id
-        order_view = await one_view(db, order, user.id, user.locale)
+        r.signup_order_id = order.id
+        order_view = await one_view(db, order, uid, user.locale)
     await audit(
         db,
-        tenant_id=user.tenant_id,
+        tenant_id=tid,
         action="reseller.applied",
-        actor_id=user.id,
+        actor_id=uid,
         actor_role=user.role,
         target=f"reseller:{r.id}",
         after={"slug": r.slug, "status": r.status},
         ip=ip,
-        detail={"fee_minor": fee},
+        detail={"fee_minor": fee, "reused_order": open_old},
     )
     await db.commit()
     storefront.invalidate()
@@ -681,7 +740,9 @@ async def admin_list(
 
 async def _get_admin(db: AsyncSession, admin: User, rid: uuid.UUID, lock: bool = False) -> Reseller:
     stmt = select(Reseller).where(Reseller.id == rid, Reseller.tenant_id == admin.tenant_id)
-    r = await db.scalar(stmt.with_for_update() if lock else stmt)
+    r = await db.scalar(
+        stmt.with_for_update().execution_options(populate_existing=True) if lock else stmt
+    )
     if r is None:
         raise NotFound("Reseller not found")
     return r
@@ -698,12 +759,42 @@ async def admin_detail(db: AsyncSession, admin: User, rid: uuid.UUID) -> dict[st
 
 
 async def admin_patch(
-    db: AsyncSession, admin: User, rid: uuid.UUID, data: dict[str, Any], ip: str | None
+    db: AsyncSession,
+    res: Resources,
+    admin: User,
+    rid: uuid.UUID,
+    data: dict[str, Any],
+    ip: str | None,
 ) -> dict[str, Any]:
     rcfg = section(await tenant_settings(db, admin.tenant_id), "resellers")
+    r0 = await _get_admin(db, admin, rid)
+    # cancel_group rolls back (expiring ORM instances): capture plain values first
+    r0_status, signup_oid, tid = r0.status, r0.signup_order_id, admin.tenant_id
+    new = data.get("status")
+    if new == "active" and r0_status == "pending_payment" and signup_oid is not None:
+        # MONEY: waiving the fee closes the open sign-up order through cancel_group: the
+        # gateway is re-queried FIRST, so an outstanding pay URL that was already paid
+        # settles (-> 409 already_paid, store activated by that payment) instead of being
+        # cancelled over money that arrived.
+        o0 = await db.scalar(select(Order).where(Order.id == signup_oid, Order.tenant_id == tid))
+        if o0 is not None and o0.status == "pending_payment":
+            await cancel_svc.cancel_group(
+                db,
+                res,
+                order_id=o0.id,
+                actor=admin,
+                by="staff",
+                reason="store activated by admin",
+                ip=ip,
+            )
+            await db.refresh(admin)
+    # W1: order lock before the reseller lock (settlement locks order -> reseller)
+    if signup_oid is not None:
+        await db.scalar(
+            select(Order.id).where(Order.id == signup_oid, Order.tenant_id == tid).with_for_update()
+        )
     r = await _get_admin(db, admin, rid, lock=True)
     before = {"status": r.status, "markup": [r.markup_kind, int(r.markup_value)]}
-    new = data.get("status")
     if new is not None and new != r.status:
         ok = (r.status, new) in {
             ("pending_payment", "active"),  # waive the fee
@@ -714,23 +805,6 @@ async def admin_patch(
             raise InvalidState(f"Cannot move a store from {r.status} to {new}")
         if r.status == "pending_payment":
             r.activated_at = _now()
-            if r.signup_order_id:  # waived: the open sign-up order is cancelled
-                o = await db.scalar(
-                    select(Order)
-                    .where(Order.id == r.signup_order_id, Order.tenant_id == r.tenant_id)
-                    .with_for_update()
-                )
-                if o is not None and o.status == "pending_payment":
-                    o.status, o.cancel_reason = "cancelled", "store activated by admin"
-                    o.version += 1
-                    await add_event(
-                        db,
-                        o,
-                        "pending_payment",
-                        "cancelled",
-                        actor_id=admin.id,
-                        reason="reseller_waived",
-                    )
         r.status = new
     kind = data.get("markup_kind") or r.markup_kind
     value = data["markup_value"] if data.get("markup_value") is not None else int(r.markup_value)
@@ -796,20 +870,53 @@ async def admin_payouts(
 
 
 async def decide_payout(
-    db: AsyncSession, admin: User, payout_id: uuid.UUID, action: str, note: str, ip: str | None
+    db: AsyncSession,
+    admin: User,
+    payout_id: uuid.UUID,
+    action: str,
+    note: str,
+    ip: str | None,
+    *,
+    force: bool = False,
 ) -> dict[str, Any]:
+    ts = await tenant_settings(db, admin.tenant_id)
+    rcfg = section(ts, "resellers")
+    p0 = await db.scalar(
+        select(ResellerPayout).where(
+            ResellerPayout.id == payout_id, ResellerPayout.tenant_id == admin.tenant_id
+        )
+    )
+    if p0 is None:
+        raise NotFound("Payout not found")
+    # same lock order as request_payout: reseller row, then the payout row
+    r = await db.scalar(
+        select(Reseller)
+        .where(Reseller.id == p0.reseller_id, Reseller.tenant_id == admin.tenant_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
     p = await db.scalar(
         select(ResellerPayout)
         .where(ResellerPayout.id == payout_id, ResellerPayout.tenant_id == admin.tenant_id)
         .with_for_update()
+        .execution_options(populate_existing=True)  # fresh status: the unlocked read is stale
     )
-    if p is None:
-        raise NotFound("Payout not found")
+    assert p is not None and r is not None
     if p.status != "requested":
         raise InvalidState("This payout was already decided")
     before = {"status": p.status}
+    forced = False
     if action == "paid":
-        # MONEY: reseller_payable +amount (debit: liability settled) / cash:payouts -amount
+        # MONEY: re-check the withdrawable balance NOW (orders may have been refunded since the
+        # request): the payout, excluded from "requested", must fit what is still available.
+        avail = (await balances(db, r, rcfg, exclude_payout=p.id, raw=True))["available_minor"]
+        if int(p.amount_minor) > avail:
+            if not force:
+                raise Conflict(
+                    "The payout exceeds the balance available now", code="insufficient_balance"
+                )
+            forced = True
+        # reseller_payable +amount (debit: liability settled) / cash:payouts -amount
         await post_txn(
             db,
             tenant_id=p.tenant_id,
@@ -834,8 +941,12 @@ async def decide_payout(
         before=before,
         after={"status": p.status},
         ip=ip,
-        detail={"amount_minor": int(p.amount_minor), "reseller_id": str(p.reseller_id)},
-        severity="warning" if action == "paid" else "info",
+        detail={
+            "amount_minor": int(p.amount_minor),
+            "reseller_id": str(p.reseller_id),
+            **({"forced_over_balance": True} if forced else {}),
+        },
+        severity="critical" if forced else ("warning" if action == "paid" else "info"),
     )
     await db.commit()
     return payout_view(p)

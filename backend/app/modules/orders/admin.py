@@ -49,8 +49,9 @@ async def change_price(
         raise InvalidState("Price can only change while awaiting payment")
     if order.checkout_id is not None:
         raise InvalidState("This order is part of a cart checkout; close the checkout instead")
-    if order.kind != "goods" or order.discount_minor > 0:
-        # promo allocation / sign-up fee are server-set records: close the order and re-quote
+    if order.kind != "goods" or order.discount_minor > 0 or order.reseller_markup_minor > 0:
+        # promo allocation, reseller markup and the sign-up fee are server-set records (the
+        # markup/settlement split would silently change): close the order and re-quote
         raise InvalidState("This order's price cannot be changed")
     if order.product_id is not None:
         product = await db.get(Product, order.product_id)
@@ -61,8 +62,6 @@ async def change_price(
     # staff set the new SUBTOTAL; the channel fee is recomputed at the rate the order carries
     fee, total = split_amount(new_minor, order.fee_permille)
     order.subtotal_minor = new_minor
-    # reseller attribution: the markup can never exceed the (new) subtotal (DB CHECK)
-    order.reseller_markup_minor = min(order.reseller_markup_minor, new_minor)
     order.fee_minor = fee
     order.amount_minor = total
     order.version += 1

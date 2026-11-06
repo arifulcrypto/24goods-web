@@ -25,7 +25,9 @@ from app.core.settings_v5 import section
 from app.models import User
 from app.modules.common import turnstile_hook
 from app.modules.content.site import tenant_settings
-from app.modules.reseller import service
+from app.modules.orders import admin as order_admin
+from app.modules.orders.service import broadcast_order
+from app.modules.reseller import service, signup
 from app.modules.reseller.schemas import (
     AdminResellerPatch,
     ApplyIn,
@@ -33,6 +35,7 @@ from app.modules.reseller.schemas import (
     MePatch,
     PayoutIn,
     ProductPut,
+    ResolveIn,
 )
 
 router = APIRouter(prefix="/reseller", tags=["reseller"])
@@ -64,7 +67,7 @@ async def apply(
     await turnstile_hook.check(request, ts, "reseller_apply", body.turnstile_token)
     r, order, rcfg = await service.apply(
         db,
-        res.settings,
+        res,
         user,
         slug=body.slug,
         store_name=body.store_name,
@@ -195,9 +198,10 @@ async def admin_patch(
     request: Request,
     staff: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
+    res: Resources = Depends(get_res),
 ) -> dict:
     return await service.admin_patch(
-        db, staff, rid, body.model_dump(exclude_unset=True), client_ip(request)
+        db, res, staff, rid, body.model_dump(exclude_unset=True), client_ip(request)
     )
 
 
@@ -220,5 +224,23 @@ async def admin_decide(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     return await service.decide_payout(
-        db, staff, payout_id, body.action, body.note, client_ip(request)
+        db, staff, payout_id, body.action, body.note, client_ip(request), force=body.force
     )
+
+
+@admin.post("/orders/{order_id}/resolve")
+async def admin_resolve_signup(
+    order_id: uuid.UUID,
+    body: ResolveIn,
+    request: Request,
+    staff: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+    res: Resources = Depends(get_res),
+) -> dict:
+    """Resolve a reseller sign-up order held in manual_review: activate the store or refund."""
+    order = await signup.resolve_signup(
+        db, staff, order_id, body.action, body.note, client_ip(request)
+    )
+    await broadcast_order(res, db, order, [])
+    (view,) = await order_admin.admin_views(db, [order])
+    return view

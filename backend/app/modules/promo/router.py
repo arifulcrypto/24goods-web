@@ -49,9 +49,20 @@ async def validate(
     if sf is not None:  # promo is not applicable on reseller storefronts in v5
         raise service.PromoError("promo_not_applicable")
     lines = await service.lines_for(db, tenant_id, [(i.product_id, i.qty) for i in body.items])
-    ev = await service.evaluate(
-        db, tenant_id=tenant_id, user=user, code=body.code, lines=lines, currency="CNY", lock=False
-    )
+    try:
+        ev = await service.evaluate(
+            db,
+            tenant_id=tenant_id,
+            user=user,
+            code=body.code,
+            lines=lines,
+            currency="CNY",
+            lock=False,
+        )
+    except service.PromoError:
+        if user is None:  # anonymous: one opaque error, no code-existence oracle
+            raise service.PromoError("promo_invalid") from None
+        raise
     return {
         "code": ev.promo.code,
         "discount_minor": ev.discount_minor,
