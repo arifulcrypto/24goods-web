@@ -68,6 +68,7 @@ async def run_jobs_once(res: Resources, *, hourly: bool) -> None:
     if hourly:
         await _job("card expiry", jobs.void_expired_cards(res.maker))
         await _job("instant purge", jobs.purge_instant_accounts(res.maker, res.settings))
+        await _job("buyer input purge", jobs.purge_buyer_input(res.maker))
 
 
 async def _expiry_loop(res: Resources) -> None:

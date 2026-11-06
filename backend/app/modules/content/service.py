@@ -218,7 +218,7 @@ async def update_site(
         try:  # mirror for the middleware (fail open: a Redis error never fails the save)
             await globallimit.mirror(redis, admin.tenant_id, after["rate_limit"])
         except Exception:
-            log.warning("rate limit config mirror failed")
+            log.error("rate limit config mirror to Redis failed")
     return after
 
 

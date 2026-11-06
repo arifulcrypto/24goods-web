@@ -64,7 +64,9 @@ async def quote_cart(
     products = {
         p.id: p
         for p in await db.scalars(
-            select(Product).where(Product.id.in_(ids), Product.status == "active")
+            select(Product).where(
+                Product.id.in_(ids), Product.tenant_id == tenant_id, Product.status == "active"
+            )
         )
     }
     stock = await stock_counts(
@@ -137,7 +139,10 @@ async def checkout_views(db: AsyncSession, cos: list[Checkout]) -> list[dict[str
     rows = list(
         await db.scalars(
             select(Order)
-            .where(Order.checkout_id.in_([c.id for c in cos]))
+            .where(
+                Order.checkout_id.in_([c.id for c in cos]),
+                Order.tenant_id.in_({c.tenant_id for c in cos}),
+            )
             .order_by(Order.created_at, Order.id)
         )
     )
@@ -169,7 +174,9 @@ async def checkout_views(db: AsyncSession, cos: list[Checkout]) -> list[dict[str
 async def get_owned_checkout(
     db: AsyncSession, checkout_no: str, user: User, *, lock: bool = False
 ) -> Checkout:
-    stmt = select(Checkout).where(Checkout.checkout_no == checkout_no.upper()[:16])
+    stmt = select(Checkout).where(
+        Checkout.checkout_no == checkout_no.upper()[:16], Checkout.tenant_id == user.tenant_id
+    )
     if lock:
         stmt = stmt.with_for_update()
     co = await db.scalar(stmt)
@@ -195,7 +202,11 @@ async def create_checkout(
     products = {
         p.id: p
         for p in await db.scalars(
-            select(Product).where(Product.id.in_(ids), Product.status == "active")
+            select(Product).where(
+                Product.id.in_(ids),
+                Product.tenant_id == buyer.tenant_id,
+                Product.status == "active",
+            )
         )
     }
     if len(products) != len(ids):
@@ -259,7 +270,8 @@ async def create_checkout(
         )
         orders.append(order)
         codes[order.order_no] = order.access_code_plain  # type: ignore[attr-defined]
-    assert sum(o.amount_minor for o in orders) == co.amount_minor
+    if sum(o.amount_minor for o in orders) != co.amount_minor:
+        raise InvalidState("Checkout amount does not match its orders")  # invariant: rolls back
     await audit(
         db,
         tenant_id=co.tenant_id,
@@ -281,13 +293,40 @@ async def create_checkout(
 
 
 # ------------------------------------------------------------------ pay
+async def recompute_fees(
+    db: AsyncSession, co: Checkout, orders: list[Order], permille: int, user: User
+) -> None:
+    """No pay URL has been issued yet: re-apply the CURRENT channel rate to every member and
+    the checkout amount (caller holds the checkout + orders locks)."""
+    before = {"amount_minor": co.amount_minor}
+    for o in orders:
+        fee, total = split_amount(o.subtotal_minor, permille)
+        o.fee_minor, o.fee_permille, o.amount_minor = fee, permille, total
+        o.version += 1
+    co.amount_minor = sum(o.amount_minor for o in orders)
+    await audit(
+        db,
+        tenant_id=co.tenant_id,
+        action="checkout.fee_recomputed",
+        actor_id=user.id,
+        actor_role=user.role,
+        target=f"checkout:{co.id}",
+        before=before,
+        after={"amount_minor": co.amount_minor},
+        detail={"fee_permille": permille},
+    )
+
+
 async def pay_checkout(
     db: AsyncSession, res: Resources, checkout_no: str, user: User, channel: str
 ) -> str:
     co = await get_owned_checkout(db, checkout_no, user, lock=True)
     orders = list(
         await db.scalars(
-            select(Order).where(Order.checkout_id == co.id).order_by(Order.id).with_for_update()
+            select(Order)
+            .where(Order.checkout_id == co.id, Order.tenant_id == co.tenant_id)
+            .order_by(Order.id)
+            .with_for_update()
         )
     )
     if co.status != "pending_payment" or any(o.status != "pending_payment" for o in orders):
@@ -298,7 +337,9 @@ async def pay_checkout(
         raise Unavailable("Payment channel not configured")
     permille = await check_channel(db, co.tenant_id, channel)
     if any(o.fee_permille != permille for o in orders):
-        raise FeeChannelMismatch("The payment fee changed; please recreate the checkout")
+        if co.channel is not None:  # a pay URL is already out for the old amount
+            raise FeeChannelMismatch("The payment fee changed; please recreate the checkout")
+        await recompute_fees(db, co, orders, permille, user)
     co.channel = channel
     name = orders[0].title if len(orders) == 1 else f"{orders[0].title} +{len(orders) - 1}"
     url = res.zpay.build_pay_url(co.checkout_no, name, to_decimal(co.amount_minor))

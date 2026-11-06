@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import exists, func, select
+from sqlalchemy import exists, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.audit import audit
@@ -148,4 +148,32 @@ async def void_expired_cards(maker: async_sessionmaker[AsyncSession]) -> int:
     for tid in await _tenant_ids(maker):
         async with tenant_session(maker, tid) as db:
             total += await void_expired(db, tid)
+    return total
+
+
+BUYER_INPUT_RETENTION_DAYS = 30
+_FINAL_STATES = ("completed", "cancelled", "expired", "refunded")
+
+
+async def purge_buyer_input(
+    maker: async_sessionmaker[AsyncSession], days: int = BUYER_INPUT_RETENTION_DAYS
+) -> int:
+    """Null ``orders.buyer_input`` (it can hold session tokens) on finished orders older than
+    ``days``, measured from ``completed_at`` (else ``updated_at``). Idempotent."""
+    total = 0
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    for tid in await _tenant_ids(maker):
+        async with tenant_session(maker, tid) as db:
+            res = await db.execute(
+                update(Order)
+                .where(
+                    Order.tenant_id == tid,
+                    Order.buyer_input.is_not(None),
+                    Order.status.in_(_FINAL_STATES),
+                    func.coalesce(Order.completed_at, Order.updated_at) < cutoff,
+                )
+                .values(buyer_input=None)
+            )
+            await db.commit()
+            total += res.rowcount or 0
     return total

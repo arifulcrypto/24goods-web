@@ -213,17 +213,17 @@ async def list_orders(
     q: str | None = Query(None, max_length=100),
     buyer_id: uuid.UUID | None = None,
     page: Page = Depends(get_page),
-    _: User = Depends(require_staff),
+    staff: User = Depends(require_staff),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    return await order_admin.list_orders(db, page, status, q, buyer_id)
+    return await order_admin.list_orders(db, page, status, q, staff.tenant_id, buyer_id)
 
 
 @router.get("/orders/{order_id}")
 async def order_detail(
-    order_id: uuid.UUID, _: User = Depends(require_staff), db: AsyncSession = Depends(get_db)
+    order_id: uuid.UUID, staff: User = Depends(require_staff), db: AsyncSession = Depends(get_db)
 ) -> dict:
-    return await order_admin.order_detail(db, order_id)
+    return await order_admin.order_detail(db, order_id, staff.tenant_id)
 
 
 async def _order_reply(res: Resources, db: AsyncSession, order, msg) -> dict:  # type: ignore[no-untyped-def]

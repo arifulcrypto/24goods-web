@@ -15,9 +15,12 @@ import uuid
 from typing import Any
 
 from redis.asyncio import Redis
+from sqlalchemy import select
 
+from app.core.db import tenant_session
 from app.core.middleware import ASGIApp, Receive, Scope, Send, _header
 from app.core.ratelimit import hit
+from app.models import Tenant
 
 log = logging.getLogger("app.ratelimit")
 
@@ -60,13 +63,23 @@ class GlobalRateLimitMiddleware:
         self.app = app
         self._cache: dict[uuid.UUID, tuple[float, dict[str, Any]]] = {}
 
-    async def _config(self, redis: Redis, tid: uuid.UUID) -> dict[str, Any]:
+    async def _config(self, res: Any, tid: uuid.UUID) -> dict[str, Any]:
         now = time.monotonic()
         hit_ = self._cache.get(tid)
         if hit_ and hit_[0] > now:
             return hit_[1]
-        raw = await redis.get(cfg_key(tid))
-        cfg = normalize(json.loads(raw)) if raw else dict(DEFAULTS)
+        raw = await res.redis.get(cfg_key(tid))
+        if raw:
+            cfg = normalize(json.loads(raw))
+        else:
+            # Redis miss (flush / restart): the DB is the source of truth. Reload and re-mirror.
+            async with tenant_session(res.maker, None) as s:
+                stored = await s.scalar(select(Tenant.settings).where(Tenant.id == tid))
+            cfg = normalize((stored or {}).get("rate_limit"))
+            try:
+                await mirror(res.redis, tid, cfg)
+            except Exception as exc:
+                log.warning("rate limit config re-mirror failed error=%s", type(exc).__name__)
         self._cache[tid] = (now + CFG_TTL_S, cfg)
         if len(self._cache) > 500:
             self._cache.clear()
@@ -80,9 +93,9 @@ class GlobalRateLimitMiddleware:
         try:
             res = scope["app"].state.res
             tid = await res.tenants.resolve(_header(scope, b"host"))
-            cfg = await self._config(res.redis, tid)
-            if cfg["enabled"]:
-                ip = (scope.get("state") or {}).get("client_ip") or "-"
+            cfg = await self._config(res, tid)
+            ip = (scope.get("state") or {}).get("client_ip")
+            if cfg["enabled"] and ip:  # unknown IP: skip, never a shared bucket
                 allowed, reset = await hit(
                     res.redis, f"global:{tid}", ip, cfg["limit"], cfg["window_s"]
                 )
