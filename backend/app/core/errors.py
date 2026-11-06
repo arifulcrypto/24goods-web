@@ -18,6 +18,7 @@ class ApiError(Exception):
         status: int | None = None,
         code: str | None = None,
         headers: dict[str, str] | None = None,
+        extra: dict[str, str] | None = None,
     ):
         super().__init__(message)
         self.message = message or self.__class__.__doc__ or self.code
@@ -26,6 +27,7 @@ class ApiError(Exception):
         if code is not None:
             self.code = code
         self.headers = headers or {}
+        self.extra = extra or {}  # machine-readable fields echoed in the error envelope
 
 
 class Unauthorized(ApiError):
@@ -70,6 +72,30 @@ class OutOfStock(ApiError):
     status, code = 409, "out_of_stock"
 
 
+class AlreadyPaid(ApiError):
+    """The order was already paid"""
+
+    status, code = 409, "already_paid"
+
+
+class PayViaCheckout(ApiError):
+    """This order is part of a cart checkout; pay the checkout"""
+
+    status, code = 409, "pay_via_checkout"
+
+
+class FeeChannelMismatch(ApiError):
+    """The payment fee of this order does not match the chosen channel"""
+
+    status, code = 409, "fee_channel_mismatch"
+
+
+class BuyerInputRequired(ApiError):
+    """This product needs the order information"""
+
+    status, code = 422, "buyer_input_required"
+
+
 class QuoteExpired(ApiError):
     """Quote has expired"""
 
@@ -97,5 +123,13 @@ class Unavailable(ApiError):
     status, code = 503, "unavailable"
 
 
-def error_body(code: str, message: str) -> dict[str, dict[str, str]]:
-    return {"error": {"code": code, "message": message}}
+def error_body(
+    code: str, message: str, extra: dict[str, str] | None = None
+) -> dict[str, dict[str, object]]:
+    """``{"error": {code, message}}``; machine-readable ``extra`` fields (e.g. ``checkout_no``,
+    ``product_id``) are placed flat in ``error`` and mirrored under ``error.data``."""
+    body: dict[str, object] = {"code": code, "message": message}
+    if extra:
+        body.update(extra)
+        body["data"] = dict(extra)
+    return {"error": body}

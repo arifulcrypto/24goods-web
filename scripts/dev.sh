@@ -195,6 +195,18 @@ with_env() { # with_env <envfile> <cmd...> — runs in backend/ with only that e
 }
 
 migrate_seed() {
+  # backend tests (conftest) share this PG cluster and reset the cluster-wide app_owner
+  # password to their own value: re-assert ours before migrating.
+  # (app_api / app_delivery too: the test migration creates them with test passwords)
+  docker exec "$PG_NAME" psql -U postgres -qtAc \
+    "ALTER ROLE app_owner PASSWORD '$(secret APP_OWNER_PASSWORD)'" >/dev/null
+  local r pw
+  for r in app_api:APP_DB_API_PASSWORD app_delivery:APP_DB_DELIVERY_PASSWORD; do
+    pw=$(grep "^${r#*:}=" "$ENVD/migrate.env" | cut -d= -f2-)
+    docker exec "$PG_NAME" psql -U postgres -qtAc \
+      "DO \$\$ BEGIN IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='${r%%:*}') THEN
+         ALTER ROLE ${r%%:*} PASSWORD '$pw'; END IF; END \$\$" >/dev/null
+  done
   echo "migrate…"; with_env "$ENVD/migrate.env" "$PY" -m alembic upgrade head >"$LOGS/migrate.log" 2>&1 \
     || { tail -20 "$LOGS/migrate.log"; die "migration failed"; }
   echo "seed…"; with_env "$ENVD/seed.env" "$PY" -m app.devtools.seed >"$LOGS/seed.log" 2>&1 \

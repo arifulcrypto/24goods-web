@@ -2,6 +2,7 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
+  copyText,
   effectiveQuoteStatus,
   formatDateTime,
   formatMoney,
@@ -15,6 +16,7 @@ import {
 } from '@24goods/shared'
 import { ProductCardView } from '@24goods/shared/chat'
 import { api } from '../api'
+import type { OrderRowV4 } from '../api-v4'
 import OrderStatusTag from './OrderStatusTag.vue'
 import { toastError, toastOk } from '../ui'
 
@@ -22,7 +24,14 @@ const props = defineProps<{ conversation: Conversation; messages: Message[]; wit
 const emit = defineEmits<{ quoteSent: []; withdraw: [q: QuoteCardPayload]; openOrder: [id: string] }>()
 const { t, locale } = useI18n()
 
-const orders = ref<AdminOrder[]>([])
+const orders = ref<(AdminOrder & Partial<OrderRowV4>)[]>([])
+const inputOrder = computed(() => orders.value.find((o) => o.buyer_input) ?? null)
+async function copyInput() {
+  const v = inputOrder.value?.buyer_input
+  if (!v) return
+  if (await copyText(v)) toastOk(t('common.copied'))
+  else toastError(new Error('copy'))
+}
 const ordersLoading = ref(false)
 const form = reactive({ title: '', amount: '', qty: 1, note: '', expires: 30, busy: false, error: '' })
 
@@ -171,6 +180,13 @@ defineExpose({ reloadOrders: loadOrders })
       </div>
     </section>
 
+    <section v-if="inputOrder" class="block">
+      <h3>{{ t('inbox.buyerInput') }}</h3>
+      <div class="muted small mono">{{ inputOrder.order_no }}</div>
+      <p class="pre-wrap mono">{{ inputOrder.buyer_input }}</p>
+      <el-button size="small" @click="copyInput">{{ t('orders.copy') }}</el-button>
+    </section>
+
     <section class="block">
       <h3>{{ t('inbox.recentOrders') }}</h3>
       <div v-loading="ordersLoading">
@@ -215,6 +231,14 @@ h3 {
   font-weight: 600;
 }
 .small {
+  font-size: 12px;
+}
+.pre-wrap {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 160px;
+  overflow: auto;
+  margin: 6px 0;
   font-size: 12px;
 }
 .two {

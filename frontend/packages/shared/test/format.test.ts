@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
+  addAmounts,
+  computeFee,
+  permilleFromRate,
   compareAmount,
   formatCountdown,
   formatMoney,
@@ -74,5 +77,21 @@ describe('durations', () => {
     expect(formatCountdown('2026-01-01T00:05:09Z', now)).toBe('05:09')
     expect(formatCountdown('2026-01-01T02:00:00Z', now)).toBe('2:00:00')
     expect(formatCountdown('2025-12-31T23:59:59Z', now)).toBeNull()
+  })
+})
+
+describe('v4 fee helpers', () => {
+  it('rounds the fee up to the fen', () => {
+    expect(computeFee('10.00', 30)).toBe('0.30')
+    expect(computeFee('0.01', 30)).toBe('0.01')
+    expect(computeFee('9.99', 30)).toBe('0.30')
+    expect(computeFee('10.00', 0)).toBe('0.00')
+    expect(computeFee('x', 30)).toBeNull()
+  })
+  it('adds and parses', () => {
+    expect(addAmounts('10.00', '0.30')).toBe('10.30')
+    expect(permilleFromRate('3%')).toBe(30)
+    expect(permilleFromRate('1.5%')).toBe(15)
+    expect(permilleFromRate('abc')).toBeNull()
   })
 })

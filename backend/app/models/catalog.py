@@ -33,6 +33,9 @@ class Product(Base):
     usage_html_i18n: Mapped[dict[str, Any]] = mapped_column(default=dict)
     after_sales_hours: Mapped[int | None] = mapped_column(Integer)
     group_sort: Mapped[int] = mapped_column(Integer, default=0)
+    # v4: per-product "order information" popup config (review-v4 §4) and markdown render
+    buyer_input: Mapped[dict[str, Any] | None]
+    description_html_i18n: Mapped[dict[str, Any]] = mapped_column(default=dict)
     created_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = created_at()
     updated_at: Mapped[datetime] = updated_at()

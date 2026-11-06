@@ -18,6 +18,12 @@ export const API_ERROR_CODES = [
   'invalid_password',
   'after_sales_closed',
   'after_sales_open',
+  // v4
+  'too_frequent',
+  'fee_channel_mismatch',
+  'pay_via_checkout',
+  'already_paid',
+  'buyer_input_required',
 ] as const
 export const CLIENT_ERROR_CODES = ['network', 'server_error', 'timeout', 'unknown'] as const
 export type ContractErrorCode = (typeof API_ERROR_CODES)[number]
@@ -71,6 +77,10 @@ const CODE_RE = /^[a-z][a-z0-9_]{0,63}$/
  * Also tolerates FastAPI's default `{ "detail": ... }` (→ validation / status code).
  */
 export function errorFromBody(status: number, body: unknown): ApiError {
+  // v4 global access-frequency limiter: fixed body {"code":429,"msg":"..."} (not the error envelope).
+  if (status === 429 && body && typeof body === 'object' && (body as { code?: unknown }).code === 429) {
+    return new ApiError('too_frequent', 'Access is too frequent', 429, body)
+  }
   if (body && typeof body === 'object' && 'error' in body) {
     const err = (body as { error: unknown }).error
     if (err && typeof err === 'object') {
@@ -83,6 +93,14 @@ export function errorFromBody(status: number, body: unknown): ApiError {
   }
   const code = codeFromStatus(status)
   return new ApiError(code, `HTTP ${status}`, status, body)
+}
+
+/** The extra `details` payload of an error envelope (e.g. `{checkout_no}`, `{product_id}`), if any. */
+export function errorExtra(e: unknown): Record<string, unknown> {
+  if (!isApiError(e) || !e.details || typeof e.details !== 'object') return {}
+  const d = e.details as Record<string, unknown>
+  const nested = d.details && typeof d.details === 'object' ? (d.details as Record<string, unknown>) : {}
+  return { ...nested, ...d }
 }
 
 /** i18n key for an error (falls back to errors.unknown). Use with the shared bundle. */

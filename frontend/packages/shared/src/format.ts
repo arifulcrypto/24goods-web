@@ -182,3 +182,27 @@ export function visibleEmail(email: string | null | undefined): string {
   const e = (email ?? '').trim()
   return !e || e.toLowerCase().endsWith('.invalid') ? '' : e
 }
+
+/** a + b (exact, 2-decimal strings). */
+export function addAmounts(a: string, b: string): string | null {
+  const x = toMinor(a)
+  const y = toMinor(b)
+  if (x === null || y === null) return null
+  return fromMinor(x + y)
+}
+
+/**
+ * v4 §1 display-only fee preview: ceil(subtotal × permille / 1000) in minor units.
+ * The server computes (and stores) the real fee; this is shown, never sent or trusted.
+ */
+export function computeFee(subtotal: string, permille: number): string | null {
+  const s = toMinor(subtotal)
+  if (s === null || !Number.isInteger(permille) || permille < 0) return null
+  return fromMinor((s * BigInt(permille) + 999n) / 1000n)
+}
+
+/** "3%" → 30, "1.5%" → 15 (null when unparseable). */
+export function permilleFromRate(rate: string | null | undefined): number | null {
+  const m = /^\s*(\d{1,3}(?:\.\d{1,2})?)\s*%\s*$/.exec(rate ?? '')
+  return m ? Math.round(Number(m[1]) * 10) : null
+}

@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { Search } from '@element-plus/icons-vue'
 import { formatDateTime, formatMoney, visibleEmail, type AdminOrder, type Order, type OrderStatus } from '@24goods/shared'
 import { api } from '../api'
+import CloseOrderDialog from '../components/CloseOrderDialog.vue'
 import OrderDrawer from '../components/OrderDrawer.vue'
 import OrderStatusTag from '../components/OrderStatusTag.vue'
 import { usePaged } from '../composables/usePaged'
@@ -47,6 +48,12 @@ const off = rt.on('order', (o) => {
 })
 onBeforeUnmount(off)
 
+const closing = ref<AdminOrder | null>(null)
+const closeDlg = ref(false)
+function startClose(row: AdminOrder) {
+  closing.value = row
+  closeDlg.value = true
+}
 function open(row: AdminOrder) {
   openId.value = row.id
 }
@@ -93,6 +100,11 @@ function open(row: AdminOrder) {
         <el-table-column :label="t('orders.col.created')" width="160">
           <template #default="{ row }">{{ formatDateTime(row.created_at, locale) }}</template>
         </el-table-column>
+        <el-table-column :label="t('common.actions')" width="120" fixed="right">
+          <template #default="{ row }">
+            <el-button v-if="row.status === 'pending_payment'" link type="danger" @click.stop="startClose(row as AdminOrder)">{{ t('orders.close') }}</el-button>
+          </template>
+        </el-table-column>
       </el-table>
       <div class="pager">
         <el-pagination
@@ -104,6 +116,12 @@ function open(row: AdminOrder) {
         />
       </div>
     </div>
+    <CloseOrderDialog
+      v-model="closeDlg"
+      :order-id="closing?.id ?? null"
+      :checkout-no="(closing as (AdminOrder & { checkout_no?: string | null }) | null)?.checkout_no"
+      @closed="merge"
+    />
     <OrderDrawer :order-id="openId" @close="openId = null" @updated="merge" />
   </div>
 </template>

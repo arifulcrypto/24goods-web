@@ -92,6 +92,20 @@ Update this file in every PR. Phases are defined in [review-v2.md §8](review-v2
 - Seed production mode (`APP_SEED_DEMO=false`): tenant, one admin (`APP_SEED_ADMIN_EMAIL`), pages, tutorials, site settings and a disabled announcement; no demo users, products, cards or orders. Idempotent, never overwrites admin edits.
 - `scripts/prod.sh`: sync, bootstrap, deploy, status, logs, backup (+ nightly cron, 14 generations) and read-only smoke checks. See `docs/production.md`.
 
+### 2026-11-06: commerce v4 backend (branch `feat/v4-be`)
+- Spec: [review-v4.md](review-v4.md); ADR-021; API in `api-contract.md` ("Commerce v4 additions").
+- **Done (server side):**
+  - Buyer-paid channel surcharge (ceil, default 30 permille for Alipay), order `subtotal/fee/fee_rate`, ledger `surcharge_revenue` and refund reversal.
+  - Cart quote, combined checkout, checkout pay/cancel, checkout notify path sharing one settlement helper, checkout expiry, payables cap.
+  - Buyer/staff cancel with gateway re-query first; staff close needs a reason.
+  - Product "order information" popup config, `orders.buyer_input` (never audited), PATCH input, buyer chat message after payment.
+  - Support welcome/quick questions in site settings, `GET /site/payment-channels`.
+  - Staff `product_card` messages built by the server.
+  - Markdown product descriptions (`description_html`), idempotent seed backfill, `POST /admin/content/images`.
+  - Global per-IP rate limit middleware (default OFF, admin switch, fail open).
+  - Tests: `backend/tests/test_commerce_v4.py` (27 tests). Legacy tests run with a 0 permille surcharge configured in the `env` fixture.
+- **Follow-ups:** file a GitHub issue to encrypt `orders.buyer_input` at rest; payment-auditor and security-reviewer passes on `payments/settle.py`, `orders/cancel.py`, `orders/checkout.py`; reconcile ledger vs gateway for surcharge.
+
 ## Next
 
 ### v3 follow-up
@@ -134,3 +148,15 @@ Update this file in every PR. Phases are defined in [review-v2.md §8](review-v2
 - **No refund API:** refunds are recorded (order `refunded` + reversal ledger entries + audit) but the money is returned manually in the Alipay console.
 - **runc 1.1 inside c4 (EOL):** the c4 LXD container runs Docker with runc 1.1 because host LXD 4.0 has an AppArmor limitation with newer runc. Upgrade host LXD to 5.21 and return to the default runc (`docs/production.md`).
 - **No independent pentest/security review yet** (M1 exit gate, invariant 11). Production is live with real ZPay only under the owner's acceptance of that risk; keep order volume low until the review is done.
+
+### v4 integration notes (2026-11-06)
+- Migration 0003 backfill runs with `NO FORCE ROW LEVEL SECURITY` lifted on `orders` for the UPDATE only. With FORCE RLS even the table owner saw no rows, so the backfill silently updated nothing, and the later `SET NOT NULL` failed on existing data. The 0002 backfill had the same blind spot; it was harmless because production launched on v3.
+- `scripts/dev.sh up` re-asserts the dev role passwords (`app_owner`, `app_api`, `app_delivery`) before migrating. Backend tests share the dev PG cluster and reset these cluster-wide roles to their test passwords.
+- `e2e/smoke.py` gained a v4 section:
+  - channel fee
+  - cart quote
+  - checkout paid in one payment
+  - `pay_via_checkout`
+  - buyer cancel and staff close
+  - staff product card
+  - global limiter, checking the exact 429 body

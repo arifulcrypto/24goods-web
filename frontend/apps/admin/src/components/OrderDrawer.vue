@@ -19,8 +19,9 @@ import {
   type Attachment,
   type Order,
 } from '@24goods/shared'
-import { api, apiV3 } from '../api'
-import type { AdminOrderDetailV3 as AdminOrderDetail } from '../api-v3'
+import { api, apiV4 } from '../api'
+import type { AdminOrderDetailV4 as AdminOrderDetail, SiblingOrder } from '../api-v4'
+import CloseOrderDialog from './CloseOrderDialog.vue'
 import { buildBuyerTemplate, clockTime, htmlToText } from '../lib/orderText'
 import OrderStatusTag from './OrderStatusTag.vue'
 import { toastError, toastOk } from '../ui'
@@ -80,8 +81,9 @@ async function load(id: string) {
   loading.value = true
   floorUnit.value = null
   try {
-    order.value = await apiV3.orders.get(id)
+    order.value = await apiV4.orders.get(id)
     void resolveFloor(order.value)
+    void loadSiblings(order.value)
   } catch (e) {
     toastError(e)
   } finally {
@@ -196,35 +198,36 @@ async function submitDeliver() {
   }
 }
 
-// ---- cancel ----
-const cancelDlg = ref(false)
-const cancel = reactive({ reason: '', busy: false, error: '' })
-function openCancel() {
-  cancel.reason = ''
-  cancel.error = ''
-  cancelDlg.value = true
+// ---- close order (§3) ----
+const closeDlg = ref(false)
+function onClosed(o: Order) {
+  applyUpdate(o)
 }
-async function submitCancel() {
-  const o = order.value
-  if (!o || cancel.busy) return
-  if (!cancel.reason.trim()) {
-    cancel.error = t('orders.reasonRequired')
+
+// ---- sibling orders of the same checkout (§2/§3) ----
+const siblings = ref<SiblingOrder[]>([])
+async function loadSiblings(o: AdminOrderDetail) {
+  siblings.value = []
+  if (!o.checkout_no) return
+  if (o.checkout_orders?.length) {
+    siblings.value = o.checkout_orders.filter((x) => x.id !== o.id)
     return
   }
-  cancel.busy = true
   try {
-    applyUpdate(await api.orders.cancel(o.id, cancel.reason.trim()))
-    toastOk(t('orders.cancelled'))
-    cancelDlg.value = false
-  } catch (e) {
-    toastError(e)
-  } finally {
-    cancel.busy = false
+    // best effort: the admin search may match the checkout number
+    const r = await api.orders.list({ q: o.checkout_no, page: 1, page_size: 25 })
+    siblings.value = (r.items as Array<SiblingOrder & { checkout_no?: string | null }>).filter((x) => x.checkout_no === o.checkout_no && x.id !== o.id)
+  } catch {
+    siblings.value = []
   }
+}
+async function copyInput() {
+  const v = order.value?.buyer_input
+  if (v) toastCopy(await copyText(v))
 }
 
 const canChangePrice = computed(() => order.value?.status === 'pending_payment')
-const canCancel = computed(() => order.value?.status === 'pending_payment')
+const canClose = computed(() => order.value?.status === 'pending_payment')
 const canDeliver = computed(() => order.value?.status === 'paid' && order.value.delivery_mode === 'manual')
 
 defineExpose({ reload: () => props.orderId && load(props.orderId) })
@@ -246,11 +249,23 @@ defineExpose({ reload: () => props.orderId && load(props.orderId) })
         <div class="actions">
           <el-button v-if="canChangePrice" type="primary" plain @click="openPrice">{{ t('orders.changePrice') }}</el-button>
           <el-button v-if="canDeliver" type="success" @click="openDeliver">{{ t('orders.deliver') }}</el-button>
-          <el-button v-if="canCancel" type="danger" plain @click="openCancel">{{ t('orders.cancel') }}</el-button>
+          <el-button v-if="canClose" type="danger" plain @click="closeDlg = true">{{ t('orders.close') }}</el-button>
         </div>
 
         <el-descriptions :column="1" border size="small" class="desc">
           <el-descriptions-item :label="t('orders.col.title')">{{ order.title }}</el-descriptions-item>
+          <el-descriptions-item v-if="order.subtotal" :label="t('orders.info.subtotal')">{{ money(order.subtotal) }}</el-descriptions-item>
+          <el-descriptions-item v-if="order.fee && order.fee !== '0' && order.fee !== '0.00'" :label="t('orders.info.fee', { rate: order.fee_rate ?? '' })">{{ money(order.fee) }}</el-descriptions-item>
+          <el-descriptions-item v-if="order.subtotal" :label="t('orders.info.total')"><b class="price">{{ money(order.amount) }}</b></el-descriptions-item>
+          <el-descriptions-item v-if="order.checkout_no" :label="t('orders.info.checkout')">
+            <span class="mono small">{{ order.checkout_no }}</span>
+            <div v-for="s in siblings" :key="s.id" class="small"><span class="mono">{{ s.order_no }}</span> · {{ s.title }} · {{ money(s.amount) }} · {{ t(`orderStatus.${s.status}`) }}</div>
+          </el-descriptions-item>
+          <el-descriptions-item v-if="order.cancel_reason" :label="t('orders.info.cancelReason')"><span class="pre">{{ order.cancel_reason }}</span></el-descriptions-item>
+          <el-descriptions-item v-if="order.buyer_input" :label="t('orders.info.buyerInput')">
+            <p class="pre mono">{{ order.buyer_input }}</p>
+            <el-button size="small" @click="copyInput">{{ t('orders.copy') }}</el-button>
+          </el-descriptions-item>
           <el-descriptions-item :label="t('orders.col.buyer')">{{ order.buyer.display_name }}</el-descriptions-item>
           <el-descriptions-item :label="t('orders.info.buyerEmail')">{{ visibleEmail(order.buyer.email) || '—' }}</el-descriptions-item>
           <el-descriptions-item :label="t('orders.info.qty')">{{ order.qty }}</el-descriptions-item>
@@ -340,17 +355,7 @@ defineExpose({ reload: () => props.orderId && load(props.orderId) })
       </template>
     </el-dialog>
 
-    <el-dialog v-model="cancelDlg" :title="t('orders.cancel')" width="min(440px, 94vw)" append-to-body>
-      <el-form label-position="top" @submit.prevent="submitCancel">
-        <el-form-item :label="t('orders.cancelReason')" :error="cancel.error">
-          <el-input v-model="cancel.reason" maxlength="200" show-word-limit />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="cancelDlg = false">{{ t('common.close') }}</el-button>
-        <el-button type="danger" :loading="cancel.busy" @click="submitCancel">{{ t('orders.cancel') }}</el-button>
-      </template>
-    </el-dialog>
+    <CloseOrderDialog v-model="closeDlg" :order-id="order?.id ?? null" :checkout-no="order?.checkout_no" @closed="onClosed" />
   </el-drawer>
 </template>
 

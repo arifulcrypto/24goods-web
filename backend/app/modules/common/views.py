@@ -7,9 +7,12 @@ from datetime import datetime
 from typing import Any
 
 from app.core.i18n import pick
+from app.core.markdown import render
 from app.core.money import fmt
 from app.models import AfterSales, Attachment, Message, Order, Product, User
+from app.modules.common.buyerinput import admin_config, public_config
 from app.modules.common.sitedefaults import resolve_after_sales_hours
+from app.modules.payments.channels import fee_rate
 
 REVEALABLE = frozenset({"delivered", "completed"})
 
@@ -80,8 +83,13 @@ def product_view(
     p: Product, lang: str, stock: int | None, tenant_settings: dict[str, Any] | None = None
 ) -> dict[str, Any]:
     out = product_summary(p, lang, stock, tenant_settings)
+    description = pick(p.description_i18n, lang)
+    html = pick(p.description_html_i18n, lang)
     out.update(
-        description=pick(p.description_i18n, lang),
+        description=description,
+        # markdown rendered at write time; rendered on the fly for rows not yet backfilled
+        description_html=html or (render(description) if description else ""),
+        buyer_input=public_config(p.buyer_input, lang),
         images=list(p.images),
         status=p.status,
         delivery_format=p.delivery_format,
@@ -134,6 +142,7 @@ def admin_product_view(p: Product, stock: int | None) -> dict[str, Any]:
         "usage_i18n": {"en": p.usage_i18n.get("en", ""), "zh-CN": p.usage_i18n.get("zh-CN", "")},
         "after_sales_hours": p.after_sales_hours,
         "group_sort": p.group_sort,
+        "buyer_input": admin_config(p.buyer_input),
     }
 
 
@@ -185,6 +194,8 @@ def order_view(
     product: Product | None = None,
     ticket: dict[str, Any] | None = None,
     lang: str = "en",
+    viewer_is_staff: bool = False,
+    checkout_no: str | None = None,
 ) -> dict[str, Any]:
     manual = None
     if o.delivery_mode == "manual" and (o.manual_delivery_text or attachment is not None):
@@ -197,6 +208,13 @@ def order_view(
         "quote_id": str(o.quote_id) if o.quote_id else None,
         "qty": o.qty,
         "amount": fmt(o.amount_minor),
+        "subtotal": fmt(o.subtotal_minor),
+        "fee": fmt(o.fee_minor),
+        "fee_rate": fee_rate(o.fee_permille),
+        "checkout_no": checkout_no,
+        # the buyer's order information (may hold a session token): owner and staff only
+        "buyer_input": o.buyer_input if (viewer_is_owner or viewer_is_staff) else None,
+        "cancel_reason": o.cancel_reason,
         "currency": o.currency,
         "status": o.status,
         "delivery_mode": o.delivery_mode,

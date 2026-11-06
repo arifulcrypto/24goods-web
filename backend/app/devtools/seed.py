@@ -418,6 +418,18 @@ async def _content(db: AsyncSession, tid: uuid.UUID, admin: User, *, demo: bool 
     await db.commit()
 
 
+async def backfill_description_html(db: AsyncSession) -> int:
+    """Render ``description_html_i18n`` from the markdown descriptions (idempotent)."""
+    n = 0
+    for p in await db.scalars(select(Product)):
+        html = render_i18n(p.description_i18n)
+        if p.description_html_i18n != html:
+            p.description_html_i18n = html
+            n += 1
+    await db.commit()
+    return n
+
+
 async def _run_prod(settings: Settings, database_url: str, admin_pw: str) -> None:
     """Production seed: tenant, ONE admin, fixed pages, articles, site settings. No demo data."""
     engine = make_engine(database_url, pool_size=2, max_overflow=0)
@@ -432,6 +444,7 @@ async def _run_prod(settings: Settings, database_url: str, admin_pw: str) -> Non
             else:  # never reset a password the admin may have changed
                 admin = existing
             await _content(db, tid, admin, demo=False)
+            await backfill_description_html(db)
         log.info("prod seed complete: tenant=%s admin=%s", tid, email)
     finally:
         await engine.dispose()
@@ -460,6 +473,7 @@ async def run(settings: Settings, database_url: str) -> None:
                 await set_agent_status(db, agent, "online", "Usually replies in 5 minutes")
             await _content(db, tid, admin)
             products = await _products(db, tid, admin, store)
+            await backfill_description_html(db)
             for p in products.values():
                 if p.delivery_mode != "auto_card":
                     continue

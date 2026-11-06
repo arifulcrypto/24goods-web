@@ -40,6 +40,32 @@ class Order(Base):
     manual_delivery_attachment_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("attachments.id")
     )
+    # v4: cart checkout, channel surcharge (amount = subtotal + fee), buyer input, cancel
+    checkout_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("checkouts.id"))
+    subtotal_minor: Mapped[int] = mapped_column(BigInteger)
+    fee_minor: Mapped[int] = mapped_column(BigInteger, default=0)
+    fee_permille: Mapped[int] = mapped_column(Integer, default=0)
+    buyer_input: Mapped[str | None] = mapped_column(Text)
+    cancel_reason: Mapped[str | None] = mapped_column(String(200))
+    created_at: Mapped[datetime] = created_at()
+    updated_at: Mapped[datetime] = updated_at()
+
+
+class Checkout(Base):
+    """A cart paid in one gateway transaction (``out_trade_no = checkout_no``)."""
+
+    __tablename__ = "checkouts"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id"))
+    checkout_no: Mapped[str] = mapped_column(String(16), unique=True)
+    buyer_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    amount_minor: Mapped[int] = mapped_column(BigInteger)
+    currency: Mapped[str] = mapped_column(String(3), default="CNY")
+    status: Mapped[str] = mapped_column(String(16), default="pending_payment")
+    channel: Mapped[str | None] = mapped_column(String(32))
+    expires_at: Mapped[datetime | None]
+    paid_at: Mapped[datetime | None]
     created_at: Mapped[datetime] = created_at()
     updated_at: Mapped[datetime] = updated_at()
 
@@ -63,7 +89,8 @@ class Payment(Base):
 
     id: Mapped[uuid.UUID] = uuid_pk()
     tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id"))
-    order_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("orders.id"), unique=True)
+    order_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("orders.id"), unique=True)
+    checkout_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("checkouts.id"), unique=True)
     channel: Mapped[str] = mapped_column(String(32))
     gateway_trade_no: Mapped[str] = mapped_column(String(64))
     amount_minor: Mapped[int] = mapped_column(BigInteger)

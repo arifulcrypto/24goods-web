@@ -14,7 +14,10 @@ import {
   type ProductStatus,
 } from '@24goods/shared'
 import { api, apiV3 } from '../api'
-import type { AdminProductInputV3, AdminProductV3 as AdminProduct } from '../api-v3'
+import type { AdminProductInputV3 } from '../api-v3'
+import { BUYER_INPUT_DEFAULT, type AdminProductV4 as AdminProduct, type BuyerInputForm } from '../api-v4'
+import MarkdownEditor from './MarkdownEditor.vue'
+import { promptChips, validateBuyerInput } from '../lib/buyerInput'
 import {
   AFTER_SALES_PRESETS,
   DEFAULT_SEPARATOR,
@@ -64,7 +67,13 @@ const form = reactive({
   usage_en: '',
   usage_zh: '',
   after_sales_hours: null as number | null,
+  bi: structuredClone(BUYER_INPUT_DEFAULT) as BuyerInputForm,
 })
+const biTab = ref<'en' | 'zh-CN'>('en')
+const biPreviewPrompt = computed(() => promptChips(form.bi.prompt_i18n[biTab.value] || form.bi.prompt_i18n.en || ''))
+const biPreviewTitle = computed(() => form.bi.title_i18n[biTab.value] || form.bi.title_i18n.en || t('products.bi.defaultTitle'))
+const biPlaceholder = computed(() => form.bi.placeholder_i18n[biTab.value] || form.bi.placeholder_i18n.en || '')
+const biHint = computed(() => t('products.bi.fixedHint'))
 
 watch(
   () => [props.modelValue, props.product] as const,
@@ -95,6 +104,15 @@ watch(
     usageTab.value = 'en'
     form.after_sales_hours = p?.after_sales_hours ?? null
     asPreset.value = afterSalesPresetFor(form.after_sales_hours)
+    const b = p?.buyer_input
+    form.bi = {
+      ...structuredClone(BUYER_INPUT_DEFAULT),
+      ...(b ?? {}),
+      title_i18n: { en: b?.title_i18n?.en ?? '', 'zh-CN': b?.title_i18n?.['zh-CN'] ?? '' },
+      prompt_i18n: { en: b?.prompt_i18n?.en ?? '', 'zh-CN': b?.prompt_i18n?.['zh-CN'] ?? '' },
+      placeholder_i18n: { en: b?.placeholder_i18n?.en ?? '', 'zh-CN': b?.placeholder_i18n?.['zh-CN'] ?? '' },
+    }
+    biTab.value = 'en'
   },
   { immediate: true },
 )
@@ -132,14 +150,22 @@ function validate(): boolean {
   if (form.after_sales_hours !== null && (!Number.isInteger(form.after_sales_hours) || form.after_sales_hours < 0 || form.after_sales_hours > 8760)) {
     e.after_sales = t('delivery.hoursInvalid')
   }
+  if (validateBuyerInput(form.bi)) e.bi = t('products.bi.invalid')
   errors.value = e
   if (e.title) tab.value = 'en'
   return Object.keys(e).length === 0
 }
 
-function payload(): AdminProductInputV3 {
+function payload(): AdminProductInputV3 & { buyer_input: BuyerInputForm } {
   const usage = { en: form.usage_en.trim(), 'zh-CN': form.usage_zh.trim() }
+  const trim = (o: { en: string; 'zh-CN': string }) => ({ en: o.en.trim(), 'zh-CN': o['zh-CN'].trim() })
   return {
+    buyer_input: {
+      ...form.bi,
+      title_i18n: trim(form.bi.title_i18n),
+      prompt_i18n: trim(form.bi.prompt_i18n),
+      placeholder_i18n: trim(form.bi.placeholder_i18n),
+    },
     delivery_format: joinFormat(labels.value, form.separator),
     delivery_separator: form.separator,
     redeem_url: form.redeem_url.trim() || null,
@@ -232,7 +258,7 @@ async function removeImage(url: string) {
             <el-input v-model="form.title_en" maxlength="120" show-word-limit />
           </el-form-item>
           <el-form-item :label="t('products.form.description')">
-            <el-input v-model="form.desc_en" type="textarea" :rows="5" maxlength="5000" show-word-limit />
+            <MarkdownEditor v-model="form.desc_en" :rows="6" :maxlength="5000" />
           </el-form-item>
         </el-tab-pane>
         <el-tab-pane :label="t('products.form.tabZh')" name="zh-CN">
@@ -240,7 +266,7 @@ async function removeImage(url: string) {
             <el-input v-model="form.title_zh" maxlength="120" show-word-limit />
           </el-form-item>
           <el-form-item :label="t('products.form.description')">
-            <el-input v-model="form.desc_zh" type="textarea" :rows="5" maxlength="5000" show-word-limit />
+            <MarkdownEditor v-model="form.desc_zh" :rows="6" :maxlength="5000" />
           </el-form-item>
         </el-tab-pane>
       </el-tabs>
@@ -323,6 +349,54 @@ async function removeImage(url: string) {
         </el-select>
         <el-input-number v-if="asPreset === 'custom'" v-model="form.after_sales_hours" :min="1" :max="8760" class="hours" />
       </el-form-item>
+
+      <h3 class="sec">{{ t('products.bi.section') }}</h3>
+      <el-form-item :label="t('products.bi.enabled')">
+        <el-switch v-model="form.bi.enabled" />
+        <span class="hint muted sw">{{ t('products.bi.enabledHint') }}</span>
+      </el-form-item>
+      <template v-if="form.bi.enabled">
+        <div class="grid">
+          <el-form-item :label="t('products.bi.required')"><el-switch v-model="form.bi.required" /></el-form-item>
+          <el-form-item :label="t('products.bi.multiline')"><el-switch v-model="form.bi.multiline" /></el-form-item>
+          <el-form-item :label="t('products.bi.maxLen')" :error="errors.bi">
+            <el-input-number v-model="form.bi.max_len" :min="1" :max="4000" />
+          </el-form-item>
+        </div>
+        <el-tabs v-model="biTab" class="full">
+          <el-tab-pane v-for="L in ([['en', 'tabEn'], ['zh-CN', 'tabZh']] as const)" :key="L[0]" :label="t(`products.form.${L[1]}`)" :name="L[0]">
+            <el-form-item :label="t('products.bi.title')">
+              <el-input v-model="form.bi.title_i18n[L[0]]" maxlength="1000" :placeholder="t('products.bi.defaultTitle')" />
+            </el-form-item>
+            <el-form-item :label="t('products.bi.prompt')">
+              <el-input v-model="form.bi.prompt_i18n[L[0]]" type="textarea" :rows="3" maxlength="1000" show-word-limit />
+              <div class="hint muted">{{ t('products.bi.promptHint') }}</div>
+            </el-form-item>
+            <el-form-item :label="t('products.bi.placeholder')">
+              <el-input v-model="form.bi.placeholder_i18n[L[0]]" maxlength="1000" />
+            </el-form-item>
+          </el-tab-pane>
+        </el-tabs>
+        <div class="bi-preview" :aria-label="t('products.bi.preview')">
+          <div class="bi-cap muted">{{ t('products.bi.preview') }}</div>
+          <div class="bi-title">{{ biPreviewTitle }}</div>
+          <div class="bi-prompt">
+            <template v-for="(c, i) in biPreviewPrompt" :key="i">
+              <code v-if="c.kind === 'code'" class="chip">{{ c.value }}</code>
+              <template v-else>{{ c.value }}</template>
+            </template>
+          </div>
+          <div class="hint muted">{{ biHint }}</div>
+          <el-input
+            :type="form.bi.multiline ? 'textarea' : 'text'"
+            :rows="3"
+            :placeholder="biPlaceholder"
+            :maxlength="form.bi.max_len"
+            show-word-limit
+            disabled
+          />
+        </div>
+      </template>
 
       <el-form-item :label="t('products.form.images')">
         <div v-if="isNew" class="muted">{{ t('products.form.saveFirst') }}</div>
@@ -423,5 +497,37 @@ async function removeImage(url: string) {
 }
 .hours {
   margin-left: 8px;
+}
+.sw {
+  margin-left: 10px;
+}
+.bi-preview {
+  border: 1px dashed var(--a-line);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 16px;
+}
+.bi-cap {
+  font-size: 11px;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+.bi-title {
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.bi-prompt {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.chip {
+  display: inline-block;
+  padding: 1px 8px;
+  margin: 0 2px;
+  border-radius: 10px;
+  background: var(--el-color-primary-light-9);
+  border: 1px solid var(--el-color-primary-light-7);
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
 }
 </style>

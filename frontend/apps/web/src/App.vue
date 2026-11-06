@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import TabBar from './components/TabBar.vue'
+import CsBubble from './components/CsBubble.vue'
 import { useAuthStore } from './stores/auth'
 import { useRealtimeStore } from './stores/realtime'
 import { useConversationsStore } from './stores/conversations'
@@ -61,6 +62,7 @@ watch(
       </KeepAlive>
     </RouterView>
     <TabBar v-if="showTabbar" />
+    <CsBubble />
   </div>
 </template>
 

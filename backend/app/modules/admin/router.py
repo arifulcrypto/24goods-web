@@ -213,17 +213,17 @@ async def list_orders(
     q: str | None = Query(None, max_length=100),
     buyer_id: uuid.UUID | None = None,
     page: Page = Depends(get_page),
-    _: User = Depends(require_staff),
+    staff: User = Depends(require_staff),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    return await order_admin.list_orders(db, page, status, q, buyer_id)
+    return await order_admin.list_orders(db, page, status, q, staff.tenant_id, buyer_id)
 
 
 @router.get("/orders/{order_id}")
 async def order_detail(
-    order_id: uuid.UUID, _: User = Depends(require_staff), db: AsyncSession = Depends(get_db)
+    order_id: uuid.UUID, staff: User = Depends(require_staff), db: AsyncSession = Depends(get_db)
 ) -> dict:
-    return await order_admin.order_detail(db, order_id)
+    return await order_admin.order_detail(db, order_id, staff.tenant_id)
 
 
 async def _order_reply(res: Resources, db: AsyncSession, order, msg) -> dict:  # type: ignore[no-untyped-def]
@@ -271,8 +271,9 @@ async def cancel(
     db: AsyncSession = Depends(get_db),
     res: Resources = Depends(get_res),
 ) -> dict:
-    order, msg = await order_admin.cancel(db, order_id, body.reason, staff, client_ip(request))
-    return await _order_reply(res, db, order, msg)
+    order = await order_admin.cancel(db, res, order_id, body.reason, staff, client_ip(request))
+    (view,) = await order_admin.admin_views(db, [order])  # cancel_group already broadcast
+    return view
 
 
 # ---------------------------------------------------------------- conversations
@@ -321,11 +322,47 @@ async def send_message(
         attachment_id=body.attachment_id,
         client_msg_id=body.client_msg_id,
         store=FileStore(res.settings.upload_dir),
+        product_id=body.product_id,
     )
     if created:
         await chat.broadcast(res, db, conv, [msg])
     (view,) = await chat.message_views(db, [msg])
     return view
+
+
+@router.post("/content/images")
+async def upload_content_image(
+    request: Request,
+    file: UploadFile = File(...),
+    staff: User = Depends(require_staff),
+    db: AsyncSession = Depends(get_db),
+    res: Resources = Depends(get_res),
+) -> dict:
+    """Public image for markdown content (product descriptions, articles, pages, announcement).
+    Same hostile-upload pipeline as every image: magic bytes, re-encode, EXIF strip, size cap."""
+    await enforce(res.redis, "content:image", str(staff.id), 60, 3600)
+    processed = await image_from_upload(file)
+    att = await store_attachment(
+        db,
+        FileStore(res.settings.upload_dir),
+        tenant_id=staff.tenant_id,
+        owner_id=staff.id,
+        kind="image",
+        processed=processed,
+        purpose="product",
+        is_public=True,
+    )
+    await audit(
+        db,
+        tenant_id=staff.tenant_id,
+        action="content.image_uploaded",
+        actor_id=staff.id,
+        actor_role=staff.role,
+        target=f"attachment:{att.id}",
+        ip=client_ip(request),
+    )
+    await db.commit()
+    return {"id": str(att.id), "url": file_url(att.id)}
 
 
 @router.post("/conversations/{conv_id}/read", status_code=204)

@@ -47,7 +47,7 @@ async function logout() {
   }
 }
 function openSupport() {
-  void router.push(auth.loggedIn ? '/chat' : { name: 'login', query: { redirect: '/chat' } })
+  void router.push('/chat')
 }
 
 // ---- edit profile ----

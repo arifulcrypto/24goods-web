@@ -16,6 +16,8 @@ from app.core.ratelimit import count, enforce
 from app.core.resources import Resources
 from app.modules.auth.service import net_of
 from app.modules.content import service
+from app.modules.content.site import tenant_settings
+from app.modules.payments.channels import public_channels
 
 router = APIRouter(tags=["content"])
 
@@ -28,6 +30,17 @@ async def site(
     res: Resources = Depends(get_res),
 ) -> dict:
     return await service.public_site(db, tenant_id, lang, res.settings.brand_name)
+
+
+@router.get("/site/payment-channels")
+async def payment_channels(
+    lang: str = Depends(get_lang),
+    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    """Enabled channels with their buyer-paid fee, so the storefront can show the fee before
+    an order exists. Shown, never trusted: the server recomputes it at order creation."""
+    return public_channels(await tenant_settings(db, tenant_id), lang)
 
 
 @router.get("/pow/challenge")

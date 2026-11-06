@@ -16,6 +16,7 @@ export function toastError(e: unknown): void {
   if (e instanceof DOMException && e.name === 'AbortError') return
   const t = i18n.global.t
   if (isApiError(e) && e.code === 'unauthorized') return // global 401 handler redirects
+  if (isApiError(e) && e.code === 'too_frequent') return // global 429 toast already shown
   showFailToast({ message: t(errorI18nKey(e)), wordBreak: 'break-word' })
 }
 
@@ -32,6 +33,23 @@ export async function confirm(title: string, message: string): Promise<boolean> 
       message,
       confirmButtonText: t('common.confirm'),
       cancelButtonText: t('common.cancel'),
+    })
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** SmartText URL chip: show the FULL url and let the user decide (review-v4 §7). */
+export async function confirmOpenLink(url: string): Promise<boolean> {
+  const t = i18n.global.t
+  try {
+    await showConfirmDialog({
+      title: t('chat.smart.openLinkTitle'),
+      message: `${url}\n\n${t('chat.smart.openLinkWarn')}`,
+      confirmButtonText: t('chat.smart.open'),
+      cancelButtonText: t('common.cancel'),
+      className: 'link-confirm',
     })
     return true
   } catch {

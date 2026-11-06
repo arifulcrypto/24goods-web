@@ -128,3 +128,18 @@ describe('URL safety', () => {
     expect(safeRedirect(undefined, '/me')).toBe('/me')
   })
 })
+
+describe('v4 global 429', () => {
+  it('maps {"code":429,"msg"} to too_frequent and fires onRateLimited', async () => {
+    const seen: string[] = []
+    const c = new ApiClient({
+      fetchImpl: (async () =>
+        new Response(JSON.stringify({ code: 429, msg: 'Access is too frequent. Please try again later.' }), {
+          status: 429,
+        })) as typeof fetch,
+      onRateLimited: (e) => seen.push(e.code),
+    })
+    await expect(c.get('/x')).rejects.toMatchObject({ code: 'too_frequent', status: 429 })
+    expect(seen).toEqual(['too_frequent'])
+  })
+})

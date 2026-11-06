@@ -13,6 +13,7 @@ class BuyNowIn(BaseModel):
     product_id: uuid.UUID
     qty: int = Field(1, ge=1, le=10)
     src: str | None = Field(None, max_length=200)
+    buyer_input: str | None = Field(None, max_length=4000)
 
     @field_validator("src")
     @classmethod
@@ -39,3 +40,32 @@ class DeliverIn(BaseModel):
 
 class CancelIn(BaseModel):
     reason: str = Field(min_length=1, max_length=500)
+
+
+class BuyerCancelIn(BaseModel):
+    reason: str | None = Field(None, max_length=200)
+
+
+class InputIn(BaseModel):
+    buyer_input: str = Field(max_length=4000)
+
+
+class CartItemIn(BaseModel):
+    product_id: uuid.UUID
+    qty: int = Field(1, ge=1, le=10)
+    buyer_input: str | None = Field(None, max_length=4000)
+
+
+class CartQuoteIn(BaseModel):
+    items: list[CartItemIn] = Field(min_length=1, max_length=20)
+
+
+class CheckoutIn(BaseModel):
+    items: list[CartItemIn] = Field(min_length=1, max_length=20)
+    source: str | None = Field(None, max_length=200)
+
+    @field_validator("source")
+    @classmethod
+    def _source(cls, v: str | None) -> str | None:
+        v = (v or "").strip().lower()
+        return v if _SOURCE.match(v) else None

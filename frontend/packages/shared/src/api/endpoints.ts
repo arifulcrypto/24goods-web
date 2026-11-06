@@ -3,6 +3,11 @@ import { seg } from './client'
 import type {
   AfterSales,
   AfterSalesInput,
+  CartQuote,
+  CheckoutLineInput,
+  CheckoutResult,
+  CheckoutView,
+  PaymentChannel,
   Article,
   ArticleSummary,
   InstantResult,
@@ -136,8 +141,19 @@ export function createBuyerApi(c: ApiClient) {
     },
     orders: {
       /** `src` = traffic attribution tag from a direct buy link (`[a-z0-9_-]{0,32}`). */
-      create: (product_id: string, qty: number, src?: string | null) =>
-        c.post<Order>('/orders', src ? { product_id, qty, src } : { product_id, qty }),
+      create: (product_id: string, qty: number, src?: string | null, buyer_input?: string | null) =>
+        c.post<Order>('/orders', {
+          product_id,
+          qty,
+          ...(src ? { src } : {}),
+          ...(buyer_input ? { buyer_input } : {}),
+        }),
+      /** v4 §3: buyer cancel (whole checkout for member orders). 409 already_paid / 503 retry. */
+      cancel: (id: string, reason?: string) =>
+        c.post<Order>(`/orders/${seg(id)}/cancel`, reason ? { reason } : {}),
+      /** v4 §4: fix the order information while pending_payment / paid. */
+      setInput: (id: string, buyer_input: string) =>
+        c.patch<Order>(`/orders/${seg(id)}/input`, { buyer_input }),
       list: (q: { page?: number; page_size?: number } = {}) => c.get<Paginated<Order>>('/orders', q),
       get: (id: string) => c.get<Order>(`/orders/${seg(id)}`),
       pay: (id: string, channel: string = DEFAULT_PAY_CHANNEL) =>
@@ -145,6 +161,19 @@ export function createBuyerApi(c: ApiClient) {
       reveal: (id: string) => c.post<{ secrets: string[]; cards: { id: string; code: string }[] }>(`/orders/${seg(id)}/reveal`),
       confirm: (id: string) => c.post<Order>(`/orders/${seg(id)}/confirm`),
       afterSales: (id: string, b: AfterSalesInput) => c.post<AfterSales>(`/orders/${seg(id)}/after-sales`, b),
+    },
+    /** v4 §1 */
+    paymentChannels: () => c.get<PaymentChannel[]>('/site/payment-channels'),
+    /** v4 §2: server truth for cart lines (no login needed). */
+    cartQuote: (items: readonly CheckoutLineInput[]) => c.post<CartQuote>('/cart/quote', { items }),
+    checkout: {
+      create: (items: readonly CheckoutLineInput[], source?: string | null) =>
+        c.post<CheckoutResult>('/checkout', source ? { items, source } : { items }),
+      get: (no: string) => c.get<CheckoutView>(`/checkouts/${seg(no)}`),
+      pay: (no: string, channel: string = DEFAULT_PAY_CHANNEL) =>
+        c.post<{ pay_url: string }>(`/checkouts/${seg(no)}/pay`, { channel }),
+      cancel: (no: string, reason?: string) =>
+        c.post<CheckoutView>(`/checkouts/${seg(no)}/cancel`, reason ? { reason } : {}),
     },
     streamUrl: () => c.url('/stream'),
   }

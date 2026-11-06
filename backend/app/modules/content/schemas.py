@@ -113,8 +113,63 @@ class AutoConfirmIn(BaseModel):
     auto_card: int = Field(ge=1, le=24 * 90)
 
 
+class ChannelIn(BaseModel):
+    enabled: bool | None = None
+    surcharge_permille: int | None = Field(None, ge=0, le=200)
+
+
+class PaymentsIn(BaseModel):
+    channels: dict[str, ChannelIn] = Field(default_factory=dict)
+
+    @field_validator("channels")
+    @classmethod
+    def _known(cls, v: dict[str, ChannelIn]) -> dict[str, ChannelIn]:
+        from app.modules.payments.channels import LABELS
+
+        if set(v) - set(LABELS):
+            raise ValueError("unknown payment channel")
+        return v
+
+
+class SupportIn(BaseModel):
+    welcome_i18n: dict[str, str] | None = None
+    quick_questions_i18n: dict[str, list[str]] | None = None
+
+    @field_validator("welcome_i18n")
+    @classmethod
+    def _w(cls, v: dict[str, str] | None) -> dict[str, str] | None:
+        return _i18n(v, max_len=500)
+
+    @field_validator("quick_questions_i18n")
+    @classmethod
+    def _q(cls, v: dict[str, list[str]] | None) -> dict[str, list[str]] | None:
+        if v is None:
+            return None
+        if set(v) - set(LOCALES):
+            raise ValueError("only 'en' and 'zh-CN' keys are allowed")
+        out: dict[str, list[str]] = {}
+        for k in LOCALES:
+            items = [(q or "").strip() for q in v.get(k, [])]
+            items = [q for q in items if q]
+            if len(items) > 6:
+                raise ValueError("at most 6 quick questions per locale")
+            if any(len(q) > 60 for q in items):
+                raise ValueError("each quick question is at most 60 characters")
+            out[k] = items
+        return out
+
+
+class RateLimitIn(BaseModel):
+    enabled: bool | None = None
+    limit: int | None = Field(None, ge=10, le=10000)
+    window_s: int | None = Field(None, ge=1, le=3600)
+
+
 class SiteIn(BaseModel):
     announcement: AnnouncementIn | None = None
+    payments: PaymentsIn | None = None
+    support: SupportIn | None = None
+    rate_limit: RateLimitIn | None = None
     after_sales_default_hours: int | None = Field(None, ge=0, le=8760)
     auto_confirm_hours: AutoConfirmIn | None = None
     support_hours: dict[str, str] | None = None

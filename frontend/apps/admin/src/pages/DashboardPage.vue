@@ -2,7 +2,7 @@
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { formatMoney, type AdminStats } from '@24goods/shared'
-import { api } from '../api'
+import { api, apiV3 } from '../api'
 import { useRealtimeStore } from '../stores/realtime'
 import { toastError } from '../ui'
 
@@ -10,10 +10,17 @@ const { t, locale } = useI18n()
 const rt = useRealtimeStore()
 const stats = ref<AdminStats | null>(null)
 const loading = ref(true)
+/** null = unknown (endpoint failed); counted from the existing after-sales list (status=open). */
+const afterSalesOpen = ref<number | null>(null)
 
 async function load() {
   try {
     stats.value = await api.stats()
+    try {
+      afterSalesOpen.value = (await apiV3.afterSales.list({ status: 'open', page: 1, page_size: 1 })).total
+    } catch {
+      afterSalesOpen.value = null
+    }
   } catch (e) {
     toastError(e)
   } finally {
@@ -66,6 +73,14 @@ onBeforeUnmount(() => {
           >
             {{ t('dashboard.goOrders') }} →
           </RouterLink>
+        </template>
+      </el-card>
+      <el-card shadow="never" class="stat">
+        <el-skeleton v-if="loading" :rows="1" animated />
+        <template v-else>
+          <div class="stat-label muted">{{ t('dashboard.afterSales') }}</div>
+          <div class="stat-value">{{ afterSalesOpen ?? '—' }}</div>
+          <RouterLink to="/after-sales" class="stat-link">{{ t('dashboard.goOrders') }} →</RouterLink>
         </template>
       </el-card>
     </div>

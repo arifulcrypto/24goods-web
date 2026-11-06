@@ -28,15 +28,19 @@ _STATUS_CODES = {
 
 
 def error_response(
-    status: int, code: str, message: str, headers: dict[str, str] | None = None
+    status: int,
+    code: str,
+    message: str,
+    headers: dict[str, str] | None = None,
+    extra: dict[str, str] | None = None,
 ) -> JSONResponse:
-    return JSONResponse(error_body(code, message), status_code=status, headers=headers)
+    return JSONResponse(error_body(code, message, extra), status_code=status, headers=headers)
 
 
 def install_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(ApiError)
     async def _api_error(_: Request, exc: ApiError) -> JSONResponse:
-        return error_response(exc.status, exc.code, exc.message, exc.headers)
+        return error_response(exc.status, exc.code, exc.message, exc.headers, exc.extra)
 
     @app.exception_handler(RequestValidationError)
     async def _validation(_: Request, exc: RequestValidationError) -> JSONResponse:

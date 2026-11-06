@@ -4,14 +4,18 @@ import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ProductThumb } from '@24goods/shared/ui'
 import {
-  formatMoney,
+  computeFee,
   moneyParts,
   multiplyAmount,
+  type BuyerInputConfig,
   type InstantCredentials,
   type ProductSummary,
 } from '@24goods/shared'
 import { api } from '../api'
 import { useAuthStore } from '../stores/auth'
+import { useSiteStore } from '../stores/site'
+import BuyerInputSheet from './BuyerInputSheet.vue'
+import FeeLines from './FeeLines.vue'
 import { recalledSrc, stashAccessCode } from '../lib/attribution'
 import { usePow, isPowAbort } from '../composables/usePow'
 import CredentialsSheet from './CredentialsSheet.vue'
@@ -19,17 +23,21 @@ import PowStatus from './PowStatus.vue'
 import { toastError } from '../ui'
 
 const MAX_QTY = 10
-const props = defineProps<{ show: boolean; product: ProductSummary | null; qty?: number; src?: string | null }>()
+const props = defineProps<{ show: boolean; product: (ProductSummary & { buyer_input?: BuyerInputConfig | null }) | null; qty?: number; src?: string | null }>()
 const emit = defineEmits<{ 'update:show': [v: boolean] }>()
 const { t, locale } = useI18n()
 const router = useRouter()
 const auth = useAuthStore()
+const site = useSiteStore()
 const pow = usePow()
 
 const qty = ref(1)
 const submitting = ref(false)
 const creds = ref<InstantCredentials | null>(null)
 const showCreds = ref(false)
+const showInput = ref(false)
+/** The order-information value collected by the §4 popup for this purchase. */
+const inputValue = ref<string | null>(null)
 
 const p = computed(() => props.product)
 const price = computed(() => (p.value ? moneyParts(p.value.price, p.value.currency, locale.value) : null))
@@ -39,14 +47,18 @@ const maxQty = computed(() => {
   if (x.delivery_mode === 'auto_card' && x.stock !== null) return Math.max(1, Math.min(MAX_QTY, x.stock))
   return MAX_QTY
 })
-const total = computed(() =>
-  p.value ? formatMoney(multiplyAmount(p.value.price, qty.value) ?? p.value.price, p.value.currency, locale.value) : '',
-)
+const subtotal = computed(() => (p.value ? (multiplyAmount(p.value.price, qty.value) ?? p.value.price) : '0.00'))
+const fee = computed(() => computeFee(subtotal.value, site.permille) ?? '0.00')
+const needsInput = computed(() => p.value?.buyer_input?.enabled === true)
 
 watch(
   () => props.show,
   (v) => {
-    if (v) qty.value = Math.min(Math.max(1, Math.floor(props.qty ?? 1)), maxQty.value)
+    if (v) {
+      qty.value = Math.min(Math.max(1, Math.floor(props.qty ?? 1)), maxQty.value)
+      inputValue.value = null
+      void site.loadChannels()
+    }
   },
 )
 
@@ -68,7 +80,7 @@ async function placeOrder() {
   submitting.value = true
   try {
     // Price is decided by the server; only product id + qty (+ attribution tag) are sent.
-    const order = await api.orders.create(x.id, qty.value, props.src ?? recalledSrc())
+    const order = await api.orders.create(x.id, qty.value, props.src ?? recalledSrc(), inputValue.value)
     stashAccessCode(order.id, order.access_code)
     emit('update:show', false)
     await router.push(`/orders/${encodeURIComponent(order.id)}`)
@@ -77,6 +89,22 @@ async function placeOrder() {
   } finally {
     submitting.value = false
   }
+}
+
+/** Buy now: the order-information popup (if enabled) comes first, then the order is created. */
+function begin(guest: boolean) {
+  if (needsInput.value && inputValue.value === null) {
+    pendingGuest = guest
+    showInput.value = true
+    return
+  }
+  void (guest ? continueAsGuest() : placeOrder())
+}
+let pendingGuest = false
+function inputConfirmed(v: string) {
+  inputValue.value = v
+  showInput.value = false
+  void (pendingGuest ? continueAsGuest() : placeOrder())
 }
 
 async function continueAsGuest() {
@@ -103,7 +131,7 @@ async function credsDone() {
 
 <template>
   <van-popup
-    :show="show && !showCreds"
+    :show="show && !showCreds && !showInput"
     position="bottom"
     round
     closeable
@@ -127,13 +155,18 @@ async function credsDone() {
         </div>
         <van-stepper v-model="qty" :min="1" :max="maxQty" integer :input-width="48" :button-size="36" />
       </div>
-      <div class="sheet-row">
-        <span>{{ t('common.total') }}</span>
-        <span class="price">{{ total }}</span>
+      <div class="sheet-fees">
+        <FeeLines
+          :subtotal="subtotal"
+          :fee="fee"
+          :currency="p.currency"
+          :label="site.channel?.label"
+          :rate="site.channel?.fee_rate"
+        />
       </div>
 
       <template v-if="auth.loggedIn">
-        <van-button block round type="primary" size="large" :loading="submitting" @click="placeOrder">
+        <van-button block round type="primary" size="large" :loading="submitting" @click="begin(false)">
           {{ t('product.placeOrder') }}
         </van-button>
       </template>
@@ -146,7 +179,7 @@ async function credsDone() {
           type="primary"
           size="large"
           :loading="submitting"
-          @click="continueAsGuest"
+          @click="begin(true)"
         >
           {{ t('buy.continueGuest') }}
         </van-button>
@@ -154,6 +187,7 @@ async function credsDone() {
       </template>
     </div>
   </van-popup>
+  <BuyerInputSheet v-model:show="showInput" :config="p?.buyer_input ?? null" :initial="inputValue" @confirm="inputConfirmed" />
   <CredentialsSheet :show="showCreds" :credentials="creds" @done="credsDone" />
 </template>
 
@@ -192,6 +226,9 @@ async function credsDone() {
 .sheet-row:last-of-type {
   border-bottom: 0;
   margin-bottom: 12px;
+}
+.sheet-fees {
+  padding: 12px 0;
 }
 .small {
   font-size: 12px;

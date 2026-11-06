@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -11,6 +12,7 @@ from sqlalchemy import Text, cast, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import globallimit
 from app.core.audit import audit
 from app.core.deps import Page
 from app.core.errors import Conflict, NotFound, Validation
@@ -26,8 +28,10 @@ from app.modules.common.sitedefaults import (
 from app.modules.common.views import iso
 from app.modules.content.schemas import ArticleIn, ArticlePatch, SiteIn
 from app.modules.content.site import tenant_settings
+from app.modules.payments.channels import admin_channels
 
 LOCALES = ("en", "zh-CN")
+log = logging.getLogger("app.content")
 
 
 def _full(values: dict[str, str] | None) -> dict[str, str]:
@@ -44,6 +48,19 @@ def _announcement_admin(raw: dict[str, Any] | None) -> dict[str, Any]:
         "title_i18n": _full(a.get("title_i18n")),
         "body_i18n": _full(a.get("body_i18n")),
         "body_html_i18n": _full(a.get("body_html_i18n")),
+    }
+
+
+def _quick_questions(raw: Any) -> dict[str, list[str]]:
+    r = raw if isinstance(raw, dict) else {}
+    return {k: [str(q) for q in (r.get(k) or [])][:6] for k in LOCALES}
+
+
+def _support_cfg(ts: dict[str, Any]) -> dict[str, Any]:
+    sup = ts.get("support") if isinstance(ts.get("support"), dict) else {}
+    return {
+        "welcome_i18n": _full(sup.get("welcome_i18n")),
+        "quick_questions_i18n": _quick_questions(sup.get("quick_questions_i18n")),
     }
 
 
@@ -64,6 +81,7 @@ async def public_site(
             "body_html": pick(a["body_html_i18n"], lang),
             "enabled": True,
         }
+    sup = _support_cfg(ts)
     pages = (
         await db.execute(
             select(Article.slug, Article.title_i18n)
@@ -76,6 +94,11 @@ async def public_site(
         "announcement": announcement,
         "after_sales_default_hours": after_sales_default_hours(ts),
         "support_hours": pick(_support_hours(ts.get("support_hours")), lang),
+        "support": {
+            "welcome": pick(sup["welcome_i18n"], lang),
+            "quick_questions": sup["quick_questions_i18n"].get(lang)
+            or sup["quick_questions_i18n"]["en"],
+        },
         "pages": [{"slug": s, "title": pick(t, lang)} for s, t in pages],
     }
 
@@ -90,15 +113,19 @@ async def admin_site(db: AsyncSession, tenant_id: uuid.UUID) -> dict[str, Any]:
             "auto_card": auto_confirm_hours(ts, "auto_card"),
         },
         "support_hours": _support_hours(ts.get("support_hours")),
+        "payments": {"channels": admin_channels(ts)},
+        "support": _support_cfg(ts),
+        "rate_limit": globallimit.normalize(ts.get("rate_limit")),
         "defaults": {
             "after_sales_default_hours": DEFAULT_AFTER_SALES_HOURS,
             "auto_confirm_hours": dict(DEFAULT_AUTO_CONFIRM_HOURS),
+            "rate_limit": dict(globallimit.DEFAULTS),
         },
     }
 
 
 async def update_site(
-    db: AsyncSession, admin: User, body: SiteIn, ip: str | None
+    db: AsyncSession, admin: User, body: SiteIn, ip: str | None, redis: Redis | None = None
 ) -> dict[str, Any]:
     tenant = await db.scalar(select(Tenant).where(Tenant.id == admin.tenant_id).with_for_update())
     if tenant is None:
@@ -135,6 +162,34 @@ async def update_site(
         }
     if body.support_hours is not None:
         new["support_hours"] = _full(body.support_hours)
+    if body.payments is not None:
+        pay = dict(new.get("payments") or {})
+        chans = {k: dict(v) for k, v in (pay.get("channels") or {}).items()}
+        for cid, inc in body.payments.channels.items():
+            cur_c = admin_channels(cur)[cid]
+            chans[cid] = {
+                "enabled": inc.enabled if inc.enabled is not None else cur_c["enabled"],
+                "surcharge_permille": inc.surcharge_permille
+                if inc.surcharge_permille is not None
+                else cur_c["surcharge_permille"],
+            }
+        pay["channels"] = chans
+        new["payments"] = pay
+    if body.support is not None:
+        old_s = _support_cfg(cur)
+        inc_s = body.support
+        new["support"] = {
+            "welcome_i18n": _full(inc_s.welcome_i18n)
+            if inc_s.welcome_i18n is not None
+            else old_s["welcome_i18n"],
+            "quick_questions_i18n": inc_s.quick_questions_i18n
+            if inc_s.quick_questions_i18n is not None
+            else old_s["quick_questions_i18n"],
+        }
+    if body.rate_limit is not None:
+        old_r = globallimit.normalize(cur.get("rate_limit"))
+        inc_r = body.rate_limit.model_dump(exclude_none=True)
+        new["rate_limit"] = globallimit.normalize({**old_r, **inc_r})
     tenant.settings = new
     await db.flush()
     after = await admin_site(db, admin.tenant_id)
@@ -145,12 +200,25 @@ async def update_site(
         actor_id=admin.id,
         actor_role=admin.role,
         target=f"tenant:{admin.tenant_id}",
-        before={"announcement_version": before["announcement"]["version"]},
-        after={"announcement_version": after["announcement"]["version"]},
+        before={
+            "announcement_version": before["announcement"]["version"],
+            "channels": before["payments"]["channels"],
+            "rate_limit": before["rate_limit"],
+        },
+        after={
+            "announcement_version": after["announcement"]["version"],
+            "channels": after["payments"]["channels"],
+            "rate_limit": after["rate_limit"],
+        },
         ip=ip,
         detail={"fields": sorted(body.model_dump(exclude_unset=True))},
     )
     await db.commit()
+    if body.rate_limit is not None and redis is not None:
+        try:  # mirror for the middleware (fail open: a Redis error never fails the save)
+            await globallimit.mirror(redis, admin.tenant_id, after["rate_limit"])
+        except Exception:
+            log.error("rate limit config mirror to Redis failed")
     return after
 
 
