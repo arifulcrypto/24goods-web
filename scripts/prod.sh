@@ -180,8 +180,11 @@ cmd_smoke() {
   done
   grep -qi '^server: *caddy' "$tmp/h.txt" && bad "Server header leaked" || ok "no Server header"
   grep -qi '<div id="app"' "$tmp/index.html" && ok "SPA index served" || bad "SPA index not served"
-  code=$(curl -sS -m 15 -o /dev/null -w '%{http_code}' "$base/mockpay/" || echo 000)
-  [[ "$code" != 200 ]] && ok "/mockpay not served ($code)" || bad "/mockpay is served"
+  # Unknown paths fall through to the SPA index (client-side 404), so check the body, not the status.
+  mp=$(curl -sS -m 15 "$base/mockpay/api.php?act=order&out_trade_no=probe" || true)
+  if grep -q '<div id="app"' <<<"$mp" || ! grep -qiE 'trade_no|"code"' <<<"$mp"; then
+    ok "/mockpay gateway not served (SPA fallback only)"
+  else bad "/mockpay gateway is served"; fi
 
   for path in /admin/ /admin/index.html /api/v1/admin/me; do
     code=$(curl -sS -m 15 -o /dev/null -w '%{http_code}' "$base$path" || echo 000)
