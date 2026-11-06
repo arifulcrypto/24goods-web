@@ -7,11 +7,30 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import client_ip, current_user, get_db, get_lang, get_res, get_tenant_id
+from app.core.errors import ApiError
+from app.core.features import require_feature
+from app.core.ratelimit import enforce
 from app.core.resources import Resources
+from app.core.settings_v5 import section
+from app.core.turnstile import require_turnstile
 from app.models import User
-from app.modules.auth import service
-from app.modules.auth.schemas import InstantIn, LoginIn, RegisterIn
+from app.modules.auth import codes, service
+from app.modules.auth.schemas import (
+    EmailCodeIn,
+    InstantIn,
+    LoginIn,
+    PasswordResetIn,
+    RegisterIn,
+)
 from app.modules.common.views import user_view
+from app.modules.content.site import tenant_settings
+
+
+class TermsRequired(ApiError):
+    """Accept the terms to register"""
+
+    status, code = 422, "terms_required"
+
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -37,7 +56,21 @@ async def register(
     db: AsyncSession = Depends(get_db),
     res: Resources = Depends(get_res),
 ) -> JSONResponse:
-    user = await service.register(db, res.redis, res.settings, tenant_id, body, client_ip(request))
+    ts = await tenant_settings(db, tenant_id)
+    require_feature(ts, "registration")
+    await require_turnstile(request, ts, "register", body.turnstile_token)
+    if section(ts, "legal")["enabled"] and not body.agree_terms:
+        raise TermsRequired("You must accept the terms to register")
+    verified = False
+    if section(ts, "security")["email_verify_on_register"]:
+        if not await codes.verify(
+            res.redis, res.settings, tenant_id, body.email, "register", body.email_code
+        ):
+            raise codes.InvalidCode("The verification code is invalid or expired")
+        verified = True
+    user = await service.register(
+        db, res.redis, res.settings, tenant_id, body, client_ip(request), email_verified=verified
+    )
     return await _start_session(request, res, user)
 
 
@@ -51,6 +84,9 @@ async def instant(
     res: Resources = Depends(get_res),
 ) -> JSONResponse:
     """One-tap account for checkout. The password is returned exactly once."""
+    ts = await tenant_settings(db, tenant_id)
+    require_feature(ts, "guest_checkout")
+    await require_turnstile(request, ts, "instant_account", body.turnstile_token)
     user, password = await service.instant(
         db, res.redis, res.settings, tenant_id, body, client_ip(request), lang
     )
@@ -70,8 +106,44 @@ async def login(
     db: AsyncSession = Depends(get_db),
     res: Resources = Depends(get_res),
 ) -> JSONResponse:
+    await require_turnstile(
+        request, await tenant_settings(db, tenant_id), "login", body.turnstile_token
+    )
     user = await service.login(db, res.redis, res.settings, tenant_id, body, client_ip(request))
     return await _start_session(request, res, user)
+
+
+@router.post("/email-code", status_code=204)
+async def email_code(
+    body: EmailCodeIn,
+    request: Request,
+    lang: str = Depends(get_lang),
+    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    db: AsyncSession = Depends(get_db),
+    res: Resources = Depends(get_res),
+) -> Response:
+    """Always 204 when email is on (no account enumeration); 403 when email is off."""
+    ts = await tenant_settings(db, tenant_id)
+    await enforce(res.redis, "ecode:ip", client_ip(request) or "-", 10, 3600)
+    action = "register" if body.purpose == "register" else "password_reset"
+    await require_turnstile(request, ts, action, body.turnstile_token)
+    await codes.request_code(db, res, tenant_id, ts, body.email, body.purpose, lang)
+    return Response(status_code=204)
+
+
+@router.post("/password-reset", status_code=204)
+async def password_reset(
+    body: PasswordResetIn,
+    request: Request,
+    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    db: AsyncSession = Depends(get_db),
+    res: Resources = Depends(get_res),
+) -> Response:
+    """The emailed code is the proof here (it was gated by Turnstile when it was requested)."""
+    await codes.reset_password(
+        db, res, tenant_id, body.email, body.code, body.new_password, client_ip(request)
+    )
+    return Response(status_code=204)
 
 
 @router.post("/logout", status_code=204)

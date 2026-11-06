@@ -8,8 +8,10 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.settings_v5 import section
 from app.models import AfterSales, Attachment, Checkout, Order, Product
 from app.modules.common.views import after_sales_view, order_view
+from app.modules.content.site import tenant_settings
 
 
 async def latest_tickets(db: AsyncSession, order_ids: list[uuid.UUID]) -> dict[uuid.UUID, dict]:
@@ -51,6 +53,11 @@ async def order_views(
     products: dict[uuid.UUID, Product] = {}
     if pids:
         products = {p.id: p for p in await db.scalars(select(Product).where(Product.id.in_(pids)))}
+    eta_default = 24
+    if any(o.delivery_mode == "manual" for o in orders):
+        eta_default = section(await tenant_settings(db, orders[0].tenant_id), "delivery")[
+            "manual_eta_hours"
+        ]
     tickets = await latest_tickets(db, [o.id for o in orders])
     co_ids = {o.checkout_id for o in orders if o.checkout_id}
     checkout_nos: dict[uuid.UUID, str] = {}
@@ -75,6 +82,7 @@ async def order_views(
             lang=lang,
             viewer_is_staff=owner_id is None,
             checkout_no=checkout_nos.get(o.checkout_id) if o.checkout_id else None,
+            manual_eta_default=eta_default,
         )
         for o in orders
     ]

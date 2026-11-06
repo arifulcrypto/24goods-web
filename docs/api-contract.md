@@ -353,3 +353,31 @@ data: {…Order}
 | `APP_MAX_PENDING_ORDERS_INSTANT` | 2 | unpaid orders per instant account (registered: `APP_MAX_PENDING_ORDERS`=5) |
 | `APP_INSTANT_PURGE_DAYS` | 7 | purge window for unpaid instant accounts |
 | `APP_LOOKUP_PER_IP_HOUR` | 10 | `/lookup` attempts per IP |
+
+## v5 core additions (settings center, categories, archive, security)
+
+Errors as always `{error:{code,message}}`. New codes: `feature_disabled` (403), `turnstile_failed` (400), `invalid_code` (400), `terms_required` (422), `category_in_use` (409), `product_in_use` (409), `oauth_failed` (400).
+
+**Public**
+- `GET /site` adds `features{registration,guest_checkout,cart,promo_codes,resellers,voice_messages,lookup,google_login}`, `general{site_name,subtitle,site_name_i18n,logo_url,contact,footer}`, `legal{enabled,mode,updated_at,pages[{slug,title}]}`, `turnstile{enabled,site_key,actions}` (enabled only when a secret is configured), `google_login:bool`, `delivery{manual_eta_hours,manual_note}` (`{hours}` substituted client-side). `storefront` is added by the reseller work.
+- `GET /catalog/categories` (alias `/categories`) -> `[{slug,key,name,icon}]`, enabled only. Products of a disabled category are hidden from list/search/recommended; their page still loads.
+- Product payloads: `delivery_eta_hours` (manual only; product value else site default). Never `cost_minor`/`source_url`.
+- Order payloads: `delivery_eta_hours`, `delivery_deadline` (manual; `paid_at + eta`, null until paid).
+- `POST /cart/quote` lines add `unavailable_reason: archived|unpublished|out_of_stock|null`.
+- `POST /auth/login|register|instant` accept `turnstile_token`; `POST /lookup` takes header `X-Turnstile-Token` (each token is single use; request a fresh one per call).
+- `POST /auth/register` also `email_code` (required when `security.email_verify_on_register`) and `agree_terms` (required when `legal.enabled`); 403 `feature_disabled` when registration is off.
+- `POST /auth/email-code` `{email, purpose: register|reset, turnstile_token?}` -> 204 always (403 `feature_disabled` when email is not enabled). Turnstile action: `register` / `password_reset`.
+- `POST /auth/password-reset` `{email, code, new_password}` -> 204; revokes all sessions. Buyers only. No Turnstile on this step (the code is the proof).
+- `GET /auth/oauth/google/start?next=/path` -> 302 Google; `GET /auth/oauth/google/callback` -> 302 `next` (relative only) with session cookie. Staff accounts: 403.
+
+**Admin** (admin role unless noted)
+- `GET/POST /admin/categories`, `PATCH/DELETE /admin/categories/{id}`; body `{slug, name_i18n{en,zh-CN}, icon?, sort?, enabled?}`; slug immutable; list is staff-readable and includes `products` count.
+- `DELETE /admin/products/{id}` archives (204); `?hard=true` deletes if unreferenced else 409 `product_in_use`; `POST /admin/products/{id}/restore` -> draft view; `POST /admin/products/bulk` `{ids<=200, action: publish|unpublish|archive|restore|set_category, category?}` -> `{updated}`. List `status=archived`; default list excludes archived. Product create/patch/views add `delivery_eta_hours` (1-720, null = site default), `cost_minor`, `source_url` (http/https), view also `archived_at`.
+- `GET /admin/site` returns every section: `general, legal, features, security, defaults, email, delivery, import, resellers, audit, email_templates`, plus `secrets{turnstile_secret|google_client_secret|smtp_password: {configured, last4}}` and `zpay{configured, pid_last4}`. `defaults` = v5 user defaults (`locale, max_pending_orders, order_timeout_minutes`) plus the legacy factory-default keys. `PUT /admin/site` takes any subset of the sections (each field optional; `import` is the JSON key of the import section).
+- `PUT /admin/site/secrets` `{name, value|null}` -> `{secrets}`; write-only.
+- `POST /admin/site/email/test` `{to, template?: verify_code|password_reset|order_paid|order_delivered, locale?}` -> `{ok, error?}` (`error` in connect_failed|auth_failed|rejected|send_failed).
+- Email templates: `email_templates.<kind> = {subject_i18n:{en,zh-CN}, body_i18n:{en,zh-CN}}`; `PUT` partial; an empty string resets that locale to the built-in default. Placeholders `{site_name} {code} {minutes} {order_no} {order_url} {title} {amount}`; unknown ones stay literal. Bodies are plain text/markdown (HTML part sanitized).
+- `GET /admin/audit` + `action` (prefix), `actor` (email substring), `target`, `severity`, `since`, `until`; items add `id, severity, before, after`. `GET /admin/audit.csv` (same filters, <= 10 000 rows).
+- `GET /admin/orders?overdue_manual=true`.
+
+**Jobs:** order emails (`email.order` outbox rows, paid + delivered, verified non-instant buyers, never card secrets) and the daily audit retention purge run in the API jobs loop.

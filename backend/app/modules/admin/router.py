@@ -24,7 +24,13 @@ from app.core.resources import Resources
 from app.models import User
 from app.modules.admin import products as product_svc
 from app.modules.admin import service
-from app.modules.admin.schemas import AgentStatusIn, CardsImportIn, ProductIn, ProductPatch
+from app.modules.admin.schemas import (
+    AgentStatusIn,
+    BulkProductsIn,
+    CardsImportIn,
+    ProductIn,
+    ProductPatch,
+)
 from app.modules.catalog.service import support_status
 from app.modules.chat import quotes as quote_svc
 from app.modules.chat import service as chat
@@ -66,7 +72,7 @@ async def stats(
 @router.get("/products")
 async def list_products(
     q: str | None = Query(None, max_length=100),
-    status: Literal["active", "draft"] | None = None,
+    status: Literal["active", "draft", "archived"] | None = None,
     page: Page = Depends(get_page),
     _: User = Depends(require_staff),
     db: AsyncSession = Depends(get_db),
@@ -104,15 +110,37 @@ async def patch_product(
     return await product_svc.view(db, p)
 
 
+@router.post("/products/bulk")
+async def bulk_products(
+    body: BulkProductsIn,
+    request: Request,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    return {"updated": await product_svc.bulk(db, body, admin, client_ip(request))}
+
+
 @router.delete("/products/{product_id}", status_code=204)
 async def delete_product(
     product_id: uuid.UUID,
     request: Request,
+    hard: bool = False,
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ) -> Response:
-    await product_svc.soft_delete(db, product_id, admin, client_ip(request))
+    await product_svc.archive(db, product_id, admin, client_ip(request), hard=hard)
     return Response(status_code=204)
+
+
+@router.post("/products/{product_id}/restore")
+async def restore_product(
+    product_id: uuid.UUID,
+    request: Request,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    p = await product_svc.restore(db, product_id, admin, client_ip(request))
+    return await product_svc.view(db, p)
 
 
 @router.post("/products/{product_id}/images")
@@ -212,11 +240,14 @@ async def list_orders(
     status: OrderStatus | None = None,
     q: str | None = Query(None, max_length=100),
     buyer_id: uuid.UUID | None = None,
+    overdue_manual: bool = False,
     page: Page = Depends(get_page),
     staff: User = Depends(require_staff),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    return await order_admin.list_orders(db, page, status, q, staff.tenant_id, buyer_id)
+    return await order_admin.list_orders(
+        db, page, status, q, staff.tenant_id, buyer_id, overdue_manual=overdue_manual
+    )
 
 
 @router.get("/orders/{order_id}")
@@ -492,8 +523,37 @@ async def ledger(
 
 @router.get("/audit")
 async def audit_log(
+    flt: service.AuditFilter = Depends(service.audit_filter),
     page: Page = Depends(get_page),
     _: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    return await service.audit_page(db, page)
+    return await service.audit_page(db, page, flt)
+
+
+@router.get("/audit.csv")
+async def audit_csv(
+    flt: service.AuditFilter = Depends(service.audit_filter),
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """CSV of the filtered operation log (newest first, at most 10 000 rows)."""
+    body = await service.audit_csv(db, flt)
+    await audit(
+        db,
+        tenant_id=admin.tenant_id,
+        action="audit.exported",
+        actor_id=admin.id,
+        actor_role=admin.role,
+        target="audit",
+    )
+    await db.commit()
+    return Response(
+        body,
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": 'attachment; filename="audit.csv"',
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )

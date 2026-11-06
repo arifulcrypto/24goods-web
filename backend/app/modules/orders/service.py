@@ -32,6 +32,7 @@ from app.core.i18n import pick
 from app.core.money import to_decimal
 from app.core.ratelimit import release, reserve
 from app.core.resources import Resources
+from app.core.settings_v5 import section
 from app.models import (
     CardStock,
     Checkout,
@@ -96,10 +97,29 @@ async def count_payables(db: AsyncSession, buyer_id: uuid.UUID) -> int:
     return int(singles or 0) + int(checkouts or 0)
 
 
+async def tenant_order_limits(
+    db: AsyncSession, settings: Settings, tenant_id: uuid.UUID
+) -> tuple[int, int]:
+    """(max pending orders, order timeout minutes): the tenant's Settings -> User defaults
+    when it set them, else the process settings."""
+    ts = await tenant_settings(db, tenant_id)
+    explicit = ts.get("defaults") if isinstance(ts.get("defaults"), dict) else {}
+    d = section(ts, "defaults")
+    return (
+        d["max_pending_orders"]
+        if "max_pending_orders" in explicit
+        else settings.max_pending_orders,
+        d["order_timeout_minutes"]
+        if "order_timeout_minutes" in explicit
+        else settings.order_ttl_minutes,
+    )
+
+
 async def enforce_payables_cap(db: AsyncSession, settings: Settings, buyer: User) -> None:
     """Serialize creation per buyer (row lock), then cap open unpaid payables."""
     await db.execute(select(User.id).where(User.id == buyer.id).with_for_update())
-    cap = settings.max_pending_orders_instant if buyer.is_instant else settings.max_pending_orders
+    max_pending, _ttl = await tenant_order_limits(db, settings, buyer.tenant_id)
+    cap = settings.max_pending_orders_instant if buyer.is_instant else max_pending
     if await count_payables(db, buyer.id) >= cap:
         raise Conflict(f"At most {cap} unpaid orders; pay or wait for one to expire")
 
@@ -137,6 +157,10 @@ async def create_order(
             raise Unavailable("Payment channel is not available")
         fee_permille = cfg.permille
     fee, total = split_amount(amount_minor, fee_permille)
+    if expires_at is None:
+        expires_at = utcnow() + timedelta(
+            minutes=(await tenant_order_limits(db, settings, buyer.tenant_id))[1]
+        )
     order_no = new_order_no()
     code = accesscode.generate()
     order = Order(
@@ -160,7 +184,7 @@ async def create_order(
         status="pending_payment",
         version=1,
         delivery_mode=delivery_mode,
-        expires_at=expires_at or utcnow() + timedelta(minutes=settings.order_ttl_minutes),
+        expires_at=expires_at,
     )
     db.add(order)
     await db.flush()

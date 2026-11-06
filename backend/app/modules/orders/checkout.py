@@ -39,6 +39,7 @@ from app.modules.orders.service import (
     check_channel,
     create_order,
     enforce_payables_cap,
+    tenant_order_limits,
     utcnow,
 )
 from app.modules.payments.channels import channel_cfg, fee_rate, split_amount
@@ -64,9 +65,7 @@ async def quote_cart(
     products = {
         p.id: p
         for p in await db.scalars(
-            select(Product).where(
-                Product.id.in_(ids), Product.tenant_id == tenant_id, Product.status == "active"
-            )
+            select(Product).where(Product.id.in_(ids), Product.tenant_id == tenant_id)
         )
     }
     stock = await stock_counts(
@@ -87,6 +86,7 @@ async def quote_cart(
                     "currency": currency,
                     "stock": None,
                     "available": False,
+                    "unavailable_reason": "archived",
                     "max_qty": 0,
                     "needs_input": False,
                     "input_missing": False,
@@ -97,7 +97,18 @@ async def quote_cart(
             continue
         s = stock.get(p.id) if p.delivery_mode == "auto_card" else None
         max_qty = MAX_QTY if s is None else min(MAX_QTY, s)
-        available = it.qty <= max_qty
+        if p.status != "active":
+            max_qty = 0
+        reason = (
+            "archived"
+            if p.status == "archived"
+            else "unpublished"
+            if p.status != "active"
+            else "out_of_stock"
+            if it.qty > max_qty
+            else None
+        )
+        available = reason is None
         needs = is_enabled(p.buyer_input) and bool(p.buyer_input.get("required", True))
         line_sub = p.price_minor * it.qty
         if available:
@@ -114,6 +125,7 @@ async def quote_cart(
                 "currency": p.currency,
                 "stock": s,
                 "available": available,
+                "unavailable_reason": reason,
                 "max_qty": max_qty,
                 "needs_input": needs,
                 # extra: the request carried no value for a required input
@@ -231,7 +243,8 @@ async def create_checkout(
     total = sum(
         split_amount(products[i.product_id].price_minor * i.qty, cfg.permille)[1] for i in items
     )
-    expires_at = utcnow() + timedelta(minutes=settings.order_ttl_minutes)
+    ttl = (await tenant_order_limits(db, settings, buyer.tenant_id))[1]
+    expires_at = utcnow() + timedelta(minutes=ttl)
     co = Checkout(
         tenant_id=buyer.tenant_id,
         checkout_no=new_checkout_no(),
