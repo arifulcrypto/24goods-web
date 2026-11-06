@@ -33,6 +33,8 @@ export interface ProductSummary {
   sold: number
   /** v3: resolved after-sales window in hours (site default applied); 0 = no after-sales. */
   after_sales_hours?: number | null
+  /** v5 §11: manual products only; promised shipping window in hours. */
+  delivery_eta_hours?: number | null
 }
 export type ProductStatus = 'active' | 'draft'
 export interface Product extends ProductSummary {
@@ -229,6 +231,15 @@ export interface Order {
   /** Owner/staff only. Never logged. */
   buyer_input?: string | null
   cancel_reason?: string | null
+  // ---- v5 (review-v5 §12) ----
+  /** Money off, minor units. */
+  discount_minor?: number
+  kind?: string
+  /** Buyer view of the storefront the order was placed on. */
+  reseller?: { store_name: string } | null
+  delivery_eta_hours?: number | null
+  /** ISO time (manual orders): paid_at + eta. */
+  delivery_deadline?: string | null
 }
 
 export type CheckoutStatus = 'pending_payment' | 'paid' | 'cancelled' | 'expired' | 'manual_review'
@@ -271,9 +282,17 @@ export interface CartQuoteLine {
   needs_input: boolean
   qty: number
   line_subtotal: string
+  // ---- v5 ----
+  discount_minor?: number
+  unavailable_reason?: UnavailableReason | null
+  delivery_mode?: DeliveryMode
+  delivery_eta_hours?: number | null
 }
+export type UnavailableReason = 'archived' | 'unpublished' | 'out_of_stock'
 export interface CartQuote {
   lines: CartQuoteLine[]
+  discount_minor?: number
+  promo?: { code: string; discount_minor: number } | { error: string } | null
   subtotal: string
   fee: string
   fee_rate: string
@@ -355,6 +374,115 @@ export interface SiteInfo {
   pages: { slug: string; title: string }[]
   /** v4: welcome bubble + quick-question chips (resolved to the request locale). */
   support?: { welcome?: string | null; quick_questions?: string[] } | null
+  // ---- v5 (review-v5 §3, §12): all optional so older payloads still type-check ----
+  features?: Partial<SiteFeatures>
+  general?: { site_name_i18n?: Partial<I18nText>; subtitle_i18n?: Partial<I18nText>; logo_url?: string } | null
+  legal?: { enabled: boolean; mode: 'checkbox' | 'modal'; pages: { slug: string; title: string }[] } | null
+  turnstile?: { enabled: boolean; site_key: string; actions: string[] } | null
+  google_login?: boolean
+  delivery?: { manual_eta_hours?: number; manual_note?: string | null } | null
+  storefront?: Storefront | null
+  /** Optional: reseller program public info (base domain for the slug preview). */
+  resellers?: { base_domain?: string; signup_fee_minor?: number } | null
+  /** Optional (security.email_verify_on_register); the 422 `email_code_required` is the fallback. */
+  email_verify_on_register?: boolean
+}
+export interface SiteFeatures {
+  registration: boolean
+  guest_checkout: boolean
+  cart: boolean
+  promo_codes: boolean
+  resellers: boolean
+  voice_messages: boolean
+  lookup: boolean
+  google_login: boolean
+}
+export interface Storefront {
+  slug: string
+  store_name: string
+  logo_url: string | null
+  welcome: string | null
+  /** Owner rule: storefronts are white-label (no platform brand anywhere). Treated as true unless explicitly false. */
+  white_label?: boolean
+}
+
+// ---- v5 promo (§6) ----
+export interface PromoPreview {
+  code: string
+  discount_minor: number
+  eligible_subtotal_minor: number
+  description: string | null
+}
+
+// ---- v5 reseller center (§7) ----
+export type ResellerStatus = 'pending_payment' | 'active' | 'suspended'
+export type MarkupKind = 'percent' | 'fixed'
+export interface PayoutAccount {
+  method: 'alipay'
+  name: string
+  account: string
+}
+export interface ResellerMe {
+  slug: string
+  store_name: string
+  status: ResellerStatus
+  store_url: string
+  markup_kind: MarkupKind
+  /** percent: permille (100 = 10 %); fixed: minor units */
+  markup_value: number
+  logo_url: string | null
+  welcome_i18n: Partial<I18nText>
+  contact: string | null
+  payout_account: PayoutAccount | null
+  signup_order_no: string | null
+  balances: { pending_minor: number; available_minor: number; paid_minor: number }
+}
+export interface ResellerApplyResult {
+  reseller?: ResellerMe
+  /** Present when a sign-up fee must be paid: continue on the order pay flow. */
+  order_no?: string | null
+  order?: { order_no: string; id?: string } | null
+}
+export interface ResellerProduct {
+  product_id: string
+  title: string
+  cover: string | null
+  currency: string
+  base_price_minor: number
+  markup_kind: MarkupKind
+  markup_value: number
+  /** true when a per-product override exists (false = reseller default) */
+  custom: boolean
+  price_minor: number
+  hidden: boolean
+}
+export interface ResellerOrder {
+  order_no: string
+  title: string
+  qty: number
+  amount_minor: number
+  markup_minor: number
+  currency: string
+  status: OrderStatus
+  created_at: string
+  buyer: string | null
+}
+export interface ResellerStats {
+  today_orders: number
+  today_earnings_minor: number
+  week_orders: number
+  week_earnings_minor: number
+  currency?: string
+}
+export type PayoutStatus = 'requested' | 'paid' | 'rejected'
+export interface ResellerPayout {
+  id: string
+  amount_minor: number
+  currency: string
+  status: PayoutStatus
+  note: string | null
+  created_at: string
+  decided_at: string | null
 }
 export type PowScope = 'instant' | 'register' | 'lookup' | 'login'
 export interface PowChallenge {

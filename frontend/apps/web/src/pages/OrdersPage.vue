@@ -8,8 +8,11 @@ import { api } from '../api'
 import { cancelPending, payCheckout, payOrder } from '../lib/orderActions'
 import { useRealtimeStore } from '../stores/realtime'
 
+import { useSiteStore } from '../stores/site'
+
 const { t, locale } = useI18n()
 const router = useRouter()
+const site = useSiteStore()
 type Tab = 'all' | 'unpaid' | 'toDeliver' | 'delivered' | 'afterSales'
 const TABS: Tab[] = ['all', 'unpaid', 'toDeliver', 'delivered', 'afterSales']
 const tab = ref<Tab>('all')
@@ -123,7 +126,7 @@ const tone = (s: Order['status']) =>
 
 <template>
   <div class="page with-tabbar">
-    <van-nav-bar :title="t('orders.title')" class="dock-top" fixed placeholder safe-area-inset-top :right-text="t('lookup.title')" @click-right="router.push('/lookup')" />
+    <van-nav-bar :title="t('orders.title')" class="dock-top" fixed placeholder safe-area-inset-top :right-text="site.features.lookup ? t('lookup.title') : ''" @click-right="site.features.lookup && router.push('/lookup')" />
     <van-tabs v-model:active="tab" class="otabs" sticky :offset-top="46" shrink>
       <van-tab v-for="k in TABS" :key="k" :name="k" :title="t(`ordersTab.${k}`)" />
     </van-tabs>

@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import type { CartQuote, CartQuoteLine, CheckoutLineInput } from '@24goods/shared'
-import { addAmounts, computeFee, isApiError } from '@24goods/shared'
+import { addAmounts, feeBreakdown, isApiError } from '@24goods/shared'
 import { api } from '../api'
 
 export const CART_MAX_LINES = 20
@@ -62,21 +62,30 @@ export const useCartStore = defineStore('cart', () => {
     for (const q of quote.value?.lines ?? []) m.set(q.product_id, q)
     return m
   })
-  /** Selected lines that the server says can be bought. */
+  /** v5 §1: a line the server says cannot be bought (archived / unpublished / out of stock). */
+  function isUnavailable(q: CartQuoteLine | undefined): boolean {
+    return !!q && (!q.available || !!q.unavailable_reason)
+  }
+  const availableLines = computed(() => lines.value.filter((l) => !isUnavailable(quoteByProduct.value.get(l.product_id))))
+  const unavailableLines = computed(() => lines.value.filter((l) => isUnavailable(quoteByProduct.value.get(l.product_id))))
+  /** Selected lines that the server says can be bought (unavailable ones are never checked out). */
   const payable = computed(() =>
-    lines.value.filter((l) => l.selected && quoteByProduct.value.get(l.product_id)?.available === true),
+    lines.value.filter((l) => {
+      const q = quoteByProduct.value.get(l.product_id)
+      return l.selected && q?.available === true && !q.unavailable_reason
+    }),
   )
   const payableCount = computed(() => payable.value.length)
   const currency = computed(() => quote.value?.currency ?? 'CNY')
   /** Display-only totals for the selected, available lines (the server recomputes at checkout). */
-  function totals(permille: number): { subtotal: string; fee: string; total: string } {
+  function totals(permille: number, discountMinor = 0): { subtotal: string; fee: string; total: string; discount: string } {
     let sub = '0.00'
     for (const l of payable.value) {
       const q = quoteByProduct.value.get(l.product_id)
       if (q) sub = addAmounts(sub, lineSubtotal(l, q)) ?? sub
     }
-    const fee = computeFee(sub, permille) ?? '0.00'
-    return { subtotal: sub, fee, total: addAmounts(sub, fee) ?? sub }
+    const b = feeBreakdown(sub, discountMinor, permille)
+    return { subtotal: b.subtotal, fee: b.fee, total: b.total, discount: b.discount }
   }
   function lineSubtotal(l: CartLine, q: CartQuoteLine): string {
     // unit price × current qty (the quote may be older than the last stepper tap)
@@ -188,6 +197,8 @@ export const useCartStore = defineStore('cart', () => {
     count,
     quoteByProduct,
     payable,
+    availableLines,
+    unavailableLines,
     payableCount,
     currency,
     totals,

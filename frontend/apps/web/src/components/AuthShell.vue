@@ -1,11 +1,15 @@
 <script setup lang="ts">
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { goBack } from '@24goods/shared'
+import { computed } from 'vue'
+import { goBack, safeAssetUrl, storeInitial } from '@24goods/shared'
+import { useSiteStore } from '../stores/site'
 import { LogoMark } from '@24goods/shared/ui'
 defineProps<{ title: string; subtitle: string }>()
 const { t } = useI18n()
 const router = useRouter()
+const site = useSiteStore()
+const logo = computed(() => (site.whiteLabel ? safeAssetUrl(site.storefront?.logo_url) : null))
 function back() {
   goBack(router, '/')
 }
@@ -14,7 +18,11 @@ function back() {
 <template>
   <div class="auth">
     <button type="button" class="back" :aria-label="t('common.back')" @click="back"><van-icon name="arrow-left" size="20" /></button>
-    <div class="brand"><LogoMark :size="48" /></div>
+    <div class="brand">
+      <img v-if="logo" :src="logo" class="mono" width="48" height="48" alt="" />
+      <span v-else-if="site.whiteLabel" class="mono" aria-hidden="true">{{ storeInitial(site.storefront?.store_name) }}</span>
+      <LogoMark v-else :size="48" />
+    </div>
     <h1>{{ title }}</h1>
     <p class="muted">{{ subtitle }}</p>
     <div class="auth-card card"><slot /></div>
@@ -42,6 +50,18 @@ function back() {
 }
 .brand {
   margin: 8px 0 12px;
+}
+.mono {
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  object-fit: cover;
+  background: #1f1f1f;
+  color: var(--c-accent);
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  font-size: 22px;
 }
 .logo {
   width: 52px;

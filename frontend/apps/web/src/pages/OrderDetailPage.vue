@@ -26,6 +26,7 @@ import AfterSalesSheet from '../components/AfterSalesSheet.vue'
 import AfterSalesStatus from '../components/AfterSalesStatus.vue'
 import BuyerInputSheet from '../components/BuyerInputSheet.vue'
 import FeeLines from '../components/FeeLines.vue'
+import ManualPromise from '../components/ManualPromise.vue'
 import { cancelPending, payCheckout, payOrder } from '../lib/orderActions'
 import { dropAccessCode, readAccessCode } from '../lib/attribution'
 import { useRealtimeStore } from '../stores/realtime'
@@ -290,7 +291,7 @@ function saveAccessCode() {
   if (!o || !accessCode.value) return
   downloadText(
     `${o.order_no}.txt`,
-    `${BRAND.name}\n${t('order.orderNo')}: ${o.order_no}\n${t('lookup.accessCode')}: ${accessCode.value}\n${t('lookup.saveNote', { url: `${BRAND.domain}/lookup` })}\n`,
+    `${site.headerName}\n${t('order.orderNo')}: ${o.order_no}\n${t('lookup.accessCode')}: ${accessCode.value}\n${t('lookup.saveNote', { url: `${site.whiteLabel ? window.location.host : BRAND.domain}/lookup` })}\n`,
   )
 }
 function gotCode() {
@@ -332,15 +333,18 @@ function gotCode() {
       <section class="section card pad">
         <div class="o-title">{{ order.title }}</div>
         <div class="o-line">
-          <span :class="order.delivery_mode === 'auto_card' ? 'badge-instant' : 'badge-manual'">
+          <span v-if="order.delivery_mode === 'auto_card'" class="badge-instant">
             {{ t(`deliveryMode.${order.delivery_mode}`) }}
           </span>
+          <ManualPromise v-else :eta="order.delivery_eta_hours" compact />
+          <span v-if="order.reseller" class="muted small">{{ t('order.viaStore', { name: order.reseller.store_name }) }}</span>
           <span v-if="order.quote_id" class="muted small">{{ t('order.fromQuote') }}</span>
         </div>
         <FeeLines
           v-if="order.subtotal && order.fee"
           class="o-fees"
           :subtotal="order.subtotal"
+          :discount-minor="order.discount_minor"
           :fee="order.fee"
           :currency="order.currency"
           :label="site.channel?.label"
@@ -448,6 +452,11 @@ function gotCode() {
           <van-cell :title="t('order.createdAt')" :value="formatDateTime(order.created_at, locale)" />
           <van-cell v-if="order.paid_at" :title="t('order.paidAt')" :value="formatDateTime(order.paid_at, locale)" />
           <van-cell v-if="order.delivered_at" :title="t('order.deliveredAt')" :value="formatDateTime(order.delivered_at, locale)" />
+          <van-cell
+            v-if="order.delivery_mode === 'manual' && order.paid_at && !order.delivered_at && order.delivery_deadline"
+            :title="t('manual.deadline')"
+            :value="formatDateTime(order.delivery_deadline, locale)"
+          />
         </van-cell-group>
       </section>
 
@@ -455,7 +464,7 @@ function gotCode() {
         <van-button round plain icon="chat-o" to="/chat">{{ t('order.contact') }}</van-button>
       </div>
       <div class="contact">
-        <RouterLink to="/lookup" class="lk">{{ t('lookup.title') }}</RouterLink>
+        <RouterLink v-if="site.features.lookup" to="/lookup" class="lk">{{ t('lookup.title') }}</RouterLink>
       </div>
       <div v-if="order.status === 'pending_payment'" class="bar-spacer" />
 
