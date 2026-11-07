@@ -32,8 +32,8 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   /** Staff-only login: a buyer session is immediately logged out again. */
-  async function login(email: string, password: string): Promise<User> {
-    const u = await api.auth.login({ email, password })
+  async function login(email: string, password: string, turnstile_token?: string): Promise<User> {
+    const u = await api.auth.login({ email, password, ...(turnstile_token ? { turnstile_token } : {}) })
     if (u.role !== 'agent' && u.role !== 'admin') {
       await api.auth.logout().catch(() => undefined)
       user.value = null

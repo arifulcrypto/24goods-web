@@ -58,6 +58,7 @@ export interface SecurityCfg {
   turnstile_actions: string[]
   email_verify_on_register: boolean
   google_client_id: string
+  staff_ip_allowlist: string[]
 }
 export interface DefaultsCfg {
   locale: 'en' | 'zh-CN'

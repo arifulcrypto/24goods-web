@@ -12,7 +12,7 @@ const emit = defineEmits<{ saved: [s: AdminSiteV5] }>()
 const { t } = useI18n()
 const { saving, run } = useSave()
 const errors = ref<Record<string, string>>({})
-const f = reactive({ ts_on: false, site_key: '', actions: [] as string[], verify: false, g_id: '' })
+const f = reactive({ ts_on: false, site_key: '', actions: [] as string[], verify: false, g_id: '', ips: '' })
 const tsSecret = ref<SecretField>(secretFromServer())
 const gSecret = ref<SecretField>(secretFromServer())
 watch(
@@ -24,6 +24,7 @@ watch(
     f.actions = [...(x?.turnstile_actions ?? [])]
     f.verify = x?.email_verify_on_register ?? false
     f.g_id = x?.google_client_id ?? ''
+    f.ips = (x?.staff_ip_allowlist ?? []).join('\n')
     tsSecret.value = secretFromServer(s.secrets?.turnstile_secret)
     gSecret.value = secretFromServer(s.secrets?.google_client_secret)
   },
@@ -34,6 +35,8 @@ async function save() {
   const willHaveSecret = (s: SecretField) => (s.mode === 'replace' ? !!s.value.trim() : s.mode === 'clear' ? false : s.configured)
   if (f.ts_on && !f.site_key.trim()) e.site_key = t('v5.security.siteKeyRequired')
   if (f.ts_on && !willHaveSecret(tsSecret.value)) e.ts_secret = t('v5.security.secretRequired')
+  const ips = f.ips.split('\n').map((x) => x.trim()).filter(Boolean)
+  if (ips.length > 50 || ips.some((x) => !/^[0-9a-fA-F:.]+(\/\d{1,3})?$/.test(x))) e.ips = t('v5.security.staffIpsInvalid')
   errors.value = e
   if (Object.keys(e).length) return
   const r = await run(async () => {
@@ -48,6 +51,7 @@ async function save() {
         turnstile_actions: f.actions,
         email_verify_on_register: f.verify,
         google_client_id: f.g_id.trim(),
+        staff_ip_allowlist: ips,
       },
     })
   })
@@ -68,6 +72,13 @@ async function save() {
         <el-checkbox-group v-model="f.actions">
           <el-checkbox v-for="a in TURNSTILE_ACTIONS" :key="a" :value="a">{{ t(`v5.security.action.${a}`) }}</el-checkbox>
         </el-checkbox-group>
+      </el-form-item>
+    </section>
+    <section class="panel block">
+      <h2 class="h2">{{ t('v5.security.staffIps') }}</h2>
+      <p class="muted small">{{ t('v5.security.staffIpsNote') }}</p>
+      <el-form-item :error="errors.ips">
+        <el-input v-model="f.ips" type="textarea" :rows="4" spellcheck="false" placeholder="203.0.113.7&#10;198.51.100.0/24" />
       </el-form-item>
     </section>
     <section class="panel block">
