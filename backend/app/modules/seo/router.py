@@ -36,7 +36,10 @@ from app.modules.seo.render import esc, inject, lang_links, link, plain, url_for
 router = APIRouter(include_in_schema=False)
 
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
-OK_CACHE = "public, max-age=300"
+OK_CACHE = "public, max-age=300"  # sitemap + robots
+# HTML embeds hashed asset URLs: browsers must revalidate (a deploy removes the old assets),
+# shared caches (Cloudflare) may keep it 5 minutes.
+HTML_CACHE = "public, max-age=0, s-maxage=300, must-revalidate"
 MISS_CACHE = "public, max-age=60"
 SITEMAP_TTL_S = 600.0
 SITEMAP_MAX_PRODUCTS = 10_000
@@ -172,7 +175,7 @@ async def _page(ctx: Ctx, res: Resources, doc: Doc) -> Response:
     if tpl is None:  # shell unavailable: Caddy falls back to the static index.html
         return Response("shell unavailable", status_code=503, headers={"Cache-Control": "no-store"})
     body = inject(tpl, doc)
-    cache = OK_CACHE if doc.status == 200 else MISS_CACHE
+    cache = HTML_CACHE if doc.status == 200 else MISS_CACHE
     return _respond(ctx, ctx.request, body, doc.status, "text/html; charset=utf-8", cache)
 
 

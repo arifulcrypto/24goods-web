@@ -72,7 +72,7 @@ async def test_product_page_meta_and_jsonld(env):
     assert 'property="og:title" content="Steam Wallet — Kesiv"' in h
     assert 'name="twitter:card"' in h
     assert "<h1>Steam Wallet</h1>" in h and "19.90 CNY" in h  # pre-rendered body
-    assert r.headers["cache-control"] == "public, max-age=300"
+    assert r.headers["cache-control"] == "public, max-age=0, s-maxage=300, must-revalidate"
     product, crumbs = lds(h)
     offer = product["offers"]
     assert product["@type"] == "Product" and product["name"] == "Steam Wallet"
