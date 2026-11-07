@@ -64,10 +64,11 @@ async def change_price(
     floor_total = 0
     if order.product_id is not None:
         product = await db.get(Product, order.product_id)
-        if product is not None:
-            floor_total = product.floor_price_minor * order.qty
-            if new_minor < floor_total:
-                raise Validation("amount is below the floor price", code="reprice_below_floor")
+        if product is None:  # floor unknown: never reprice blind
+            raise InvalidState("The order's product no longer exists", code="reprice_not_goods")
+        floor_total = product.floor_price_minor * order.qty
+        if new_minor < floor_total:
+            raise Validation("amount is below the floor price", code="reprice_below_floor")
     before = snapshot(order)
     old_discount, old_markup = order.discount_minor, order.reseller_markup_minor
     if order.promo_code_id is not None or old_discount > 0:
@@ -75,9 +76,11 @@ async def change_price(
         await promo_svc.release(db, order_id=order.id, tenant_id=order.tenant_id, expect=True)
         order.discount_minor = 0
         order.promo_code_id = None
-    # reseller markup is a slice of the subtotal; keep it only while the base cost floor is covered
+    # reseller markup is a slice of the subtotal on top of the merchant's base price (as quoted
+    # at order time): a staff discount comes out of the markup first, the merchant's base last
+    base_total = order.subtotal_minor - old_markup
     order.reseller_markup_minor = (
-        0 if remove_markup else max(0, min(old_markup, new_minor - floor_total))
+        0 if remove_markup else max(0, min(old_markup, new_minor - base_total))
     )
     old_minor = order.amount_minor
     # staff set the new SUBTOTAL; the channel fee is recomputed at the rate the order carries

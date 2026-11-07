@@ -64,14 +64,13 @@ async def test_markup_recompute_and_remove(env):
     buyer, o = await storefront_order(env)  # unit 22.90 x2 = 45.80, markup 6.00, floor 20.00
     assert o["subtotal"] == "45.80"
     agent, _ = await env.login("agent")
-    # keep markup: min(600, 4200-2000) = 600
+    # base = 45.80 - 6.00 = 39.80; the discount comes out of the markup: min(600, 4200-3980)
     r = await agent.patch(price_url(o), json={"amount": "42.00", "reason": "x"})
     assert r.status_code == 200, r.text
-    assert await env.scalar("SELECT reseller_markup_minor FROM orders") == 600
-    # new subtotal 22.00 -> markup capped to 22.00-20.00 = 2.00
-    r = await agent.patch(price_url(o), json={"amount": "22.00", "reason": "x"})
-    assert r.status_code == 200
-    assert await env.scalar("SELECT reseller_markup_minor FROM orders") == 200
+    assert await env.scalar("SELECT reseller_markup_minor FROM orders") == 220
+    # up again: the markup never grows back past what is left above the base
+    r = await agent.patch(price_url(o), json={"amount": "47.00", "reason": "x"})
+    assert await env.scalar("SELECT reseller_markup_minor FROM orders") == 220
     r = await agent.patch(
         price_url(o), json={"amount": "30.00", "reason": "x", "remove_markup": True}
     )
@@ -82,7 +81,7 @@ async def test_markup_recompute_and_remove(env):
             "SELECT detail->>'old_markup_minor' FROM audit_log WHERE action='order.price_changed' "
             "ORDER BY created_at DESC LIMIT 1"
         )
-        == "200"
+        == "220"
     )
     await pay_order(env, buyer, r.json())
     assert await ledger_sum(env, "sales_revenue") == -3000

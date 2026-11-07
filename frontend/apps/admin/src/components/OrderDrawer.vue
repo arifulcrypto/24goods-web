@@ -139,14 +139,15 @@ function applyUpdate(o: Order) {
 const priceDlg = ref(false)
 const price = reactive({ amount: '', reason: '', removeMarkup: false, busy: false, error: '' })
 const hasMarkup = computed(() => (order.value?.reseller_markup_minor ?? 0) > 0)
-/** Live preview mirroring the server: promo dropped, markup capped by the floor, fee rounded up. */
+/** Live preview mirroring the server: promo dropped, a discount comes out of the markup first
+ * (base = current subtotal − markup), fee rounded up. */
 const preview = computed(() => {
   const o = order.value
   const sub = isValidAmount(price.amount) ? yuanToMinor(normalizeAmount(price.amount)) : null
   if (!o || sub === null) return null
-  const floor = floorTotal.value ? (yuanToMinor(floorTotal.value) ?? 0) : 0
   const oldMarkup = o.reseller_markup_minor ?? 0
-  const markup = price.removeMarkup ? 0 : Math.max(0, Math.min(oldMarkup, sub - floor))
+  const base = (yuanToMinor(o.subtotal) ?? 0) - oldMarkup
+  const markup = price.removeMarkup ? 0 : Math.max(0, Math.min(oldMarkup, sub - base))
   const permille = Math.round((parseFloat(o.fee_rate ?? '0') || 0) * 10)
   const fee = Math.ceil((sub * permille) / 1000)
   return { subtotal: sub, markup, fee, total: sub + fee }
