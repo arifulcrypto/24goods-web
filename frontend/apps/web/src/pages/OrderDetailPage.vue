@@ -133,6 +133,17 @@ const hint = computed(() => {
       return ''
   }
 })
+/** Fee/total of the channel the buyer has selected NOW: server-computed (order.channel_totals), never
+ *  client math. Falls back to the stored order values (paid orders / older payloads). */
+const live = computed(() => {
+  const o = order.value
+  const ct = o?.status === 'pending_payment' ? o.channel_totals?.[site.channel?.id ?? ''] : undefined
+  return { fee: ct?.fee ?? o?.fee ?? '0.00', rate: ct?.fee_rate ?? o?.fee_rate, amount: ct?.amount ?? o?.amount ?? '0.00' }
+})
+const liveCheckoutAmount = computed(() => {
+  const c = checkout.value
+  return c?.channel_totals?.[site.channel?.id ?? '']?.amount ?? c?.amount ?? '0.00'
+})
 const channelLabel = computed(() => {
   const c = order.value?.channel
   if (!c) return '—'
@@ -349,15 +360,15 @@ function gotCode() {
           class="o-fees"
           :subtotal="order.subtotal"
           :discount-minor="order.discount_minor"
-          :fee="order.fee"
+          :fee="live.fee"
           :currency="order.currency"
           :label="site.channel?.label"
-          :rate="order.fee_rate"
+          :rate="live.rate"
           hide-when-free
         />
         <div v-else class="o-amount">
           <span class="muted">{{ t('order.amount') }}</span>
-          <span class="price big">{{ formatMoney(order.amount, order.currency, locale) }}</span>
+          <span class="price big">{{ formatMoney(live.amount, order.currency, locale) }}</span>
         </div>
         <p v-if="order.status === 'cancelled' && order.cancel_reason" class="muted small reason">
           {{ t('cancel.reason', { reason: order.cancel_reason }) }}
@@ -474,7 +485,7 @@ function gotCode() {
 
       <div v-if="order.status === 'pending_payment'" class="dock action-dock">
         <div class="pay-info">
-          <span class="price">{{ formatMoney(checkout && order.checkout_no ? checkout.amount : order.amount, order.currency, locale) }}</span>
+          <span class="price">{{ formatMoney(checkout && order.checkout_no ? liveCheckoutAmount : live.amount, order.currency, locale) }}</span>
           <span v-if="countdown" class="cd">{{ t('order.payWithin', { time: countdown }) }}</span>
         </div>
         <van-button round plain class="cancel-btn" :loading="cancelling" @click="cancelIt">{{ t('cancel.action') }}</van-button>

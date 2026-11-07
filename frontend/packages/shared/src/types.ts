@@ -242,7 +242,12 @@ export interface Order {
   delivery_eta_hours?: number | null
   /** ISO time (manual orders): paid_at + eta. */
   delivery_deadline?: string | null
+  /** issue 23: server-computed fee/total per ENABLED channel (pending orders only; else null). */
+  channel_totals?: ChannelTotals | null
 }
+
+/** `{channel_id: {fee, fee_rate, amount}}`: money strings computed by the server (never the client). */
+export type ChannelTotals = Record<string, { fee: string; fee_rate: string; amount: string }>
 
 export type CheckoutStatus = 'pending_payment' | 'paid' | 'cancelled' | 'expired' | 'manual_review'
 export interface CheckoutView {
@@ -254,6 +259,7 @@ export interface CheckoutView {
   order_nos: string[]
   subtotal: string
   fee: string
+  channel_totals?: ChannelTotals | null
 }
 export interface CheckoutLineInput {
   product_id: string
@@ -320,6 +326,9 @@ export interface CartQuote {
   fee_rate: string
   total: string
   currency: string
+  /** channel the quote was priced with + the totals for every enabled channel (per-line ceiling) */
+  channel?: string
+  channel_totals?: ChannelTotals
 }
 
 /** v3: how delivered codes are presented (from the product, snapshotted on the order). */

@@ -21,6 +21,8 @@ export const API_ERROR_CODES = [
   // v4
   'too_frequent',
   'fee_channel_mismatch',
+  'too_many_unpaid',
+  'buyer_input_too_long',
   'pay_via_checkout',
   'already_paid',
   'buyer_input_required',

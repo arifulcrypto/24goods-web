@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { copyText, formatMoney, goBack, isApiError, type UsdtPayView } from '@24goods/shared'
+import { copyText, formatMoney, fromMinor, goBack, isApiError, type UsdtPayView } from '@24goods/shared'
 import { api } from '../api'
 import { payCheckout, payOrder } from '../lib/orderActions'
 import { showSuccessToast, toastError } from '../ui'
@@ -110,7 +110,7 @@ async function retry() {
           </div>
           <div class="row">
             <span class="muted">{{ t('order.amount') }}</span>
-            <span class="val">{{ formatMoney(String(view.fiat_amount_minor / 100), view.currency, locale) }}</span>
+            <span class="val">{{ formatMoney(fromMinor(BigInt(view.fiat_amount_minor)), view.currency, locale) }}</span>
           </div>
           <p class="state wait"><van-loading size="16" /> {{ t('pay.waiting') }}</p>
           <p class="muted small">{{ t('pay.exact') }}</p>

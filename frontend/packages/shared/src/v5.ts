@@ -28,6 +28,77 @@ export function feeBreakdown(subtotal: string, discountMinor: number | null | un
   return { subtotal: fromMinor(s), discount: fromMinor(d), fee: fromMinor(fee), total: fromMinor(base + fee) }
 }
 
+/**
+ * Largest-remainder split of `total` over lines (weights = line subtotals, caps = subtotal - 1),
+ * a port of the server's promo `allocate` so a cart preview matches create_checkout.
+ */
+export function allocateDiscount(total: bigint, subs: bigint[]): bigint[] {
+  const n = subs.length
+  const caps = subs.map((s) => (s > 0n ? s - 1n : 0n))
+  const shares: bigint[] = subs.map(() => 0n)
+  let remaining = total
+  let active = subs.map((_, i) => i).filter((i) => caps[i]! > 0n)
+  while (remaining > 0n && active.length) {
+    const w = active.reduce((a, i) => a + subs[i]!, 0n)
+    const floors = new Map<number, bigint>()
+    const rems = new Map<number, bigint>()
+    for (const i of active) {
+      floors.set(i, (remaining * subs[i]!) / w)
+      rems.set(i, (remaining * subs[i]!) % w)
+    }
+    let leftover = remaining - [...floors.values()].reduce((a, b) => a + b, 0n)
+    const order = [...active].sort((a, b) => (rems.get(b)! > rems.get(a)! ? 1 : rems.get(b)! < rems.get(a)! ? -1 : a - b))
+    for (const i of order) {
+      if (leftover <= 0n) break
+      floors.set(i, floors.get(i)! + 1n)
+      leftover -= 1n
+    }
+    let overflow = 0n
+    for (const i of active) {
+      shares[i] = shares[i]! + floors.get(i)!
+      if (shares[i]! > caps[i]!) {
+        overflow += shares[i]! - caps[i]!
+        shares[i] = caps[i]!
+      }
+    }
+    remaining = overflow
+    active = active.filter((i) => shares[i]! < caps[i]!)
+  }
+  return n ? shares : []
+}
+
+/**
+ * Display-only cart fee with the SERVER's rule (checkout.py): the fee is ceiled PER LINE on
+ * (line subtotal - line discount), then summed. Never `ceil(sum * pm)` (issue 23 bug A:
+ * 5 x 1.01 @3% is 0.20, not 0.16). `lineDiscounts` defaults to a proportional split of
+ * `discountMinor`.
+ */
+export function feeBreakdownLines(
+  lineSubtotals: readonly string[],
+  permille: number,
+  discountMinor = 0,
+  lineDiscounts?: readonly number[],
+): FeeBreakdown {
+  const subs = lineSubtotals.map((x) => toMinor(x) ?? 0n)
+  const total = BigInt(Math.max(0, Math.floor(discountMinor)))
+  const discs =
+    lineDiscounts && lineDiscounts.length === subs.length
+      ? lineDiscounts.map((d) => BigInt(Math.max(0, Math.floor(d))))
+      : allocateDiscount(total, subs)
+  const pm = Number.isInteger(permille) && permille > 0 ? BigInt(permille) : 0n
+  let sub = 0n
+  let disc = 0n
+  let fee = 0n
+  subs.forEach((s, i) => {
+    let d = discs[i] ?? 0n
+    if (d >= s) d = s > 0n ? s - 1n : 0n
+    sub += s
+    disc += d
+    fee += ((s - d) * pm + 999n) / 1000n
+  })
+  return { subtotal: fromMinor(sub), discount: fromMinor(disc), fee: fromMinor(fee), total: fromMinor(sub - disc + fee) }
+}
+
 /** i18n key of a promo error code (anything unknown → promo_invalid). */
 export function promoErrorKey(code: string | null | undefined): string {
   const known = [

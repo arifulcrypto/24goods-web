@@ -267,7 +267,7 @@ Spec: [review-v4.md](review-v4.md). These rows extend or override the tables abo
 | GET `/checkouts/{no}` | | `CheckoutView` | Owner only (404 otherwise) |
 | POST `/checkouts/{no}/pay` | `{channel}` | `{pay_url}` | `out_trade_no = checkout_no`, `money = checkout.amount`; checkout and every order must be `pending_payment` and unexpired (else 409 `invalid_state`) |
 | POST `/checkouts/{no}/cancel` | `{reason?}` | `CheckoutView` | See *Cancel* |
-| POST `/orders/{ref}/pay` | | | An order with a `checkout_id` gets 409 `pay_via_checkout` `{checkout_no}`; a channel whose rate differs from `order.fee_permille` gets 409 `fee_channel_mismatch`; a disabled channel 503 |
+| POST `/orders/{ref}/pay` | | | An order with a `checkout_id` gets 409 `pay_via_checkout` `{checkout_no}`; a channel whose rate differs from `order.fee_permille` re-applies that channel's fee server-side while the order is `pending_payment` and unpaid (audited `order.fee_recomputed`, `version`++, buyer system message `price_changed` if the amount changed; a previous USDT attempt is dropped, an old pay URL's notify lands in manual review via the amount-mismatch path); 409 `invalid_state` once a payment was recorded or the order is not pending (`fee_channel_mismatch` is no longer raised); a disabled channel 503. Same for `POST /checkouts/{no}/pay` |
 | POST `/orders` | + `buyer_input?` | | Validated against the product config; ignored when the product has no popup |
 | POST `/orders/{ref}/cancel` | `{reason?}` (<= 200) | `OrderView` | See *Cancel* |
 | PATCH `/orders/{ref}/input` | `{buyer_input}` | `OrderView` | Owner; `pending_payment` or `paid`; if `paid` a new buyer chat message "(updated)" is posted |
@@ -534,3 +534,10 @@ default_description_i18n, og_image}` (`og_image`: empty, `/path` or `https://` U
 `GET /admin/site` as `seo`. Audited with the other v5 sections. Env: `APP_WEB_INDEX_URL`
 (default `http://web/index.html`), `APP_WEB_INDEX_PATH` (file, overrides the URL).
 
+
+
+## Issue 23 additions (channel totals, switching, specific codes)
+
+- `POST /cart/quote` and `POST /checkout` accept optional `channel` (one of the channel ids): the fee uses that channel when enabled, else the first enabled one. `/cart/quote` also returns `channel` and `channel_totals: {channel_id: {fee, fee_rate, amount}}` for every enabled channel (fee ceiled per line, same as checkout).
+- Pending-payment order views (`GET /orders/{ref}`, lists, SSE) and checkout views carry `channel_totals` (same shape; `null` otherwise). The client renders these for the selected channel and never computes money itself.
+- New 409 `too_many_unpaid` (unpaid-order cap; was generic `conflict`) and 422 `buyer_input_too_long` (was generic `validation`; also for the pydantic 4000-char cap). Pasted order info drops zero-width/BOM characters.

@@ -67,6 +67,8 @@ export default {
     account_suspended: 'Your account has been suspended',
     ip_blocked: 'Access denied',
     fee_channel_mismatch: 'Payment fee changed, please retry',
+    too_many_unpaid: 'You have too many unpaid orders. Pay or cancel one first, or wait for it to expire.',
+    buyer_input_too_long: 'The order information is too long. Please shorten it.',
     pay_via_checkout: 'This order is part of a combined checkout',
     already_paid: 'This order has already been paid',
     buyer_input_required: 'Order information is required',
