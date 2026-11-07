@@ -412,8 +412,30 @@ export interface BlockedIp {
   created_by: string | null
 }
 
+export const API_TOKEN_SCOPES = ['products', 'cards:import', 'orders:read', 'chat', 'uploads', 'stats'] as const
+export type ApiTokenScope = (typeof API_TOKEN_SCOPES)[number]
+export interface ApiTokenRow {
+  id: string
+  name: string
+  prefix: string
+  scopes: ApiTokenScope[]
+  expires_at: string | null
+  last_used_at: string | null
+  last_used_ip: string | null
+  revoked_at: string | null
+  created_at: string
+  status: 'active' | 'revoked' | 'expired'
+}
+
 export function createAdminV5Api(c: ApiClient) {
   return {
+    apiTokens: {
+      list: () => c.get<{ items: ApiTokenRow[] }>('/admin/api-tokens'),
+      /** The plaintext `token` is in this response only, once. */
+      create: (b: { name: string; scopes: ApiTokenScope[]; expires_in_days: number }) =>
+        c.post<ApiTokenRow & { token: string }>('/admin/api-tokens', b),
+      revoke: (id: string) => c.post<ApiTokenRow>(`/admin/api-tokens/${seg(id)}/revoke`),
+    },
     users: {
       list: (q: { q?: string; role?: string; status?: string; page?: number; page_size?: number }) =>
         c.get<Paginated<AdminUserRow>>('/admin/users', clean(q)),
