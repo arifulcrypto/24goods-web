@@ -214,6 +214,7 @@ def order_view(
     reseller: tuple[str, str] | None = None,  # (slug, store_name) of the storefront
     promo_code: str | None = None,
     manual_eta_default: int = 24,
+    channel_totals: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     manual = None
     eta = deadline = None
@@ -244,6 +245,9 @@ def order_view(
         ),
         "fee": fmt(o.fee_minor),
         "fee_rate": fee_rate(o.fee_permille),
+        # server-computed {channel_id: {fee, fee_rate, amount}} for the enabled channels
+        # (pending orders only): the client renders these, it never computes money
+        "channel_totals": channel_totals if o.status == "pending_payment" else None,
         "checkout_no": checkout_no,
         # the buyer's order information (may hold a session token): owner and staff only
         "buyer_input": o.buyer_input if (viewer_is_owner or viewer_is_staff) else None,

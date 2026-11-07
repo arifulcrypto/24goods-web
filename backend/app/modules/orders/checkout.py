@@ -19,7 +19,6 @@ from app.core.audit import audit
 from app.core.config import Settings
 from app.core.errors import (
     ApiError,
-    FeeChannelMismatch,
     InvalidState,
     NotFound,
     OutOfStock,
@@ -31,14 +30,16 @@ from app.core.i18n import pick
 from app.core.money import fmt, to_decimal
 from app.core.resources import Resources
 from app.core.storefront import Storefront
-from app.models import Checkout, Order, Product, User
+from app.models import Checkout, Order, Payment, Product, User
 from app.modules.catalog.service import stock_counts
 from app.modules.chat import service as chat
+from app.modules.chat.messages import post_system
 from app.modules.common.buyerinput import is_enabled, normalize_value
-from app.modules.common.orderviews import order_views
+from app.modules.common.orderviews import channel_totals_view, order_views
 from app.modules.common.views import iso
 from app.modules.content.site import tenant_settings
 from app.modules.orders.service import (
+    broadcast_order,
     check_channel,
     create_order,
     enforce_payables_cap,
@@ -47,7 +48,13 @@ from app.modules.orders.service import (
     utcnow,
 )
 from app.modules.payments import usdt as usdt_svc
-from app.modules.payments.channels import entry_cfg, fee_rate, is_usdt, split_amount
+from app.modules.payments.channels import (
+    channel_by_id,
+    fee_rate,
+    is_usdt,
+    split_amount,
+    totals_by_channel,
+)
 from app.modules.promo import service as promo_svc
 from app.modules.promo.service import PromoError, PromoLine
 from app.modules.reseller.pricing import Pricer
@@ -68,6 +75,7 @@ async def quote_cart(
     items: list[Any],
     lang: str,
     *,
+    channel: str | None = None,
     promo_code: str | None = None,
     user: User | None = None,
     storefront: Storefront | None = None,
@@ -77,7 +85,7 @@ async def quote_cart(
     evaluated read-only (no lock, no reservation): the result is shown, never trusted."""
     ts = await tenant_settings(db, tenant_id)
     require_feature(ts, "cart")
-    cfg = entry_cfg(ts)
+    cfg = channel_by_id(ts, channel)
     pricer = await Pricer.load(db, storefront)
     ids = list({i.product_id for i in items})
     products = {
@@ -201,6 +209,11 @@ async def quote_cart(
         "fee": fmt(fee),
         "fee_rate": fee_rate(cfg.permille),
         "total": fmt(subtotal - discount + fee),
+        "channel": cfg.id,
+        # per enabled channel, per-line ceiling (identical to create_checkout)
+        "channel_totals": channel_totals_view(
+            totals_by_channel(ts, [(sub, d) for (_i, _p, sub), d in zip(avail, alloc, strict=True)])
+        ),
         "currency": currency,
         "promo": promo,
     }
@@ -223,6 +236,10 @@ async def checkout_views(db: AsyncSession, cos: list[Checkout]) -> list[dict[str
     by: dict[uuid.UUID, list[Order]] = {}
     for o in rows:
         by.setdefault(o.checkout_id, []).append(o)  # type: ignore[arg-type]
+    ts_cache = {
+        t: await tenant_settings(db, t)
+        for t in {c.tenant_id for c in cos if c.status == "pending_payment"}
+    }
     out = []
     for c in cos:
         os_ = by.get(c.id, [])
@@ -240,6 +257,13 @@ async def checkout_views(db: AsyncSession, cos: list[Checkout]) -> list[dict[str
                 "fee": fmt(sum(o.fee_minor for o in os_)),
                 "fee_rate": fee_rate(os_[0].fee_permille) if os_ else "0%",
                 "channel": c.channel,
+                "channel_totals": channel_totals_view(
+                    totals_by_channel(
+                        ts_cache[c.tenant_id], [(o.subtotal_minor, o.discount_minor) for o in os_]
+                    )
+                )
+                if c.status == "pending_payment" and os_
+                else None,
                 "paid_at": iso(c.paid_at),
                 "created_at": iso(c.created_at),
             }
@@ -271,6 +295,7 @@ async def create_checkout(
     ip: str | None,
     lang: str,
     *,
+    channel: str | None = None,
     promo_code: str | None = None,
     storefront: Storefront | None = None,
 ) -> dict[str, Any]:
@@ -315,7 +340,7 @@ async def create_checkout(
             ms = products[pid].manual_stock
             if ms is not None and ms < want[pid]:
                 raise OutOfStock("Not enough stock", extra={"product_id": str(pid)})
-    cfg = entry_cfg(await tenant_settings(db, buyer.tenant_id))
+    cfg = channel_by_id(await tenant_settings(db, buyer.tenant_id), channel)
     if not cfg.enabled:
         raise Unavailable("Payment channel is not available")
     inputs = [normalize_value(products[i.product_id].buyer_input, i.buyer_input) for i in items]
@@ -429,10 +454,16 @@ async def create_checkout(
 
 # ------------------------------------------------------------------ pay
 async def recompute_fees(
-    db: AsyncSession, co: Checkout, orders: list[Order], permille: int, user: User
+    db: AsyncSession,
+    co: Checkout,
+    orders: list[Order],
+    permille: int,
+    user: User,
+    *,
+    channel: str | None = None,
 ) -> None:
-    """No pay URL has been issued yet: re-apply the CURRENT channel rate to every member and
-    the checkout amount (caller holds the checkout + orders locks)."""
+    """Re-apply the chosen channel's rate to every member and the checkout amount
+    (caller holds the checkout + orders locks)."""
     before = {"amount_minor": co.amount_minor}
     for o in orders:
         fee, total = split_amount(o.subtotal_minor, permille, o.discount_minor)
@@ -448,7 +479,7 @@ async def recompute_fees(
         target=f"checkout:{co.id}",
         before=before,
         after={"amount_minor": co.amount_minor},
-        detail={"fee_permille": permille},
+        detail={"fee_permille": permille, "channel": channel, "was_channel": co.channel},
     )
 
 
@@ -474,10 +505,34 @@ async def pay_checkout(
     if not usdt and not (res.settings.zpay_pid and res.settings.zpay_key):
         raise Unavailable("Payment channel not configured")
     permille = await check_channel(db, co.tenant_id, channel)
+    if await db.scalar(
+        select(Payment.id).where(
+            (Payment.checkout_id == co.id) | Payment.order_id.in_([o.id for o in orders])
+        )
+    ):
+        raise InvalidState("A payment was already received for this checkout")
+    old_minor = co.amount_minor
     if any(o.fee_permille != permille for o in orders):
-        if co.channel is not None:  # a pay URL is already out for the old amount
-            raise FeeChannelMismatch("The payment fee changed; please recreate the checkout")
-        await recompute_fees(db, co, orders, permille, user)
+        # a pay URL / USDT attempt for the old amount may be out: its notify will no longer match
+        # co.amount_minor -> manual review (settle amount-mismatch path)
+        await recompute_fees(db, co, orders, permille, user, channel=channel)
+    msgs = []
+    if co.amount_minor != old_minor:
+        for o in orders:
+            m = await post_system(
+                db,
+                tenant_id=o.tenant_id,
+                conversation_id=o.conversation_id,
+                event="price_changed",
+                order_id=str(o.id),
+                amount=fmt(o.amount_minor),
+                currency=o.currency,
+                version=o.version,
+            )
+            if m is not None:
+                msgs.append((o, m))
+    if co.channel is not None and co.channel != channel:
+        await usdt_svc.drop_attempt(res, co.checkout_no)
     co.channel = channel
     name = orders[0].title if len(orders) == 1 else f"{orders[0].title} +{len(orders) - 1}"
     if usdt:
@@ -486,7 +541,14 @@ async def pay_checkout(
         await usdt_svc.start_attempt(
             res, no=no, title=name, amount_minor=minor, currency=cur, channel=channel
         )
+        await _announce(res, db, msgs)
         return f"/pay/usdt/{no}"
     url = res.zpay.build_pay_url(co.checkout_no, name, to_decimal(co.amount_minor))
     await db.commit()
+    await _announce(res, db, msgs)
     return url
+
+
+async def _announce(res: Resources, db: AsyncSession, msgs: list[tuple[Order, Any]]) -> None:
+    for o, m in msgs:
+        await broadcast_order(res, db, o, [m])

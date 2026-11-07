@@ -81,7 +81,7 @@ async def test_fee_is_ceiled_server_side_and_default_is_30_permille(env):
     assert zh[0]["label"] == "支付宝"
 
 
-async def test_pay_url_charges_total_and_channel_mismatch_is_409(env):
+async def test_pay_url_charges_total_and_reapplies_fee_when_config_changes(env):
     await set_fee(env, 30)
     p = await env.product(mode="manual", price=1000, floor=100)
     buyer, _ = await env.login("buyer")
@@ -90,7 +90,7 @@ async def test_pay_url_charges_total_and_channel_mismatch_is_409(env):
     assert r.status_code == 200 and "money=10.30" in r.json()["pay_url"]
     await set_fee(env, 50)  # config changed after the order was created
     r = await buyer.post(f"/api/v1/orders/{o['id']}/pay", json={"channel": "zpay_alipay"})
-    assert r.status_code == 409 and r.json()["error"]["code"] == "fee_channel_mismatch"
+    assert r.status_code == 200 and "money=10.50" in r.json()["pay_url"]  # re-applied (unpaid)
 
 
 async def test_admin_price_sets_subtotal_and_recomputes_fee(env):

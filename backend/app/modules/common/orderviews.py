@@ -8,10 +8,23 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.money import fmt
 from app.core.settings_v5 import section
 from app.models import AfterSales, Attachment, Checkout, Order, Product, PromoCode, Reseller
 from app.modules.common.views import after_sales_view, order_view
 from app.modules.content.site import tenant_settings
+from app.modules.payments.channels import totals_by_channel
+
+
+def channel_totals_view(t: dict[str, dict[str, Any]]) -> dict[str, dict[str, str]]:
+    return {
+        cid: {
+            "fee": fmt(v["fee_minor"]),
+            "fee_rate": v["fee_rate"],
+            "amount": fmt(v["amount_minor"]),
+        }
+        for cid, v in t.items()
+    }
 
 
 async def latest_tickets(db: AsyncSession, order_ids: list[uuid.UUID]) -> dict[uuid.UUID, dict]:
@@ -98,9 +111,18 @@ async def order_views(
                 )
             ).all()
         }
+    ts_by_tenant: dict[uuid.UUID, dict] = {}
+    for o in orders:
+        if o.status == "pending_payment" and o.tenant_id not in ts_by_tenant:
+            ts_by_tenant[o.tenant_id] = await tenant_settings(db, o.tenant_id)
     return [
         order_view(
             o,
+            channel_totals=channel_totals_view(
+                totals_by_channel(ts_by_tenant[o.tenant_id], [(o.subtotal_minor, o.discount_minor)])
+            )
+            if o.status == "pending_payment"
+            else None,
             reseller=resellers.get(o.reseller_id) if o.reseller_id else None,
             promo_code=promos.get(o.promo_code_id) if o.promo_code_id else None,
             viewer_is_owner=owner_id is not None and o.buyer_id == owner_id,
