@@ -15,6 +15,7 @@ import {
   multiplyAmount,
   normalizeAmount,
   safeAssetUrl,
+  usePasteImage,
   visibleEmail,
   type Attachment,
   type Order,
@@ -207,11 +208,16 @@ function openDeliver() {
   deliver.error = ''
   deliverDlg.value = true
 }
-async function uploadAttachment(opt: UploadRequestOptions) {
+function uploadAttachment(opt: UploadRequestOptions) {
+  return uploadDeliverFile(opt.file)
+}
+usePasteImage(window, (files) => void uploadDeliverFile(files[0]), deliverDlg)
+async function uploadDeliverFile(file: File) {
+  if (deliver.uploading) return
   deliver.uploading = true
   try {
-    const c = await compressImage(opt.file)
-    deliver.attachment = await api.upload(c.blob, { kind: 'image', filename: `delivery.${imageExtension(c.blob.type || opt.file.type)}` })
+    const c = await compressImage(file)
+    deliver.attachment = await api.upload(c.blob, { kind: 'image', filename: `delivery.${imageExtension(c.blob.type || file.type)}` })
   } catch (e) {
     toastError(e)
   } finally {
@@ -414,6 +420,7 @@ defineExpose({ reload: () => props.orderId && load(props.orderId) })
           <el-upload :show-file-list="false" :http-request="uploadAttachment" accept="image/jpeg,image/png,image/webp">
             <el-button :loading="deliver.uploading">{{ t('products.form.upload') }}</el-button>
           </el-upload>
+          <div class="hint muted full">{{ t('paste.tip') }}</div>
           <el-image v-if="deliver.attachment" :src="safeAssetUrl(deliver.attachment.url) ?? undefined" fit="cover" class="att" />
         </el-form-item>
       </el-form>

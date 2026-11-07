@@ -57,6 +57,7 @@ export default {
     title: 'Product',
     stock: 'Stock {n}',
     outOfStock: 'Out of stock',
+    onlyLeft: 'Only {n} left',
     delivery: 'Delivery',
     category: 'Category',
     description: 'Description',

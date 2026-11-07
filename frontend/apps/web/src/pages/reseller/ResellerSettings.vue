@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { amountToMinor, fromMinor, goBack, percentToPermille, permilleToPercent, safeAssetUrl, type MarkupKind } from '@24goods/shared'
+import { amountToMinor, fromMinor, goBack, percentToPermille, permilleToPercent, safeAssetUrl, usePasteImage, type MarkupKind } from '@24goods/shared'
 import { api } from '../../api'
 import { useResellerStore } from '../../stores/reseller'
 import { showConfirmDialog, showSuccessToast, toastError } from '../../ui'
@@ -96,8 +96,13 @@ onMounted(async () => {
   }
 })
 
+usePasteImage(window, (files) => void uploadLogo(files[0]))
 async function onLogo(ev: Event) {
   const f = (ev.target as HTMLInputElement).files?.[0]
+  await uploadLogo(f)
+  ;(ev.target as HTMLInputElement).value = ''
+}
+async function uploadLogo(f: File | undefined) {
   if (!f || uploading.value) return
   uploading.value = true
   try {
@@ -107,7 +112,6 @@ async function onLogo(ev: Event) {
     toastError(e)
   } finally {
     uploading.value = false
-    ;(ev.target as HTMLInputElement).value = ''
   }
 }
 async function save() {

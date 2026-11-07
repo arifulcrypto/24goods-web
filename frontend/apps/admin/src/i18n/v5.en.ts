@@ -365,6 +365,9 @@ export default {
     inUse: "This product has orders, stock or other references. Archive it instead.",
   },
   product: {
+    manualStock: "Stock",
+    manualStockHint: "Leave empty for unlimited. Each order reserves its quantity; cancelled or expired orders give it back.",
+    unlimited: "unlimited",
     eta: "Delivery window",
     etaDefault: "empty = site default {h}",
     etaReset: "Use default",

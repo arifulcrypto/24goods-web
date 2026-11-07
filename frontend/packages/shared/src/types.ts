@@ -27,7 +27,7 @@ export interface ProductSummary {
   price: string
   currency: string
   delivery_mode: DeliveryMode
-  /** stock only for auto_card */
+  /** auto_card: available cards; manual: reserved-stock counter (null = unlimited) */
   stock: number | null
   category: string
   sold: number
@@ -69,6 +69,8 @@ export interface AdminProduct extends Omit<Product, 'title' | 'description' | 'b
   description_i18n: I18nText
   floor_price: string
   created_at: string
+  /** v5.2 manual-delivery stock; null = unlimited */
+  manual_stock?: number | null
 }
 /** Body for POST /admin/products ("AdminProduct fields (no id)"), PATCH accepts a partial. */
 export interface AdminProductInput {

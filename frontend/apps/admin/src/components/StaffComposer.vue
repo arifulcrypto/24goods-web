@@ -7,6 +7,7 @@ import {
   VoiceError,
   VoiceRecorder,
   compressImage,
+  extractPastedImages,
   imageExtension,
   isAcceptedImage,
   isVoiceSupported,
@@ -54,7 +55,7 @@ function onKeydown(ev: Event | KeyboardEvent) {
   }
 }
 async function onPaste(e: ClipboardEvent) {
-  const file = Array.from(e.clipboardData?.files ?? []).find((f) => f.type.startsWith('image/'))
+  const file = extractPastedImages(e)[0]
   if (file) {
     e.preventDefault()
     await sendFile(file)
@@ -173,6 +174,7 @@ onBeforeUnmount(() => recorder?.cancel())
         />
         <el-button type="primary" :icon="Promotion" :disabled="disabled || !text.trim()" @click="send">{{ t('common.send') }}</el-button>
       </div>
+      <div class="paste-tip">{{ t('paste.tip') }}</div>
     </template>
     <ProductPickerDialog v-model="pickerOpen" @pick="(id) => ((pickerOpen = false), emit('sendProduct', id))" />
   </div>
@@ -187,6 +189,11 @@ onBeforeUnmount(() => recorder?.cancel())
 .tools {
   display: flex;
   gap: 2px;
+}
+.paste-tip {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--a-muted, #909399);
 }
 .input-row {
   display: flex;

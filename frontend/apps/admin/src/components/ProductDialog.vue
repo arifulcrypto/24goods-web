@@ -10,6 +10,7 @@ import {
   isAcceptedImage,
   isValidAmount,
   normalizeAmount,
+  usePasteImage,
   type Category,
   type DeliveryMode,
   type ProductStatus,
@@ -136,6 +137,7 @@ const form = reactive({
   bi: structuredClone(BUYER_INPUT_DEFAULT) as BuyerInputForm,
 })
 const eta = ref<number | null>(null)
+const manualStock = ref<number | null>(1) // manual only; empty = unlimited
 const cost = ref('')
 const sourceUrl = ref('')
 const biTab = ref<'en' | 'zh-CN'>('en')
@@ -180,6 +182,7 @@ watch(
     form.usage_zh = p?.usage_i18n?.['zh-CN'] ?? ''
     usageTab.value = 'en'
     form.after_sales_hours = p?.after_sales_hours ?? null
+    manualStock.value = p ? (p.manual_stock ?? null) : 1
     eta.value = p ? (p.delivery_eta_hours ?? null) : d ? (props.defaultEtaHours ?? 24) : null
     cost.value = p?.cost_minor != null ? minorToYuan(p.cost_minor) : d?.cost_minor != null ? minorToYuan(d.cost_minor) : ''
     sourceUrl.value = p?.source_url ?? d?.source_url ?? ''
@@ -246,7 +249,7 @@ function validate(): boolean {
   return Object.keys(e).length === 0
 }
 
-function payload(): AdminProductInputV3 & { buyer_input: BuyerInputForm; delivery_eta_hours: number | null; cost_minor: number | null; source_url: string | null } {
+function payload(): AdminProductInputV3 & { manual_stock: number | null; buyer_input: BuyerInputForm; delivery_eta_hours: number | null; cost_minor: number | null; source_url: string | null } {
   const usage = { en: form.usage_en.trim(), 'zh-CN': form.usage_zh.trim() }
   const trim = (o: { en: string; 'zh-CN': string }) => ({ en: o.en.trim(), 'zh-CN': o['zh-CN'].trim() })
   return {
@@ -256,6 +259,7 @@ function payload(): AdminProductInputV3 & { buyer_input: BuyerInputForm; deliver
       prompt_i18n: trim(form.bi.prompt_i18n),
       placeholder_i18n: trim(form.bi.placeholder_i18n),
     },
+    manual_stock: form.delivery_mode === 'manual' ? manualStock.value : null,
     delivery_eta_hours: form.delivery_mode === 'manual' ? eta.value : null,
     cost_minor: cost.value.trim() ? yuanToMinor(cost.value) : null,
     source_url: sourceUrl.value.trim() || null,
@@ -320,13 +324,12 @@ async function save() {
 function upload(opt: UploadRequestOptions) {
   return uploadFile(opt.file)
 }
-function onImgPaste(e: ClipboardEvent) {
-  const f = Array.from(e.clipboardData?.files ?? []).find((x) => x.type.startsWith('image/'))
-  if (f && current.value) {
-    e.preventDefault()
-    void uploadFile(f)
-  }
-}
+// Ctrl+V anywhere in the open dialog (edit mode: a new product has no id to attach images to yet)
+usePasteImage(
+  window,
+  (files) => void uploadFile(files[0]),
+  computed(() => props.modelValue && !!current.value && !uploading.value),
+)
 function onImgDrop(e: DragEvent) {
   const f = Array.from(e.dataTransfer?.files ?? []).find((x) => x.type.startsWith('image/'))
   if (f && current.value) {
@@ -445,6 +448,10 @@ async function removeImage(url: string) {
           <span class="muted sw">{{ t('site.hours') }} ({{ t('v5.product.etaDefault', { h: defaultEtaHours ?? 24 }) }})</span>
           <el-button v-if="eta !== null" link type="primary" @click="resetEta">{{ t('v5.product.etaReset') }}</el-button>
           <div class="hint muted">{{ t('v5.product.noRush') }}</div>
+        </el-form-item>
+        <el-form-item :label="t('v5.product.manualStock')">
+          <el-input-number v-model="manualStock" :min="0" :max="1000000" :placeholder="t('v5.product.unlimited')" />
+          <div class="hint muted">{{ t('v5.product.manualStockHint') }}</div>
         </el-form-item>
       </template>
 
@@ -576,7 +583,7 @@ async function removeImage(url: string) {
           </div>
           <div class="muted">{{ t('products.form.saveFirst') }}</div>
         </div>
-        <div v-else class="images" tabindex="0" :aria-label="t('v5.product.pasteHint')" @paste="onImgPaste" @dragover.prevent @drop="onImgDrop">
+        <div v-else class="images" tabindex="0" :aria-label="t('v5.product.pasteHint')" @dragover.prevent @drop="onImgDrop">
           <div v-for="(url, i) in form.images" :key="url" class="img">
             <el-image :src="url" fit="cover" :preview-src-list="form.images" :initial-index="i" preview-teleported />
             <el-tag v-if="i === 0" size="small" class="cover-tag">{{ t('products.form.cover') }}</el-tag>
@@ -590,7 +597,7 @@ async function removeImage(url: string) {
           >
             <el-button :loading="uploading">{{ t('products.form.upload') }}</el-button>
           </el-upload>
-          <div class="hint muted full">{{ t('products.form.uploadHint') }} {{ t('v5.product.pasteHint') }}</div>
+          <div class="hint muted full">{{ t('products.form.uploadHint') }} {{ t('v5.product.pasteHint') }} {{ t('paste.tip') }}</div>
         </div>
       </el-form-item>
     </el-form>

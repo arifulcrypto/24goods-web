@@ -1,6 +1,9 @@
 import type { MessageSchema } from './index'
 
 const zhCN: MessageSchema = {
+  paste: {
+    tip: '提示：可按 Ctrl+V 直接粘贴截图',
+  },
   common: {
     ok: '确定',
     cancel: '取消',
