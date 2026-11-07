@@ -139,7 +139,7 @@ async def test_instant_account_max_two_pending_orders(env):
     await buy(c, p)
     await buy(c, p)
     r = await c.post("/api/v1/orders", json={"product_id": str(p.id), "qty": 1})
-    assert r.status_code == 409 and r.json()["error"]["code"] == "conflict"
+    assert r.status_code == 409 and r.json()["error"]["code"] == "too_many_unpaid"
     # registered buyers keep the limit of 5
     reg, _ = await env.login("buyer")
     for _ in range(5):

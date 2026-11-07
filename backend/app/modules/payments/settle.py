@@ -49,6 +49,7 @@ class NotifyOutcome:
     order: Order | None = None
     messages: list[Message | None] = field(default_factory=list)
     orders: list[Order] = field(default_factory=list)  # every order touched (checkout path)
+    dup_trade_no: str | None = None  # a SECOND paid trade arrived: staff must refund it
 
 
 def exact_minor(amount: Decimal) -> int | None:
@@ -452,8 +453,10 @@ async def apply_order_payment(
     raw: dict[str, str],
     ip: str | None,
     channel: str = CHANNEL,
+    hold: str | None = None,
 ) -> NotifyOutcome:
-    """Locked transaction for a verified + re-queried payment of one order."""
+    """Locked transaction for a verified + re-queried payment of one order. ``hold`` (a reason)
+    records the Payment but never fulfils: the order goes to manual_review."""
     amount_minor = exact_minor(paid_amount)
     if amount_minor is None:
         return await to_manual_review(db, order_id, "bad_amount", ip, {})
@@ -475,6 +478,9 @@ async def apply_order_payment(
                 await db.commit()
             return NotifyOutcome(SUCCESS, order)
         if existing is None or existing.gateway_trade_no != trade_no:
+            # A SECOND paid trade (e.g. the old pay URL, then the new one): UNIQUE(order_id)
+            # holds one Payment, so this money is not recordable. Never fulfil from here:
+            # critical audit with the facts, hold the order, alert staff to refund it.
             await audit(
                 db,
                 tenant_id=order.tenant_id,
@@ -482,10 +488,19 @@ async def apply_order_payment(
                 actor_role="gateway",
                 target=f"order:{order.id}",
                 ip=ip,
-                detail={"trade_no": trade_no[:64]},
-                severity="warning",
+                detail={
+                    "trade_no": trade_no[:64],
+                    "paid_minor": amount_minor,
+                    "channel": channel,
+                    "recorded_trade_no": existing.gateway_trade_no[:64] if existing else None,
+                },
+                severity="critical",
+            )
+            msgs = await _order_to_manual_review(
+                db, order, "second_payment", ip, {"paid_minor": amount_minor}
             )
             await db.commit()
+            return NotifyOutcome(SUCCESS, order, msgs, [order], dup_trade_no=trade_no)
         else:
             await db.rollback()
         return NotifyOutcome(SUCCESS, order)
@@ -557,10 +572,20 @@ async def apply_order_payment(
         ]
         await db.commit()
         return NotifyOutcome(SUCCESS, order, msgs, [order])
-    if amount_minor != order.amount_minor:  # price changed after the pay URL was issued
-        return await to_manual_review(
-            db, order.id, "amount_changed", ip, {"paid_minor": amount_minor}
+    if hold or amount_minor != order.amount_minor:
+        # price/channel changed after the pay URL was issued. The gateway re-query confirmed
+        # real money, so RECORD it (Payment row, UNIQUE(channel, trade_no) keeps this idempotent)
+        # and hold the order for review: received money must never vanish (audit M1).
+        reason = hold or "amount_changed"
+        ok = await _record_unrecorded_payment(
+            db, settings, order, trade_no, amount_minor, raw, ip, reason, channel
         )
+        if not ok:
+            return NotifyOutcome(SUCCESS)
+        order.channel = channel  # refunds mirror the clearing account the money arrived on
+        msgs = await _order_to_manual_review(db, order, reason, ip, {"paid_minor": amount_minor})
+        await db.commit()
+        return NotifyOutcome(SUCCESS, order, msgs, [order])
 
     db.add(
         _payment_row(
@@ -598,6 +623,7 @@ async def apply_checkout_payment(
     raw: dict[str, str],
     ip: str | None,
     channel: str = CHANNEL,
+    hold: str | None = None,
 ) -> NotifyOutcome:
     """Locked transaction for a verified + re-queried payment of a whole checkout.
 
@@ -661,10 +687,23 @@ async def apply_checkout_payment(
                 actor_role="gateway",
                 target=f"checkout:{co.id}",
                 ip=ip,
-                detail={"trade_no": trade_no[:64]},
-                severity="warning",
+                detail={
+                    "trade_no": trade_no[:64],
+                    "paid_minor": amount_minor,
+                    "channel": channel,
+                    "recorded_trade_no": existing.gateway_trade_no[:64] if existing else None,
+                },
+                severity="critical",
             )
+            msgs: list[Message | None] = []
+            if co.status == "pending_payment":
+                co.status = "manual_review"
+            for o in orders:
+                msgs += await _order_to_manual_review(
+                    db, o, "second_payment", ip, {"paid_minor": amount_minor}
+                )
             await db.commit()
+            return NotifyOutcome(SUCCESS, first, msgs, orders, dup_trade_no=trade_no)
         else:
             await db.rollback()
         return NotifyOutcome(SUCCESS, first, [], orders)
@@ -703,18 +742,21 @@ async def apply_checkout_payment(
 
     msgs: list[Message | None] = []
     total = sum(o.amount_minor for o in orders)
-    if total != amount_minor or amount_minor != co.amount_minor:
+    if hold or total != amount_minor or amount_minor != co.amount_minor:
         # amounts drifted after the pay URL was issued: money is recorded, nothing is fulfilled
         co.status = "manual_review"
         co.paid_at = datetime.now(timezone.utc)
         co.channel = channel
         for o in orders:  # refunds mirror the clearing account of the member order
             o.channel = channel
+        if amount_minor == co.amount_minor == total:  # e.g. held for a channel mismatch only
+            for o in orders:
+                await post_payment_ledger(db, settings, o, channel)
         if co.promo_code_id is not None:  # Payment recorded above
             await promo_svc.mark_used(db, checkout_id=co.id, tenant_id=co.tenant_id, expect=True)
         for o in orders:
             msgs += await _order_to_manual_review(
-                db, o, "amount_changed", ip, {"paid_minor": amount_minor}
+                db, o, hold or "amount_changed", ip, {"paid_minor": amount_minor}
             )
         await audit(
             db,
@@ -723,7 +765,7 @@ async def apply_checkout_payment(
             actor_role="gateway",
             target=f"checkout:{co.id}",
             ip=ip,
-            detail={"reason": "amount_changed", "paid_minor": amount_minor},
+            detail={"reason": hold or "amount_changed", "paid_minor": amount_minor},
             severity="warning",
         )
         await db.commit()

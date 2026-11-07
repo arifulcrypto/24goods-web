@@ -7,6 +7,8 @@ import {
   recalledStore,
   STORE_TTL_MS,
   feeBreakdown,
+  feeBreakdownLines,
+  allocateDiscount,
   isWhiteLabel,
   manualNote,
   markedUpPrice,
@@ -24,6 +26,21 @@ const mem = () => {
   return { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => void m.set(k, v), removeItem: (k: string) => void m.delete(k) }
 }
 const site = (o: Partial<SiteInfo>): SiteInfo => ({ brand: 'x', announcement: null, after_sales_default_hours: 0, support_hours: null, pages: [], ...o })
+
+describe('per-line fee ceiling (issue 23 A)', () => {
+  it('5 x 1.01 @3% is 0.20 fee / 5.25 total, like the server (not 0.16 / 5.21)', () => {
+    const lines = Array(5).fill('1.01')
+    expect(feeBreakdownLines(lines, 30)).toEqual({ subtotal: '5.05', discount: '0.00', fee: '0.20', total: '5.25' })
+    expect(feeBreakdown('5.05', 0, 30).fee).toBe('0.16') // the old aggregate rule differs
+    expect(feeBreakdownLines(lines, 0)).toMatchObject({ fee: '0.00', total: '5.05' })
+  })
+  it('splits a discount over lines (sum preserved) and ceils each net line', () => {
+    expect(allocateDiscount(100n, [1000n, 1000n]).reduce((a, b) => a + b, 0n)).toBe(100n)
+    const b = feeBreakdownLines(['10.00', '10.00'], 30, 100)
+    expect(b.discount).toBe('1.00')
+    expect(b.fee).toBe('0.58') // 2 x ceil(9.50 * 3% = 0.285 -> 0.29)
+  })
+})
 
 describe('fee lines with discount', () => {
   it('fee is computed on subtotal - discount (ceil)', () => {

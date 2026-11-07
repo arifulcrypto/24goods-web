@@ -137,14 +137,19 @@ async def handle_bepusdt_notify(
     paid = bepusdt.decimal_of(params.get("amount"))
     if paid is None:
         return await review("bad_amount")
-    if paid != expected:
-        return await review("amount_mismatch", {"paid": str(paid)})
+    if paid <= 0:
+        return await review("bad_amount")
     trade_id = params.get("trade_id")
     if not isinstance(trade_id, str) or not trade_id:
         return await review("missing_trade_no")
-    if not is_usdt(order_channel):
-        # genuine signed notify for an order that was never opened on a USDT channel
-        return await review("channel_mismatch")
+    # A signed "paid" notify whose amount / channel is not the order's current one (typically an
+    # old trade paid after the buyer switched channel) is never fulfilled, but the re-query below
+    # must still confirm it so the received money is RECORDED and held (audit M1).
+    hold: str | None = None
+    if paid != expected:
+        hold = "amount_mismatch"
+    elif not is_usdt(order_channel):
+        hold = "channel_mismatch"  # order was never (or is no longer) on a USDT channel
 
     rkey = replay_key(params)
     first = await res.redis.set(rkey, b"inflight", nx=True, ex=INFLIGHT_TTL_S)
@@ -168,18 +173,22 @@ async def handle_bepusdt_notify(
         except BepusdtError:
             await res.redis.delete(rkey)  # let the gateway's retry be processed
             return NotifyOutcome(FAIL)
-        bad = _requery_mismatch(info, trade_id, order_id, expected, order_channel)
+        bad = _requery_mismatch(info, trade_id, order_id, paid)
         if bad is not None:
             outcome = await review("requery_mismatch", {"requery": bad})
         else:
             raw = {**_str_params(params), "token": info.address}
+            # the channel the money actually arrived on (from the gateway's own trade type)
+            actual = bepusdt.TRADE_TYPE_TO_CHANNEL.get(info.trade_type) or ""
+            if hold is None and actual != order_channel:
+                hold = "channel_mismatch"
             if is_checkout:
                 outcome = await apply_checkout_payment(
-                    db, res.settings, target_id, trade_id, expected, raw, ip, order_channel or ""
+                    db, res.settings, target_id, trade_id, paid, raw, ip, actual, hold=hold
                 )
             else:
                 outcome = await apply_order_payment(
-                    db, res.settings, target_id, trade_id, expected, raw, ip, order_channel or ""
+                    db, res.settings, target_id, trade_id, paid, raw, ip, actual, hold=hold
                 )
         await res.redis.set(rkey, b"done", ex=REPLAY_TTL_S)
         return outcome
@@ -193,7 +202,6 @@ def _requery_mismatch(
     trade_id: str,
     order_id: str,
     expected: Decimal,
-    order_channel: str | None,
 ) -> dict | None:
     """``None`` when the gateway confirms exactly this payment, else the audit detail."""
     ok = (
@@ -204,7 +212,7 @@ def _requery_mismatch(
         and info.money is not None
         and info.money == expected
         and info.fiat == bepusdt.FIAT
-        and bepusdt.TRADE_TYPE_TO_CHANNEL.get(info.trade_type) == order_channel
+        and bepusdt.TRADE_TYPE_TO_CHANNEL.get(info.trade_type) is not None
     )
     if ok:
         return None

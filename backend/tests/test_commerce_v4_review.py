@@ -278,10 +278,11 @@ async def test_fee_is_recomputed_at_pay_time_until_a_url_is_issued(env):
     assert r.status_code == 200 and "money=10.50" in r.json()["pay_url"]
     v = (await buyer.get(f"/api/v1/orders/{o['id']}")).json()
     assert (v["fee"], v["amount"], v["fee_rate"]) == ("0.50", "10.50", "5%")
-    # a URL is out now: a further change is a 409
+    # a URL is out: while unpaid the fee is still re-applied (issue 23 C); the old URL's
+    # amount then goes to manual review at notify time
     await set_fee(env, 20)
     r = await buyer.post(f"/api/v1/orders/{o['id']}/pay", json={"channel": "zpay_alipay"})
-    assert r.status_code == 409 and r.json()["error"]["code"] == "fee_channel_mismatch"
+    assert r.status_code == 200 and "money=10.20" in r.json()["pay_url"]
     # pre-v4 pending order (fee 0): picks up the current rate on its first pay
     o2 = await buy(buyer, p)
     async with env.owner_session() as db:
@@ -305,9 +306,9 @@ async def test_checkout_fee_is_recomputed_at_pay_time(env):
     co = (await buyer.get(f"/api/v1/checkouts/{no}")).json()
     assert co["amount"] == "31.30" and co["fee"] == "1.50" and co["fee_rate"] == "5%"
     assert await env.scalar("SELECT sum(amount_minor) FROM orders") == 3130
-    await set_fee(env, 10)
+    await set_fee(env, 10)  # unpaid: re-applied again (19.90*1% -> 0.20, 9.90*1% -> 0.10) = 30.10
     r = await buyer.post(f"/api/v1/checkouts/{no}/pay", json={"channel": "zpay_alipay"})
-    assert r.status_code == 409 and r.json()["error"]["code"] == "fee_channel_mismatch"
+    assert r.status_code == 200 and "money=30.10" in r.json()["pay_url"]
 
 
 # ------------------------------------------------------------------ M1

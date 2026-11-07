@@ -59,11 +59,13 @@ class CartItemIn(BaseModel):
 
 
 class CartQuoteIn(BaseModel):
+    channel: Literal["zpay_alipay", "usdt_arbitrum", "usdt_xlayer", "usdt_trc20"] | None = None
     items: list[CartItemIn] = Field(min_length=1, max_length=20)
     promo_code: str | None = Field(None, max_length=40)
 
 
 class CheckoutIn(BaseModel):
+    channel: Literal["zpay_alipay", "usdt_arbitrum", "usdt_xlayer", "usdt_trc20"] | None = None
     items: list[CartItemIn] = Field(min_length=1, max_length=20)
     source: str | None = Field(None, max_length=200)
     promo_code: str | None = Field(None, max_length=40)

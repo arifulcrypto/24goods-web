@@ -270,7 +270,8 @@ async def test_price_change_invalidates_old_payment_amount(env, gw):
     r = await env.client(csrf=False).get(NOTIFY, params=notify_params(order["order_no"], "19.90"))
     assert r.text == "success"
     assert await _status(buyer, order) == "manual_review"
-    assert await _counts(env) == (0, 0, 0)
+    # M1: the confirmed old-amount payment is recorded (Payment row), held, never fulfilled
+    assert await _counts(env) == (1, 0, 0)
 
 
 def test_signature_helper_matches_epay():

@@ -45,6 +45,14 @@ def install_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(RequestValidationError)
     async def _validation(_: Request, exc: RequestValidationError) -> JSONResponse:
         first = exc.errors()[0] if exc.errors() else {}
+        if "buyer_input" in first.get("loc", ()) and first.get("type") == "string_too_long":
+            mx = (first.get("ctx") or {}).get("max_length")
+            return error_response(
+                422,
+                "buyer_input_too_long",
+                "buyer_input is too long",
+                extra={"max_len": str(mx)} if mx else None,
+            )
         loc = ".".join(str(p) for p in first.get("loc", ()) if p not in ("body", "query"))
         msg = f"{loc}: {first.get('msg', 'invalid')}" if loc else "Invalid request"
         return error_response(422, "validation", msg[:200])

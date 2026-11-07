@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import type { CartQuote, CartQuoteLine, CheckoutLineInput } from '@24goods/shared'
-import { addAmounts, feeBreakdown, isApiError } from '@24goods/shared'
+import { feeBreakdownLines, isApiError } from '@24goods/shared'
 import { api } from '../api'
 
 export const CART_MAX_LINES = 20
@@ -79,12 +79,13 @@ export const useCartStore = defineStore('cart', () => {
   const currency = computed(() => quote.value?.currency ?? 'CNY')
   /** Display-only totals for the selected, available lines (the server recomputes at checkout). */
   function totals(permille: number, discountMinor = 0): { subtotal: string; fee: string; total: string; discount: string } {
-    let sub = '0.00'
+    // per-line ceiling exactly like the server (issue 23 A); the server recomputes at checkout
+    const subs: string[] = []
     for (const l of payable.value) {
       const q = quoteByProduct.value.get(l.product_id)
-      if (q) sub = addAmounts(sub, lineSubtotal(l, q)) ?? sub
+      if (q) subs.push(lineSubtotal(l, q))
     }
-    const b = feeBreakdown(sub, discountMinor, permille)
+    const b = feeBreakdownLines(subs, permille, discountMinor)
     return { subtotal: b.subtotal, fee: b.fee, total: b.total, discount: b.discount }
   }
   function lineSubtotal(l: CartLine, q: CartQuoteLine): string {

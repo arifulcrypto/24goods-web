@@ -103,6 +103,39 @@ def entry_cfg(tenant_settings: dict[str, Any] | None) -> ChannelCfg:
     return channel_cfg(tenant_settings, DEFAULT_CHANNEL)
 
 
+def channel_by_id(tenant_settings: dict[str, Any] | None, channel: str | None) -> ChannelCfg:
+    """The buyer-selected channel if it is enabled, else the entry channel (H)."""
+    if channel in LABELS:
+        cfg = channel_cfg(tenant_settings, channel)
+        if cfg.enabled:
+            return cfg
+    return entry_cfg(tenant_settings)
+
+
+def lines_totals(permille: int, lines: list[tuple[int, int]]) -> tuple[int, int]:
+    """``(fee_minor, total_minor)`` for ``[(subtotal, discount)]`` order lines: the fee is
+    ceiled PER LINE (== what create_checkout charges), never on the sum (issue 23 bug A)."""
+    fee = total = 0
+    for sub, disc in lines:
+        f, t = split_amount(sub, permille, disc)
+        fee += f
+        total += t
+    return fee, total
+
+
+def totals_by_channel(
+    tenant_settings: dict[str, Any] | None, lines: list[tuple[int, int]]
+) -> dict[str, dict[str, Any]]:
+    """Server truth per enabled channel: ``{id: {fee_minor, amount_minor, fee_rate}}``."""
+    out: dict[str, dict[str, Any]] = {}
+    for c in all_channels(tenant_settings):
+        if not c.enabled:
+            continue
+        fee, total = lines_totals(c.permille, lines)
+        out[c.id] = {"fee_minor": fee, "amount_minor": total, "fee_rate": fee_rate(c.permille)}
+    return out
+
+
 def all_channels(tenant_settings: dict[str, Any] | None) -> list[ChannelCfg]:
     return [channel_cfg(tenant_settings, cid) for cid in LABELS]
 

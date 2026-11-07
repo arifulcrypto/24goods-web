@@ -6,18 +6,21 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.core.errors import BuyerInputRequired, Validation
+from app.core.errors import BuyerInputRequired, BuyerInputTooLong
 from app.core.i18n import pick
 
 MAX_VALUE = 4000
 DEFAULT_MAX_LEN = 2000
 DEFAULT_TITLE = {"en": "Order information", "zh-CN": "下单信息"}
 _KEEP = {"\n", "\t"}
+_INVISIBLE = {c: None for c in (0x200B, 0x200C, 0x200D, 0x2060, 0xFEFF)}
 
 
 def clean_value(value: str | None) -> str:
-    """Trim and strip control characters other than newline / tab."""
-    raw = (value or "").replace("\r\n", "\n").replace("\r", "\n")
+    """Trim and strip control characters other than newline / tab, plus the invisible
+    zero-width / BOM characters that copy-paste from chat apps brings along."""
+    raw = (value or "").translate(_INVISIBLE)
+    raw = raw.replace("\r\n", "\n").replace("\r", "\n")
     return "".join(c for c in raw if c in _KEEP or (ord(c) >= 32 and ord(c) != 127)).strip()
 
 
@@ -38,7 +41,9 @@ def normalize_value(cfg: dict[str, Any] | None, value: str | None) -> str | None
         return None
     max_len = min(int(cfg.get("max_len") or DEFAULT_MAX_LEN), MAX_VALUE)
     if len(v) > max_len:
-        raise Validation(f"buyer_input must be at most {max_len} characters")
+        raise BuyerInputTooLong(
+            f"buyer_input must be at most {max_len} characters", extra={"max_len": str(max_len)}
+        )
     if not cfg.get("multiline", True) and "\n" in v:
         v = " ".join(part.strip() for part in v.split("\n") if part.strip())
     return v

@@ -62,7 +62,7 @@ async def notify_zpay(
             o,
             [m for m in outcome.messages if m and m.conversation_id == o.conversation_id],
         )
-    notify_tg.outcome_events(res, touched)
+    notify_tg.outcome_events(res, touched, outcome.dup_trade_no)
     return PlainTextResponse(outcome.reply, status_code=200)
 
 
@@ -98,7 +98,7 @@ async def notify_bepusdt(
                 o,
                 [m for m in outcome.messages if m and m.conversation_id == o.conversation_id],
             )
-        notify_tg.outcome_events(res, touched)
+        notify_tg.outcome_events(res, touched, outcome.dup_trade_no)
     return PlainTextResponse("ok" if outcome.reply in (SUCCESS, "ok") else "fail", status_code=200)
 
 

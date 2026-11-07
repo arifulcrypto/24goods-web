@@ -56,6 +56,13 @@ async def load_attempt(res: Resources, no: str) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
+async def drop_attempt(res: Resources, no: str) -> None:
+    """Forget the stored attempt (the buyer switched channel / the amount changed): the page
+    stops showing the old address and a fresh one is created for the new amount. A transfer
+    already sent to the OLD address still arrives as a notify and goes to manual review."""
+    await res.redis.delete(attempt_key(no))
+
+
 async def start_attempt(
     res: Resources,
     *,

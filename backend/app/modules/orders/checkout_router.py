@@ -53,7 +53,14 @@ async def cart_quote(
             60,
         )
     return await svc.quote_cart(
-        db, tenant_id, body.items, lang, promo_code=body.promo_code, user=user, storefront=sf
+        db,
+        tenant_id,
+        body.items,
+        lang,
+        channel=body.channel,
+        promo_code=body.promo_code,
+        user=user,
+        storefront=sf,
     )
 
 
@@ -78,6 +85,7 @@ async def checkout(
         lang,
         promo_code=body.promo_code,
         storefront=sf,
+        channel=body.channel,
     )
     return out
 

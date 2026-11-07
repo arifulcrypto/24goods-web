@@ -18,19 +18,18 @@ from app.core.config import Settings
 from app.core.db import tenant_session
 from app.core.deps import Page
 from app.core.errors import (
-    Conflict,
-    FeeChannelMismatch,
     InvalidState,
     NotFound,
     OutOfStock,
     PayViaCheckout,
     RateLimited,
+    TooManyUnpaid,
     Unavailable,
     Validation,
 )
 from app.core.features import require_feature
 from app.core.i18n import pick
-from app.core.money import to_decimal
+from app.core.money import fmt, to_decimal
 from app.core.ratelimit import release, reserve
 from app.core.resources import Resources
 from app.core.settings_v5 import section
@@ -41,6 +40,7 @@ from app.models import (
     Conversation,
     Message,
     Order,
+    Payment,
     Product,
     Quote,
     Tenant,
@@ -185,7 +185,9 @@ async def enforce_payables_cap(db: AsyncSession, settings: Settings, buyer: User
     max_pending, _ttl = await tenant_order_limits(db, settings, buyer.tenant_id)
     cap = settings.max_pending_orders_instant if buyer.is_instant else max_pending
     if await count_payables(db, buyer.id) >= cap:
-        raise Conflict(f"At most {cap} unpaid orders; pay or wait for one to expire")
+        raise TooManyUnpaid(
+            f"At most {cap} unpaid orders; pay or wait for one to expire", extra={"max": str(cap)}
+        )
 
 
 async def create_order(
@@ -462,11 +464,16 @@ async def pay_url(db: AsyncSession, res: Resources, ref: str, user: User, channe
     if not usdt and not (res.settings.zpay_pid and res.settings.zpay_key):
         raise Unavailable("Payment channel not configured")
     permille = await check_channel(db, order.tenant_id, channel)
+    if await db.scalar(select(Payment.id).where(Payment.order_id == order.id)):
+        raise InvalidState("A payment was already received for this order")
+    msg = None
+    before_permille = order.fee_permille
     if permille != order.fee_permille:
-        if order.channel is not None:  # a pay URL is already out for the old amount
-            raise FeeChannelMismatch("The payment fee changed; please recreate the order")
-        # no URL issued yet (also covers pre-v4 pending orders): re-apply the current rate
+        # Re-apply the chosen channel's fee (server side). A pay URL / USDT attempt issued for the
+        # OLD amount stays payable at the gateway, but its notify no longer matches
+        # order.amount_minor -> manual review (settle amount-mismatch path), never auto-fulfilled.
         before = snapshot(order)
+        old_minor = order.amount_minor
         fee, total = split_amount(order.subtotal_minor, permille, order.discount_minor)
         order.fee_minor, order.fee_permille, order.amount_minor = fee, permille, total
         order.version += 1
@@ -479,8 +486,33 @@ async def pay_url(db: AsyncSession, res: Resources, ref: str, user: User, channe
             target=f"order:{order.id}",
             before=before,
             after=snapshot(order),
-            detail={"fee_permille": permille},
+            detail={"fee_permille": permille, "channel": channel, "was_channel": order.channel},
         )
+        if total != old_minor:
+            msg = await post_system(
+                db,
+                tenant_id=order.tenant_id,
+                conversation_id=order.conversation_id,
+                event="price_changed",
+                order_id=str(order.id),
+                amount=fmt(total),
+                old_amount=fmt(old_minor),
+                currency=order.currency,
+                version=order.version,
+            )
+    if order.channel is not None and order.channel != channel:
+        if permille == before_permille:  # fee unchanged: the switch itself is still audited
+            await audit(
+                db,
+                tenant_id=order.tenant_id,
+                action="order.channel_changed",
+                actor_id=user.id,
+                actor_role=user.role,
+                target=f"order:{order.id}",
+                before={"channel": order.channel},
+                after={"channel": channel},
+            )
+        await usdt_svc.drop_attempt(res, order.order_no)  # the old USDT quote is void
     order.channel = channel
     if usdt:
         no, title, minor, cur = order.order_no, order.title, order.amount_minor, order.currency
@@ -488,9 +520,13 @@ async def pay_url(db: AsyncSession, res: Resources, ref: str, user: User, channe
         await usdt_svc.start_attempt(
             res, no=no, title=title, amount_minor=minor, currency=cur, channel=channel
         )
+        if msg is not None:
+            await broadcast_order(res, db, order, [msg])
         return f"/pay/usdt/{no}"
     url = res.zpay.build_pay_url(order.order_no, order.title, to_decimal(order.amount_minor))
     await db.commit()
+    if msg is not None:
+        await broadcast_order(res, db, order, [msg])
     return url
 
 
