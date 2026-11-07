@@ -227,6 +227,11 @@ async def add_blocked(
     ip = client_ip(request)
     if ip_in_nets(ip, [net]):
         raise Validation("cidr: would block your own address")
+    count = await db.scalar(
+        select(func.count()).select_from(BlockedIP).where(BlockedIP.tenant_id == staff.tenant_id)
+    )
+    if (count or 0) >= ipblock.MAX_BLOCKS:  # enforcement loads at most MAX_BLOCKS rows
+        raise Validation(f"at most {ipblock.MAX_BLOCKS} blocked ranges; remove old ones first")
     cidr = str(net)
     row = BlockedIP(
         tenant_id=staff.tenant_id,

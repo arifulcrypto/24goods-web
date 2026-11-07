@@ -35,9 +35,7 @@ EMAIL_FAILURES = (50, 3600)  # looser per-email cap across IPs (distributed gues
 POW_AFTER_FAILURES = 3  # proof of work is required from the 4th attempt per (login, ip)
 
 HANDLE_ALPHABET = "abcdefghijklmnopqrstuvwxyz234567"  # base32, lowercase
-PASSWORD_ALPHABET = (
-    "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # no 0/O/1/l/I  # noqa: S105
-)
+PASSWORD_ALPHABET = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # no 0/O/1/l/I  # noqa: S105
 PASSWORD_LEN = 14
 
 

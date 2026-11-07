@@ -53,7 +53,11 @@ def exempt(path: str) -> bool:
 
 async def load_cfg(session: Any, tid: uuid.UUID) -> dict[str, Any]:
     stored = await session.scalar(select(Tenant.settings).where(Tenant.id == tid))
-    rows = await session.execute(select(BlockedIP.cidr, BlockedIP.expires_at).limit(MAX_BLOCKS))
+    rows = await session.execute(
+        select(BlockedIP.cidr, BlockedIP.expires_at)
+        .order_by(BlockedIP.created_at.desc())
+        .limit(MAX_BLOCKS)
+    )
     return {
         "staff_ips": section(stored, "security")["staff_ip_allowlist"],
         "blocks": [[c, e.timestamp() if e else None] for c, e in rows.all()],
