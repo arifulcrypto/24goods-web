@@ -77,8 +77,24 @@ without the owner.
 ## 9. Production (owner)
 - Prod target: Japan VPS; domain decision below. Not executed by agents (Cloudflare + prod deploy).
 
+## 10. Telegram staff notifications (P1)
+- Bot `@shopkesivbot`; token = tenant secret `telegram_bot_token` (secretbox, Settings → Secrets; dev
+  value in `/root/.secrets/telegram.env`). Settings → Notifications: enabled, chat ids (owner
+  8847311752), per-event toggles.
+- Events: order paid (needs manual delivery / auto delivered), new buyer chat message (throttled per
+  conversation, 5 min), after-sales request, payment in manual review / anomaly, reseller application,
+  low card stock. Message = order no, product title, amount, admin deep link. Never card secrets,
+  never buyer contact data beyond masked email.
+- Sent off the request path (background task / outbox), timeouts, failures logged + never raise.
+  "Send test message" button. Audited settings change.
+
+## 11. Order of work (owner, 2026-11-07)
+§1 → §10 Telegram → §7 USDT (BEpusdt) → v5.1 §5 IP/user blocking → v5.1 §3 reseller subdomains +
+custom domains (Cloudflare changes shown to the owner first, not applied by agents) → §2 → §3 → §5 →
+§6 → §8. Prod = c4 (IIJ JP), deployed by the owner from another session; this box = dev + demo.
+
 ## Open owner questions
 - Prod domain: main site on apex `kesiv.com` with `shop.kesiv.com` → 301, or keep `shop.kesiv.com`
-  with apex → 301 to it? Which Japan VPS (the existing IIJ host?).
+  with apex → 301 to it? (Prod host answered: c4, IIJ Japan.)
 - "U-Pay": USDT via BEpusdt, or a specific gateway?
 - Staff IP(s) for the allowlist.
