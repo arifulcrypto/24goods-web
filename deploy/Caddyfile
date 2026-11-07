@@ -110,3 +110,15 @@
 #     }
 #     import app
 # }
+
+# --- Reseller custom domains via Cloudflare for SaaS (v5.2) ------------------
+# Cloudflare terminates TLS for the customer's hostname and forwards it to the fallback origin
+# (stores.<domain>). When SITE_ADDRESS is a real domain, Caddy would answer other Host headers
+# with nothing, so accept them on the plain-HTTP origin port WITHOUT issuing certificates
+# (no on_demand, no `ask` needed). The Host header reaches the API unchanged and the storefront
+# is resolved from the reseller_domains table. Enable only if Cloudflare reaches the origin on
+# :80 (SSL mode flexible) or via an origin rule; the existing on-demand `tls_ask` flow above is
+# independent and unchanged.
+# http:// {
+#     import app
+# }

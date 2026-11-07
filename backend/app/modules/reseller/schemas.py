@@ -108,3 +108,7 @@ __all__ = [
     "PayoutIn",
     "ProductPut",
 ]
+
+
+class DomainIn(BaseModel):
+    hostname: str = Field(min_length=3, max_length=253)

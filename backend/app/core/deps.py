@@ -77,15 +77,29 @@ async def current_user(user: User | None = Depends(optional_user)) -> User:
     return user
 
 
-async def require_staff(user: User = Depends(current_user)) -> User:
+async def forbid_custom_host(request: Request, db: AsyncSession, tenant_id: uuid.UUID) -> None:
+    """Reseller custom domains serve storefronts only: no staff/admin API on them (403)."""
+    from app.core.storefront import is_custom_host
+
+    if await is_custom_host(db, tenant_id, request.headers.get("host")):
+        raise Forbidden("Not available on this host", code="forbidden_host")
+
+
+async def require_staff(
+    request: Request, user: User = Depends(current_user), db: AsyncSession = Depends(get_db)
+) -> User:
     if user.role not in STAFF_ROLES:
         raise Forbidden("Staff only")
+    await forbid_custom_host(request, db, user.tenant_id)
     return user
 
 
-async def require_admin(user: User = Depends(current_user)) -> User:
+async def require_admin(
+    request: Request, user: User = Depends(current_user), db: AsyncSession = Depends(get_db)
+) -> User:
     if user.role != "admin":
         raise Forbidden("Admin only")
+    await forbid_custom_host(request, db, user.tenant_id)
     return user
 
 

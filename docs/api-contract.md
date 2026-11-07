@@ -437,6 +437,18 @@ active|suspended, markup_kind?, markup_value?}`, `GET /admin/payouts?status`, `P
 /admin/payouts/{id}/decide` `{action: paid|rejected, note}`; `GET /admin/orders?reseller_id=` and
 admin order views gain `reseller_markup_minor`, `kind`, `discount_minor`, `promo_code`, `reseller`.
 
+**Custom domains (v5.2, Cloudflare for SaaS).** `GET /reseller/domains` ->
+`{enabled, fallback_origin, max_domains, items[{id, hostname, status: pending|active|failed,
+ssl_status, verification{ownership, ssl_records[]}, created_at, verified_at}]}`; `POST
+/reseller/domains {hostname}` (201; active reseller only; 422 `bad_hostname|hostname_reserved`, 409
+`custom_domains_unavailable|domain_limit|domain_taken`, 502 `domain_provider_error`); `POST
+/reseller/domains/{id}/refresh` (re-queries Cloudflare; 30/h); `DELETE /reseller/domains/{id}`
+(204; deletes at Cloudflare). Other resellers' ids answer 404. Admin: `GET /admin/reseller-domains`,
+`DELETE /admin/reseller-domains/{id}` (force). Secret `cloudflare_saas_token` via `PUT
+/admin/site/secrets`; settings `resellers.{custom_domains_enabled, cf_zone_id, fallback_origin,
+max_domains}`. Only `active` domains resolve the storefront by Host. Reserved store slugs: fixed
+set + `resellers.reserved_slugs` (422 `slug_reserved`).
+
 **Ledger accounts.** payment: `gateway_clearing:zpay +amount`, `sales_revenue -(subtotal - markup)`,
 `reseller_payable:{id} -markup`, `promo_discount +discount`, `surcharge_revenue -fee`; sign-up:
 `reseller_signup_revenue -subtotal`; refund = exact mirror; payout paid: `reseller_payable:{id}

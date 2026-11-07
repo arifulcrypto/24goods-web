@@ -494,6 +494,25 @@ export interface ResellerStats {
   week_earnings_minor: number
   currency?: string
 }
+export interface ResellerDomain {
+  id: string
+  hostname: string
+  status: 'pending' | 'active' | 'failed' | 'deleted'
+  ssl_status: string | null
+  verification: {
+    ownership?: { type?: string; name?: string; value?: string }
+    ownership_http?: { http_url?: string; http_body?: string }
+    ssl_records?: { txt_name?: string; txt_value?: string; http_url?: string; http_body?: string }[]
+  }
+  created_at: string
+  verified_at: string | null
+}
+export interface ResellerDomains {
+  enabled: boolean
+  fallback_origin: string
+  max_domains: number
+  items: ResellerDomain[]
+}
 export type PayoutStatus = 'requested' | 'paid' | 'rejected'
 export interface ResellerPayout {
   id: string

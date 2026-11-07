@@ -17,7 +17,13 @@ from typing import Any
 LOCALES = ("en", "zh-CN")
 
 # tenant_secrets.name values (write-only through the admin API; responses show last4 only)
-SECRET_NAMES = ("turnstile_secret", "google_client_secret", "smtp_password", "telegram_bot_token")
+SECRET_NAMES = (
+    "turnstile_secret",
+    "google_client_secret",
+    "smtp_password",
+    "telegram_bot_token",
+    "cloudflare_saas_token",
+)
 
 # Actions Turnstile can protect (review-v5 §5.1)
 TURNSTILE_ACTIONS = (
@@ -144,7 +150,33 @@ DEFAULTS: dict[str, dict[str, Any]] = {
             "flux",
             "tools",
             "kesiv",
+            # explicit hosts of the platform zone (docs/cloudflare-reseller-domains.md)
+            "stores",
+            "pay",
+            "delux",
+            "cpalos",
+            "iij",
+            "iijweb",
+            "iijtestcdndns",
+            "iijtestonlydns",
+            "softbank",
+            "softbankweb",
+            "racknerd",
+            "vps",
+            "dmit",
+            "dmitipv6",
+            "666clouds",
+            "akile",
+            "bandwagonhost",
+            "bytevirt",
+            "greencloudvps",
+            "greenvps",
         ],
+        # Custom domains through Cloudflare for SaaS (token = cloudflare_saas_token secret)
+        "custom_domains_enabled": False,
+        "cf_zone_id": "",
+        "fallback_origin": "stores.kesiv.com",
+        "max_domains": 1,
     },
     "audit": {
         "retention_days": 365,
@@ -164,6 +196,7 @@ _INT_BOUNDS: dict[tuple[str, str], tuple[int, int]] = {
     ("resellers", "max_markup_fixed_minor"): (0, 100_000_000),
     ("resellers", "min_payout_minor"): (0, 100_000_000),
     ("resellers", "settle_after_hours"): (0, 8760),
+    ("resellers", "max_domains"): (0, 10),
     ("audit", "retention_days"): (30, 3650),
 }
 

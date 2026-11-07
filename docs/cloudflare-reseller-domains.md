@@ -38,3 +38,20 @@ status polled → active. Storefront resolution checks `reseller_domains` (singl
 ## Rollback
 Delete A1–A6 (DNS records + rules) and the custom hostnames; storefronts keep working through
 `?store=slug` (`resellers.link_mode = query`).
+
+## Owner steps for the app side (v5.2, implemented)
+
+1. Cloudflare dashboard: enable Cloudflare for SaaS and set the fallback origin (A4/A5 above).
+2. Create the API token (A7) and the zone id of `kesiv.com`.
+3. Admin -> Settings -> Resellers -> "Custom domains": paste the zone id, check the fallback origin
+   (`stores.kesiv.com`), paste the token (stored as the sealed tenant secret
+   `cloudflare_saas_token`, shown masked), enable the switch. Until all three are set the reseller
+   center hides the card and `POST /reseller/domains` answers 409 `custom_domains_unavailable`.
+4. Caddy: demo (`SITE_ADDRESS=:80`) already accepts any Host. On a domain-based production
+   Caddyfile uncomment the `http://` catch-all block at the bottom of `deploy/Caddyfile`
+   (no certificates are issued for it; Cloudflare holds the customer cert). With SSL **strict**,
+   add an origin rule overriding SNI to `stores.kesiv.com`.
+5. Reserved subdomains: `resellers.reserved_slugs` is prefilled with the named hosts; add any new
+   explicit DNS host there (a fixed built-in set is always reserved too).
+Reseller flow: Reseller center -> Settings -> "Your own domain" -> add hostname -> add the shown
+CNAME/TXT records -> "Check again" until Active. Admin can force-remove under Resellers.

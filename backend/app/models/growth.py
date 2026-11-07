@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import BigInteger, ForeignKey, Integer, LargeBinary, String, Text
-from sqlalchemy.dialects.postgresql import ARRAY, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, created_at, updated_at, uuid_pk
@@ -126,3 +126,20 @@ class BlockedIP(Base):
     expires_at: Mapped[datetime | None]
     created_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = created_at()
+
+
+class ResellerDomain(Base):
+    """Custom hostname of a reseller store (Cloudflare for SaaS). Only ``active`` rows resolve."""
+
+    __tablename__ = "reseller_domains"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id"))
+    reseller_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("resellers.id"))
+    hostname: Mapped[str] = mapped_column(String(253), unique=True)
+    cf_id: Mapped[str | None] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(16), default="pending")
+    ssl_status: Mapped[str | None] = mapped_column(String(32))
+    verification: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    created_at: Mapped[datetime] = created_at()
+    verified_at: Mapped[datetime | None]

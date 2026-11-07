@@ -234,6 +234,20 @@ class ResellersIn(BaseModel):
     min_payout_minor: int | None = Field(None, ge=0, le=100_000_000)
     settle_after_hours: int | None = Field(None, ge=0, le=8760)
     reserved_slugs: list[str] | None = Field(None, max_length=200)
+    custom_domains_enabled: bool | None = None
+    cf_zone_id: str | None = Field(None, max_length=64, pattern=r"^[A-Za-z0-9]*$")
+    fallback_origin: str | None = Field(None, max_length=253)
+    max_domains: int | None = Field(None, ge=0, le=10)
+
+    @field_validator("fallback_origin")
+    @classmethod
+    def _fo(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        v = v.strip().lower()
+        if v and not _HOST.match(v):
+            raise ValueError("invalid hostname")
+        return v
 
     @field_validator("base_domain")
     @classmethod

@@ -158,6 +158,20 @@ async def stats(db: AsyncSession, r: Reseller, rcfg: dict[str, Any]) -> dict[str
 
 
 # ------------------------------------------------------------------ views
+FIXED_RESERVED_SLUGS = frozenset(
+    "www admin api stores mail shop demo app static assets cdn status docs help support pay".split()
+)
+
+
+def is_reserved_slug(slug: str, rcfg: dict[str, Any]) -> bool:
+    """Fixed set + admin-editable ``resellers.reserved_slugs`` + ``www-*``/``api-*``/``admin-*``."""
+    return (
+        slug in FIXED_RESERVED_SLUGS
+        or slug in set(rcfg["reserved_slugs"])
+        or slug.split("-")[0] in {"www", "api", "admin"}
+    )
+
+
 def store_url(slug: str, rcfg: dict[str, Any]) -> str:
     """THE single store-link builder: ``query`` (default) -> ``{public base}/?store=slug``;
     ``subdomain`` -> ``https://slug.{base_domain}/``."""
@@ -242,7 +256,7 @@ async def apply(
     uid, tid = user.id, user.tenant_id
     ts = await tenant_settings(db, tid)
     rcfg = section(ts, "resellers")
-    if slug in set(rcfg["reserved_slugs"]) or slug.split("-")[0] in {"www", "api", "admin"}:
+    if is_reserved_slug(slug, rcfg):
         raise Validation("This store address is reserved", code="slug_reserved")
     fee = int(rcfg["signup_fee_minor"])
 
