@@ -68,6 +68,7 @@ async def change_price(
             floor_total = product.floor_price_minor * order.qty
             if new_minor < floor_total:
                 raise Validation("amount is below the floor price", code="reprice_below_floor")
+    before = snapshot(order)
     old_discount, old_markup = order.discount_minor, order.reseller_markup_minor
     if order.promo_code_id is not None or old_discount > 0:
         # the staff price replaces the promo: reserved -> released (-used_count)
@@ -78,7 +79,6 @@ async def change_price(
     order.reseller_markup_minor = (
         0 if remove_markup else max(0, min(old_markup, new_minor - floor_total))
     )
-    before = snapshot(order)
     old_minor = order.amount_minor
     # staff set the new SUBTOTAL; the channel fee is recomputed at the rate the order carries
     fee, total = split_amount(new_minor, order.fee_permille)  # discount is 0 after a reprice
