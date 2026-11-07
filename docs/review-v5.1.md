@@ -80,6 +80,17 @@ The importer exists (Products → "Import"), but the owner looked inside **New p
 choosing **auto delivery** there with an inline card-import step (paste codes) so a product with
 stock is created in one flow. Imported default stays manual.
 
-## Owner inputs needed
-EVM receiving address (USDT); CF dashboard: enable Custom Hostnames (when §3 starts); CF token
-permission for IP lists/access rules (§5).
+## Owner inputs
+Received 2026-11-07 (public addresses only; no secrets in git):
+- **USDT receiving (§4):** EVM `0xe2dc319ed904b2f798f262e3274b0f0c60e0653c` for **Arbitrum One** and
+  **X Layer** (OKX shows the X Layer form as `XKOe2dc…0653c`; the `XKO` prefix is only an OKX-app
+  label, so on-chain it is the same `0x…` address). **TRON (TRC20):** `TQkeoASc6X5itH4MyPZPPCfLM4M62cvMu5`.
+- **Telegram:** bot `@shopkesivbot`, owner `@signalstacker` (chat id 8847311752). Token is in
+  `/root/.secrets/telegram.env` (not in git). No spec item uses it yet; candidate for staff
+  notifications (new order / payment / CS message) in a later item.
+- **Cloudflare for SaaS:** the owner is activating it (100 free custom hostnames). Read-only check
+  2026-11-07: the token is active and `GET custom_hostnames` works (0 hostnames); the fallback origin
+  is **not set**. Write permission isn't verified (that would need a write). Check it again with the
+  prod token before §3 goes to prod. **Agents don't change Cloudflare settings without the owner.**
+
+Still needed: CF token permission for IP lists/access rules (§5).
