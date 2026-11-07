@@ -735,6 +735,7 @@ async def test_global_rate_limit_off_on_exempt_exact_body_and_fail_open(env, mon
         "enabled": True,
         "limit": 10,
         "window_s": 60,
+        "staff_ips": [],  # v5.2: staff IP allowlist mirrored with the limiter config
     }
     codes = [(await c.get("/api/v1/categories")).status_code for _ in range(12)]
     assert codes[:10] == [200] * 10 and codes[10:] == [429, 429]
