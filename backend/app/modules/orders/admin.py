@@ -26,6 +26,7 @@ from app.modules.orders.events import add_event, snapshot
 from app.modules.orders.service import order_views
 from app.modules.payments.channels import split_amount
 from app.modules.payments.settle import payment_for_order
+from app.modules.promo import service as promo_svc
 
 
 async def lock_order(db: AsyncSession, order_id: uuid.UUID, tenant_id: uuid.UUID) -> Order:
@@ -38,7 +39,13 @@ async def lock_order(db: AsyncSession, order_id: uuid.UUID, tenant_id: uuid.UUID
 
 
 async def change_price(
-    db: AsyncSession, order_id: uuid.UUID, amount: str, reason: str, agent: User, ip: str | None
+    db: AsyncSession,
+    order_id: uuid.UUID,
+    amount: str,
+    reason: str,
+    agent: User,
+    ip: str | None,
+    remove_markup: bool = False,
 ) -> tuple[Order, Message | None]:
     try:
         new_minor = parse_amount(amount)
@@ -48,19 +55,33 @@ async def change_price(
     if order.status != "pending_payment":
         raise InvalidState("Price can only change while awaiting payment")
     if order.checkout_id is not None:
-        raise InvalidState("This order is part of a cart checkout; close the checkout instead")
-    if order.kind != "goods" or order.discount_minor > 0 or order.reseller_markup_minor > 0:
-        # promo allocation, reseller markup and the sign-up fee are server-set records (the
-        # markup/settlement split would silently change): close the order and re-quote
-        raise InvalidState("This order's price cannot be changed")
+        raise InvalidState(
+            "This order is part of a cart checkout; close the checkout instead",
+            code="reprice_checkout_member",
+        )
+    if order.kind != "goods":
+        raise InvalidState("This order's price cannot be changed", code="reprice_not_goods")
+    floor_total = 0
     if order.product_id is not None:
         product = await db.get(Product, order.product_id)
-        if product is not None and new_minor < product.floor_price_minor * order.qty:
-            raise Validation("amount is below the floor price")
+        if product is not None:
+            floor_total = product.floor_price_minor * order.qty
+            if new_minor < floor_total:
+                raise Validation("amount is below the floor price", code="reprice_below_floor")
+    old_discount, old_markup = order.discount_minor, order.reseller_markup_minor
+    if order.promo_code_id is not None or old_discount > 0:
+        # the staff price replaces the promo: reserved -> released (-used_count)
+        await promo_svc.release(db, order_id=order.id, tenant_id=order.tenant_id, expect=True)
+        order.discount_minor = 0
+        order.promo_code_id = None
+    # reseller markup is a slice of the subtotal; keep it only while the base cost floor is covered
+    order.reseller_markup_minor = (
+        0 if remove_markup else max(0, min(old_markup, new_minor - floor_total))
+    )
     before = snapshot(order)
     old_minor = order.amount_minor
     # staff set the new SUBTOTAL; the channel fee is recomputed at the rate the order carries
-    fee, total = split_amount(new_minor, order.fee_permille)
+    fee, total = split_amount(new_minor, order.fee_permille)  # discount is 0 after a reprice
     order.subtotal_minor = new_minor
     order.fee_minor = fee
     order.amount_minor = total
@@ -84,7 +105,14 @@ async def change_price(
         before=before,
         after=snapshot(order),
         ip=ip,
-        detail={"reason": reason},
+        detail={
+            "reason": reason,
+            "old_discount_minor": old_discount,
+            "new_discount_minor": order.discount_minor,
+            "old_markup_minor": old_markup,
+            "new_markup_minor": order.reseller_markup_minor,
+            "remove_markup": remove_markup,
+        },
     )
     msg = await post_system(
         db,

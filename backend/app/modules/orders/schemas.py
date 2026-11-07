@@ -32,6 +32,7 @@ class PayIn(BaseModel):
 class PriceIn(BaseModel):
     amount: str = Field(max_length=20)
     reason: str = Field(min_length=1, max_length=500)
+    remove_markup: bool = False
 
 
 class DeliverIn(BaseModel):

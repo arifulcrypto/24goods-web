@@ -283,8 +283,8 @@ export function createAdminApi(c: ApiClient) {
         buyer_id?: string
       }) => c.get<Paginated<AdminOrder>>('/admin/orders', q),
       get: (id: string) => c.get<AdminOrderDetail>(`/admin/orders/${seg(id)}`),
-      changePrice: (id: string, amount: string, reason: string) =>
-        c.patch<Order>(`/admin/orders/${seg(id)}/price`, { amount, reason }),
+      changePrice: (id: string, amount: string, reason: string, remove_markup = false) =>
+        c.patch<Order>(`/admin/orders/${seg(id)}/price`, { amount, reason, remove_markup }),
       deliver: (id: string, text: string, attachment_id?: string) =>
         c.post<Order>(`/admin/orders/${seg(id)}/deliver`, attachment_id ? { text, attachment_id } : { text }),
       cancel: (id: string, reason: string) =>
