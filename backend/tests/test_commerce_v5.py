@@ -507,12 +507,13 @@ async def test_storefront_order_markup_ledger_refund_and_visibility(env):
     # buyer on main store pays base price (header cannot be used to lower)
     o2 = await buy(buyer, p)
     assert o2["subtotal"] == "19.90" and o2["reseller"] is None
-    # staff cannot reprice a reseller order with markup (settlement split would change)
+    # v5.1: staff reprice below the base removes the markup (merchant base absorbs the rest)
     o3 = (await buyer.post(f"{API}/orders", json={"product_id": str(p.id)}, headers=hs)).json()
     r = await staff.patch(
         f"{API}/admin/orders/{o3['id']}/price", json={"amount": "1.00", "reason": "deal"}
     )
-    assert r.status_code == 409, r.text
+    assert r.status_code == 200, r.text
+    assert r.json()["reseller_markup_minor"] == 0
 
 
 async def test_conversation_gets_reseller_id(env):
@@ -835,7 +836,8 @@ def test_payment_lines_skip_zero_amounts_and_balance():
     assert {ln.account for ln in lines} == {"gateway_clearing:zpay", f"reseller_payable:{rid}"}
 
 
-async def test_reprice_refusals_for_promo_markup_and_signup_orders(env):
+async def test_reprice_promo_markup_allowed_signup_refused(env):
+    """v5.1 s1: promo / markup orders can be repriced by staff; the sign-up fee cannot."""
     await set_settings(env, {**FEATURES, "resellers": {"signup_fee_minor": 5000}})
     admin, _ = await env.login("admin")
     staff, _ = await env.login("agent")
@@ -854,11 +856,15 @@ async def test_reprice_refusals_for_promo_markup_and_signup_orders(env):
     so = (
         await applicant.post(f"{API}/reseller/apply", json={"slug": "newst", "store_name": "N"})
     ).json()["signup_order"]
-    for oid in (promo_o["id"], mk_o["id"], so["id"]):
+    for oid in (promo_o["id"], mk_o["id"]):
         r = await staff.patch(
             f"{API}/admin/orders/{oid}/price", json={"amount": "10.00", "reason": "x"}
         )
-        assert r.status_code == 409, (oid, r.text)
+        assert r.status_code == 200, (oid, r.text)
+    r = await staff.patch(
+        f"{API}/admin/orders/{so['id']}/price", json={"amount": "10.00", "reason": "x"}
+    )
+    assert r.status_code == 409 and r.json()["error"]["code"] == "reprice_not_goods", r.text
 
 
 async def _apply(client, slug="st1", name="St"):
