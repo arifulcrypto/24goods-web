@@ -444,6 +444,7 @@ export default {
     exact: 'Send the exact amount shown, in USDT on the network above only. Other networks or amounts are not credited automatically.',
     viewOrder: 'View order',
     loadFail: 'Could not load the payment details.',
+    simulate: 'Simulate payment (demo only)',
     qrAlt: 'QR code of the receiving address',
   },
   fee: {

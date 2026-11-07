@@ -67,6 +67,11 @@
 		reverse_proxy mockpay:8002
 	}
 
+	# Demo-only BEpusdt simulator: ONLY its "simulate payment" page. Remove in production.
+	handle /mockusdt/pay/* {
+		reverse_proxy mockusdt:8003
+	}
+
 	# Staff dashboard (PC). In production restrict further (VPN / Cloudflare Access).
 	redir /admin /admin/ 308
 	handle_path /admin/* {

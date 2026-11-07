@@ -72,6 +72,36 @@ Migrations are forward-only; roll back only to an image whose schema is compatib
 3. `cd /opt/kesiv/deploy && docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env up -d api`.
 4. Make a small test purchase.
 
+## USDT (self-hosted BEpusdt)
+
+BEpusdt (`v03413/bepusdt:v1.24.3`, compose profile `usdt`) receives USDT on Arbitrum One, X Layer and
+TRON. It is INTERNAL: docker network `usdt` only (shared with `api`), no published port, no Caddy route.
+Wallet addresses and the API token live in its console/volume, never in git.
+
+1. Start it: `$DC --profile usdt up -d bepusdt` (`$DC` = `docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env`).
+   The first start creates the SQLite DB in the `bepusdt_data` volume. Pin the image digest after the first pull.
+2. Open the console over an SSH tunnel (nothing is exposed): find the container IP
+   `docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' goods24-bepusdt-1`, then
+   `ssh -L 8080:<container-ip>:8080 <host>` and browse http://127.0.0.1:8080. Change the default admin
+   credentials immediately (first login, see the upstream docs shown in the console).
+3. In the console add the receiving wallets (public addresses, safe to keep in docs):
+   - Arbitrum One and X Layer (both EVM): `0xe2dc319ed904b2f798f262e3274b0f0c60e0653c`
+   - TRON (TRC20): `TQkeoASc6X5itH4MyPZPPCfLM4M62cvMu5`
+   Enable the networks `usdt.arbitrum`, `usdt.xlayer`, `usdt.trc20` and check the CNY/USDT rate source.
+4. System settings -> API: copy the **API token** and put it in `env/api.env` as
+   `APP_BEPUSDT_API_TOKEN=...` (with `APP_BEPUSDT_URL=http://bepusdt:8080`); `$DC up -d api`.
+   Only `api` gets the token. The notify URL sent to BEpusdt is `http://api:8000/api/v1/pay/notify/bepusdt`
+   (`APP_BEPUSDT_NOTIFY_URL` to override).
+5. Admin -> Settings -> Payments: enable the USDT channels you want and set the surcharge (default 0).
+   A channel stays invisible to buyers until enabled.
+6. Test with a small real transfer on each network before announcing it (M1 exit gate: independent review
+   before real money, AGENTS.md §1.11).
+
+Operations: BEpusdt retries a failed paid notify 10 times with back-off (2, 4, 8 ... min). An order that
+reaches `manual_review` (amount or re-query mismatch, late payment) is resolved by staff; the on-chain
+transaction hash is in the payment record (`block_transaction_id`). Back up the `bepusdt_data` volume with
+the other volumes (it only holds addresses, settings and trade history, no private keys).
+
 ## Refreshing Cloudflare IP ranges
 
 `curl https://www.cloudflare.com/ips-v4; curl https://www.cloudflare.com/ips-v6`, update `trusted_proxies static ...` and the date comment in `deploy/Caddyfile.prod`, validate (`caddy validate` in the web image), sync, `up -d web`.

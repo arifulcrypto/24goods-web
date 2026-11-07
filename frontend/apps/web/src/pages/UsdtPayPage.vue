@@ -115,6 +115,7 @@ async function retry() {
           <p class="state wait"><van-loading size="16" /> {{ t('pay.waiting') }}</p>
           <p class="muted small">{{ t('pay.exact') }}</p>
           <van-button round block @click="copy(view.address)">{{ t('pay.copy') }}</van-button>
+          <a v-if="view.sim_url" class="sim" :href="view.sim_url">{{ t('pay.simulate') }}</a>
         </template>
       </div>
     </div>
@@ -181,6 +182,11 @@ async function retry() {
 .state {
   margin: 0;
   text-align: center;
+}
+.sim {
+  text-align: center;
+  min-height: 44px;
+  line-height: 44px;
 }
 .state.ok {
   color: var(--van-success-color, #07c160);

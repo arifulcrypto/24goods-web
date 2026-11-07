@@ -287,6 +287,8 @@ export interface UsdtPayView {
   status: string
   /** server-generated QR (SVG markup) of the address: render via an <img> data URI only */
   qr_svg: string
+  /** demo only: the BEpusdt simulator's pay page (null in production) */
+  sim_url?: string | null
 }
 export interface CartQuoteLine {
   product_id: string

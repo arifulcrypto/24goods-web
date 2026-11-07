@@ -444,6 +444,7 @@ const zhCN: WebMessages = {
     exact: '请按上方显示的精确金额，仅在上述网络转入 USDT。其他网络或金额不会自动到账。',
     viewOrder: '查看订单',
     loadFail: '无法加载支付信息。',
+    simulate: '模拟支付（仅演示）',
     qrAlt: '收款地址二维码',
   },
   fee: {

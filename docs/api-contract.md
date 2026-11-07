@@ -191,10 +191,12 @@ type AgentStatus = { status: "online" | "away" | "on_hold" | "offline"; message:
 | POST `/orders` | `{product_id, qty, src?}` | `Order` + `access_code` | Buy-now at list price; `qty` 1–10; for `auto_card`, checks available (non-expired) stock. `src` is a traffic tag stored as `orders.source`; it is lowercased and **silently dropped** unless it matches `[a-z0-9_-]{1,32}`. `access_code` (10 Crockford base32 chars) is returned **only here** (and on quote accept / rotation) |
 | GET `/orders` | `page, page_size` | Paginated `Order` | Own orders only |
 | GET `/orders/{id}` | — | `Order` | Owner only |
-| POST `/orders/{id}/pay` | `{channel: "zpay_alipay"}` | `{pay_url}` | Only `pending_payment`; builds a signed `submit.php` URL; the client navigates to it |
+| POST `/orders/{id}/pay` | `{channel: "zpay_alipay"\|"usdt_arbitrum"\|"usdt_xlayer"\|"usdt_trc20"}` | `{pay_url}` | Only `pending_payment`; `zpay_alipay` builds a signed `submit.php` URL; a `usdt_*` channel opens a BEpusdt transaction and returns our own page `/pay/usdt/{order_no}` (same-origin). Disabled channel (USDT is off by default) or BEpusdt not configured -> 503 `unavailable` |
 | POST `/orders/{id}/reveal` | — | `{secrets: string[], cards: [{id, code}]}` | Proxied to the delivery service; owner + `can_reveal`; 10/h/order; audited. Voided (replaced/defective) cards are never returned |
 | POST `/orders/{id}/confirm` | — | `Order` | `delivered` → `completed` |
 | GET `/pay/notify/zpay` | ZPay query params | `text/plain` `success` \| `fail` | Full pipeline (architecture §7). POST also accepted. A notify for an already `refunded` order with the same `trade_no` as its payment is a benign duplicate (`success`, no state change, no critical audit); a different `trade_no` stays a critical `payment.unexpected_state` audit |
+| POST `/pay/notify/bepusdt` | BEpusdt JSON body (`trade_id, order_id, amount, actual_amount, token, block_transaction_id, status, signature, ...`) | `text/plain` `ok` \| `fail` | USDT notify (internal network). Pipeline: pinned-MD5 signature (constant time) -> `order_id` is this tenant's order/checkout -> `status` (1/3: `ok`, no change) -> `amount` (CNY) exact Decimal == order amount (else manual review) -> server-to-server `POST {BEPUSDT_URL}/api/v1/pay/info` must confirm status 2, same `order_id`, `money`, `fiat=CNY`, network == order channel -> row lock + state machine + `UNIQUE(channel, trade_id)` + outbox. `ok` only for processed or idempotent duplicates; `fail` makes BEpusdt retry. Exempt from CSRF and the global rate limit |
+| GET `/pay/usdt/{no}` | — | `UsdtPayView` | Owner of that order (`G...`) or checkout (`C...`) only, else 404. `{channel, label, network, address, usdt_amount, fiat_amount_minor, currency, expires_at, seconds_left, expired, status, qr_svg, sim_url?}`; `usdt_amount` is the exact amount to send, `status` is the order/checkout status (the page polls it), `qr_svg` is a server-generated QR of the address (render through an `<img>` data URI), `sim_url` only in dev/demo. 404 when no live attempt exists (press pay again) |
 | GET `/pay/return/zpay` | ZPay query params | `302` → `/orders/{out_trade_no}` | **Display only**, never fulfils |
 
 ## Markdown fields
@@ -278,7 +280,7 @@ Spec: [review-v4.md](review-v4.md). These rows extend or override the tables abo
 
 **Notify.** `out_trade_no` starting with `C` takes the checkout path with the same pipeline (signature, pid, exact amount vs `checkout.amount_minor`, status, re-query, replay guard), then one `Payment(checkout_id)` and the same per-order transition for each member. If the checkout itself is expired/cancelled every member is late (`manual_review`, money recorded, nothing fulfilled).
 
-**Ledger per payment:** `gateway_clearing:zpay +amount`, `sales_revenue -subtotal`, `surcharge_revenue -fee` (fee > 0) plus the unchanged gateway-cost entry. Refund reversal: `sales_revenue +subtotal`, `surcharge_revenue +fee`, `gateway_clearing:zpay -amount`.
+**Ledger per payment:** `gateway_clearing:zpay +amount` (`gateway_clearing:bepusdt` for `usdt_*` channels, memo `bepusdt payment ...`, no gateway-cost entry), `sales_revenue -subtotal`, `surcharge_revenue -fee` (fee > 0) plus the unchanged gateway-cost entry. Refund reversal: `sales_revenue +subtotal`, `surcharge_revenue +fee`, `gateway_clearing:zpay -amount`.
 
 | Admin method & path | Body | Returns | Notes |
 |---|---|---|---|

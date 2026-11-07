@@ -113,7 +113,7 @@ def _redirect_url(res: Resources, no: str) -> str:
     return f"{base}/orders/{no}" if not no.startswith("C") else f"{base}/orders"
 
 
-def attempt_view(att: dict[str, Any], status: str) -> dict[str, Any]:
+def attempt_view(res: Resources, att: dict[str, Any], status: str) -> dict[str, Any]:
     """Buyer-facing view of an attempt (+ the order/checkout status the page polls)."""
     channel = str(att.get("channel"))
     left = max(0, int(att.get("expires_at", 0)) - int(time.time()))
@@ -130,4 +130,13 @@ def attempt_view(att: dict[str, Any], status: str) -> dict[str, Any]:
         "expired": left == 0,
         "status": status,
         "qr_svg": qr_svg(str(att["address"])),
+        "sim_url": _sim_url(res, str(att.get("trade_id", ""))),
     }
+
+
+def _sim_url(res: Resources, trade_id: str) -> str | None:
+    """Demo/dev only: link to the simulator's "pay" page. Never set in production."""
+    base = res.settings.bepusdt_sim_url.rstrip("/")
+    if not base or res.settings.is_prod or not trade_id:
+        return None
+    return f"{base}/{trade_id}"

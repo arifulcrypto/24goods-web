@@ -129,7 +129,7 @@ async def usdt_attempt(
     att = await usdt_svc.load_attempt(res, no)
     if att is None or att.get("channel") != channel:
         raise NotFound("Payment not found")
-    return usdt_svc.attempt_view(att, status)
+    return usdt_svc.attempt_view(res, att, status)
 
 
 @router.get("/return/zpay")

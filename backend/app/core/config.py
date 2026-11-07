@@ -122,6 +122,9 @@ class Settings(BaseSettings):
     bepusdt_api_token: str = ""  # secret: signs create-transaction + verifies notifies
     bepusdt_notify_url: str = "http://api:8000/api/v1/pay/notify/bepusdt"
     bepusdt_timeout_s: int = 1200  # order validity requested from BEpusdt (>= 120)
+    # demo/dev only: browser path of the BEpusdt simulator's pay page (e.g. /mockusdt/pay);
+    # ignored when APP_ENV=prod
+    bepusdt_sim_url: str = ""
 
     # --- dev mock gateway ---
     mockpay_host: str = "127.0.0.1"
