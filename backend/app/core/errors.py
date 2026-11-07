@@ -96,6 +96,18 @@ class BuyerInputRequired(ApiError):
     status, code = 422, "buyer_input_required"
 
 
+class TooManyUnpaid(ApiError):
+    """Too many unpaid orders"""
+
+    status, code = 409, "too_many_unpaid"
+
+
+class BuyerInputTooLong(ApiError):
+    """The order information is too long"""
+
+    status, code = 422, "buyer_input_too_long"
+
+
 class QuoteExpired(ApiError):
     """Quote has expired"""
 

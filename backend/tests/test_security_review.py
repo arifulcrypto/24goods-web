@@ -143,7 +143,7 @@ async def test_pending_order_cap(env):
     ]
     assert codes == [200] * 5 + [409]
     r = await buyer.post("/api/v1/orders", json={"product_id": str(product.id), "qty": 1})
-    assert r.json()["error"]["code"] == "conflict"
+    assert r.json()["error"]["code"] == "too_many_unpaid"
     other, _ = await env.login("buyer")  # per buyer
     r = await other.post("/api/v1/orders", json={"product_id": str(product.id), "qty": 1})
     assert r.status_code == 200

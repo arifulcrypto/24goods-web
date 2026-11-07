@@ -18,12 +18,12 @@ from app.core.config import Settings
 from app.core.db import tenant_session
 from app.core.deps import Page
 from app.core.errors import (
-    Conflict,
     InvalidState,
     NotFound,
     OutOfStock,
     PayViaCheckout,
     RateLimited,
+    TooManyUnpaid,
     Unavailable,
     Validation,
 )
@@ -185,7 +185,9 @@ async def enforce_payables_cap(db: AsyncSession, settings: Settings, buyer: User
     max_pending, _ttl = await tenant_order_limits(db, settings, buyer.tenant_id)
     cap = settings.max_pending_orders_instant if buyer.is_instant else max_pending
     if await count_payables(db, buyer.id) >= cap:
-        raise Conflict(f"At most {cap} unpaid orders; pay or wait for one to expire")
+        raise TooManyUnpaid(
+            f"At most {cap} unpaid orders; pay or wait for one to expire", extra={"max": str(cap)}
+        )
 
 
 async def create_order(

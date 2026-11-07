@@ -112,3 +112,20 @@ async def test_switch_checkout_channel_and_refuse_after_payment(env, gw):
     await env.client(csrf=False).get(NOTIFY, params=notify_params(no, "2.10", trade_no="TCO"))
     r = await buyer.post(f"/api/v1/checkouts/{no}/pay", json={"channel": "zpay_alipay"})
     assert r.status_code == 409
+
+
+async def test_specific_codes_for_unpaid_cap_and_long_buyer_input(env):
+    from app.modules.common.buyerinput import clean_value
+
+    assert clean_value("​ abc﻿　 ") == "abc"  # zero-width + full-width space
+    await _two_channels(env)
+    p = await env.product(mode="manual", price=1000, floor=100)
+    buyer, _ = await env.login("buyer")
+    for _i in range(5):
+        await buy(buyer, p)
+    r = await buyer.post("/api/v1/orders", json={"product_id": str(p.id), "qty": 1})
+    assert r.status_code == 409 and r.json()["error"]["code"] == "too_many_unpaid"
+    r = await buyer.post(
+        "/api/v1/orders", json={"product_id": str(p.id), "qty": 1, "buyer_input": "x" * 4001}
+    )
+    assert r.status_code == 422 and r.json()["error"]["code"] == "buyer_input_too_long"
