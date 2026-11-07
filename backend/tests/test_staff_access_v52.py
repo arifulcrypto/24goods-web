@@ -51,11 +51,13 @@ async def test_admin_login_turnstile_and_allowlist_skip(env, monkeypatch):
 
 async def test_allowlist_validation(env):
     admin, _ = await env.login("admin")
-    for bad in (["not-an-ip"], ["10.0.0.0/99"], [f"10.0.0.{i}" for i in range(51)]):
+    too_many = [f"10.0.0.{i}" for i in range(51)]
+    broad = (["0.0.0.0/0"], ["::/0"], ["10.0.0.0/8"], ["2001:db8::/32"], ["224.0.0.1"])
+    for bad in (["not-an-ip"], ["10.0.0.0/99"], too_many, *broad):
         r = await admin.put(f"{API}/admin/site", json={"security": {"staff_ip_allowlist": bad}})
         assert r.status_code == 422, bad
-    out = await put_site(env, admin, {"security": {"staff_ip_allowlist": ["2001:db8::/32", ""]}})
-    assert out["security"]["staff_ip_allowlist"] == ["2001:db8::/32"]
+    out = await put_site(env, admin, {"security": {"staff_ip_allowlist": ["2001:db8::/48", ""]}})
+    assert out["security"]["staff_ip_allowlist"] == ["2001:db8::/48"]
 
 
 async def test_global_limit_bypass_for_allowlist_and_staff(env, monkeypatch):

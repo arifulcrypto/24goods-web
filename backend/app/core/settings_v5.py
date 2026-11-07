@@ -169,11 +169,17 @@ IPNet = ipaddress.IPv4Network | ipaddress.IPv6Network
 
 
 def parse_net(raw: str) -> IPNet | None:
-    """An IP or CIDR as a network (host bits allowed); None when invalid."""
+    """An IP or CIDR as a network (host bits allowed); None when invalid or too broad.
+    Over-broad ranges (< /16 IPv4, < /48 IPv6), unspecified, multicast and link-local are refused:
+    one typo such as ``0.0.0.0/0`` would otherwise switch off Turnstile + the global limit."""
     try:
-        return ipaddress.ip_network(raw.strip(), strict=False)
+        net = ipaddress.ip_network(raw.strip(), strict=False)
     except ValueError:
         return None
+    min_prefix = 16 if net.version == 4 else 48
+    if net.prefixlen < min_prefix or net.is_unspecified or net.is_multicast or net.is_link_local:
+        return None
+    return net
 
 
 def ip_in_nets(ip: str | None, nets: list[IPNet]) -> bool:

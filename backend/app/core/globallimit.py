@@ -28,6 +28,7 @@ from app.models import Tenant
 log = logging.getLogger("app.ratelimit")
 
 CFG_TTL_S = 5.0
+MIRROR_TTL_S = 600
 DEFAULTS = {"enabled": False, "limit": 120, "window_s": 60}
 BODY = b'{"code":429,"msg":"Access is too frequent. Please try again later."}'
 EXEMPT_EXACT = frozenset({"/api/v1/pay/notify/zpay"})
@@ -62,7 +63,8 @@ async def mirror(
     redis: Redis, tenant_id: uuid.UUID, cfg: dict[str, Any], staff_ips: list[str] | None = None
 ) -> None:
     """Cache config + the staff IP allowlist (security section) for the middleware."""
-    await redis.set(cfg_key(tenant_id), json.dumps(_with_ips(cfg, staff_ips)))
+    # TTL: a failed re-mirror (e.g. after removing an IP) self-heals from the DB within MIRROR_TTL_S
+    await redis.set(cfg_key(tenant_id), json.dumps(_with_ips(cfg, staff_ips)), ex=MIRROR_TTL_S)
 
 
 def exempt(path: str) -> bool:

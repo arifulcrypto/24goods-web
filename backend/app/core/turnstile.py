@@ -48,8 +48,8 @@ async def require_turnstile(
     sec = section(ts, "security")
     if not sec["turnstile_enabled"] or action not in sec["turnstile_actions"]:
         return
-    if ip_allowlisted(client_ip(request), sec["staff_ip_allowlist"]):
-        return  # staff office IPs skip the challenge (review-v5.2 §1)
+    if action == "login" and ip_allowlisted(client_ip(request), sec["staff_ip_allowlist"]):
+        return  # staff office IPs skip the login challenge only (review-v5.2 §1)
     res = request.app.state.res
     tenant_id: uuid.UUID = request.state.tenant_id
     async with tenant_session(res.maker, tenant_id) as db:
