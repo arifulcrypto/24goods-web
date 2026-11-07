@@ -73,7 +73,9 @@ def product_summary(
         "price": fmt(p.price_minor),
         "currency": p.currency,
         "delivery_mode": p.delivery_mode,
-        "stock": stock if p.delivery_mode == "auto_card" else None,
+        "stock": p.manual_stock
+        if p.delivery_mode == "manual"
+        else (stock if p.delivery_mode == "auto_card" else None),
         "category": p.category,
         "sold": p.sold,
         "after_sales_hours": resolve_after_sales_hours(p.after_sales_hours, tenant_settings),
@@ -129,7 +131,10 @@ def admin_product_view(p: Product, stock: int | None) -> dict[str, Any]:
         "price": fmt(p.price_minor),
         "currency": p.currency,
         "delivery_mode": p.delivery_mode,
-        "stock": stock if p.delivery_mode == "auto_card" else None,
+        "stock": p.manual_stock
+        if p.delivery_mode == "manual"
+        else (stock if p.delivery_mode == "auto_card" else None),
+        "manual_stock": p.manual_stock,
         "category": p.category,
         "sold": p.sold,
         "images": list(p.images),

@@ -85,6 +85,36 @@ async def available_stock(db: AsyncSession, product_id: uuid.UUID) -> int:
     return int(n or 0)
 
 
+async def reserve_manual_stock(db: AsyncSession, product_id: uuid.UUID, qty: int) -> None:
+    """Manual products with a finite ``manual_stock``: decrement under the product row lock
+    (no oversell between concurrent orders). NULL = unlimited. Released by
+    ``release_manual_stock`` when the order is cancelled or expires."""
+    stock = await db.scalar(
+        select(Product.manual_stock)
+        .where(Product.id == product_id, Product.delivery_mode == "manual")
+        .with_for_update()
+    )
+    if stock is None:
+        return
+    if stock < qty:
+        raise OutOfStock("Not enough stock", extra={"product_id": str(product_id)})
+    await db.execute(
+        update(Product).where(Product.id == product_id).values(manual_stock=stock - qty)
+    )
+
+
+async def release_manual_stock(db: AsyncSession, order: Order) -> None:
+    """Give a pending order's reservation back (called exactly once, at the single
+    pending_payment -> cancelled/expired transition; paid orders keep it)."""
+    if order.product_id is None or order.delivery_mode != "manual" or order.kind != "goods":
+        return
+    await db.execute(
+        update(Product)
+        .where(Product.id == order.product_id, Product.manual_stock.is_not(None))
+        .values(manual_stock=Product.manual_stock + order.qty)
+    )
+
+
 async def count_payables(db: AsyncSession, buyer_id: uuid.UUID) -> int:
     """Open payables: pending single orders plus pending checkouts (a checkout's member
     orders do not count on their own)."""
@@ -163,6 +193,8 @@ async def create_order(
     (never persisted, never logged)."""
     if enforce_cap:
         await enforce_payables_cap(db, settings, buyer)
+    if product_id is not None and delivery_mode == "manual" and kind == "goods":
+        await reserve_manual_stock(db, product_id, qty)
     if fee_permille is None:
         cfg = entry_cfg(await tenant_settings(db, buyer.tenant_id))
         if not cfg.enabled:
@@ -596,6 +628,7 @@ async def _call_reveal(
 
 async def _expire_order(db: AsyncSession, tid: uuid.UUID, order: Order) -> Message | None:
     before = snapshot(order)
+    await release_manual_stock(db, order)
     order.status = "expired"
     order.version += 1
     await add_event(

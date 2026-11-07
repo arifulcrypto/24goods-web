@@ -114,7 +114,11 @@ async def quote_cart(
                 }
             )
             continue
-        s = stock.get(p.id) if p.delivery_mode == "auto_card" else None
+        s = (
+            p.manual_stock
+            if p.delivery_mode == "manual"
+            else (stock.get(p.id) if p.delivery_mode == "auto_card" else None)
+        )
         max_qty = MAX_QTY if s is None else min(MAX_QTY, s)
         if p.status != "active":
             max_qty = 0
@@ -302,6 +306,19 @@ async def create_checkout(
         p = products[pid]
         if p.delivery_mode == "auto_card" and stock.get(pid, 0) < qty:
             raise OutOfStock("Not enough stock", extra={"product_id": str(pid)})
+    manual_ids = sorted(pid for pid in want if products[pid].delivery_mode == "manual")
+    if manual_ids:  # lock product rows in id order: carts never deadlock each other
+        await db.execute(
+            select(Product.id)
+            .where(Product.id.in_(manual_ids))
+            .order_by(Product.id)
+            .with_for_update()
+        )
+        for pid in manual_ids:
+            await db.refresh(products[pid], ["manual_stock"])
+            ms = products[pid].manual_stock
+            if ms is not None and ms < want[pid]:
+                raise OutOfStock("Not enough stock", extra={"product_id": str(pid)})
     cfg = entry_cfg(await tenant_settings(db, buyer.tenant_id))
     if not cfg.enabled:
         raise Unavailable("Payment channel is not available")

@@ -41,6 +41,8 @@ class Product(Base):
     source_url: Mapped[str | None] = mapped_column(String(1000))
     cost_minor: Mapped[int | None] = mapped_column(BigInteger)
     archived_at: Mapped[datetime | None]
+    # v5.2: manual-delivery stock; NULL = unlimited (reserved at order, released on cancel/expiry)
+    manual_stock: Mapped[int | None] = mapped_column(Integer)
     created_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = created_at()
     updated_at: Mapped[datetime] = updated_at()

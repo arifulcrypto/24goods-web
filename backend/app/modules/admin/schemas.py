@@ -128,6 +128,8 @@ class ProductIn(BaseModel):
     delivery_eta_hours: int | None = Field(None, ge=1, le=720)
     cost_minor: int | None = Field(None, ge=0, le=10**12)
     source_url: str | None = None
+    # v5.2: manual stock; omitted on a manual product = 1, explicit null = unlimited
+    manual_stock: int | None = Field(None, ge=0, le=10**6)
 
     @field_validator("source_url")
     @classmethod
@@ -189,6 +191,7 @@ class ProductPatch(BaseModel):
     delivery_eta_hours: int | None = Field(None, ge=1, le=720)  # explicit null = tenant default
     cost_minor: int | None = Field(None, ge=0, le=10**12)
     source_url: str | None = None
+    manual_stock: int | None = Field(None, ge=0, le=10**6)  # explicit null = unlimited
 
     @field_validator("source_url")
     @classmethod

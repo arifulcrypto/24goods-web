@@ -22,7 +22,7 @@ from app.core.resources import Resources
 from app.models import Checkout, Message, Order, User
 from app.modules.chat.messages import post_system
 from app.modules.orders.events import add_event, snapshot
-from app.modules.orders.service import broadcast_order
+from app.modules.orders.service import broadcast_order, release_manual_stock
 from app.modules.payments import usdt as usdt_svc
 from app.modules.payments.channels import is_usdt
 from app.modules.payments.settle import (
@@ -212,6 +212,7 @@ async def cancel_group(
     msgs: list[Message | None] = []
     for o in orders:
         before = snapshot(o)
+        await release_manual_stock(db, o)
         o.status = "cancelled"
         o.cancel_reason = clean[:200] if clean else None
         o.version += 1
