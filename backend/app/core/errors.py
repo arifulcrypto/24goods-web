@@ -133,3 +133,9 @@ def error_body(
         body.update(extra)
         body["data"] = dict(extra)
     return {"error": body}
+
+
+class AccountSuspended(ApiError):
+    """Your account has been suspended"""
+
+    status, code = 403, "account_suspended"

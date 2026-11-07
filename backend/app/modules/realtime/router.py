@@ -4,10 +4,12 @@ streaming starts, so long-lived streams never pin pooled connections."""
 from __future__ import annotations
 
 import uuid
+from collections.abc import Awaitable, Callable
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 
+from app.core import suspend
 from app.core.db import tenant_session
 from app.core.deps import get_res, get_session, get_tenant_id
 from app.core.errors import Forbidden, Unauthorized
@@ -29,7 +31,19 @@ async def _stream_user(res: Resources, sess: SessionData | None, tenant_id: uuid
         user = await db.get(User, sess.user_id)
     if user is None or user.status != "active":
         raise Unauthorized("Authentication required")
+    if suspend.is_suspended(user):
+        raise suspend.suspended_error(user)
     return user
+
+
+def _alive(res: Resources, request: Request, tenant_id: uuid.UUID) -> Callable[[], Awaitable[bool]]:
+    token = res.sessions.token_from(request.cookies)
+
+    async def check() -> bool:
+        sess = await res.sessions.get(token)
+        return sess is not None and sess.tenant_id == tenant_id
+
+    return check
 
 
 @router.get("/stream")
@@ -42,7 +56,9 @@ async def stream(
     user = await _stream_user(res, sess, tenant_id)
     sub = res.hub.subscribe([user_channel(user.id), public_channel(tenant_id)])
     return StreamingResponse(
-        sse_events(res.hub, sub), media_type="text/event-stream", headers=SSE_HEADERS
+        sse_events(res.hub, sub, alive=_alive(res, request, tenant_id)),
+        media_type="text/event-stream",
+        headers=SSE_HEADERS,
     )
 
 
@@ -58,5 +74,7 @@ async def admin_stream(
         raise Forbidden("Staff only")
     sub = res.hub.subscribe([staff_channel(tenant_id)])
     return StreamingResponse(
-        sse_events(res.hub, sub), media_type="text/event-stream", headers=SSE_HEADERS
+        sse_events(res.hub, sub, alive=_alive(res, request, tenant_id)),
+        media_type="text/event-stream",
+        headers=SSE_HEADERS,
     )

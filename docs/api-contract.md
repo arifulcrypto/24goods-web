@@ -446,3 +446,26 @@ admin order views gain `reseller_markup_minor`, `kind`, `discount_minor`, `promo
 `store_url` (reseller `/me` and admin reseller views) is `{PUBLIC_BASE_URL}/?store=<slug>` in query
 mode, `https://<slug>.<base_domain>/` in subdomain mode. The web app remembers the storefront in
 localStorage for 30 days (`?store=off` clears it).
+
+## Blocking v5.2 (user suspension, blocked IPs) — review-v5.1 §5
+
+New error codes (both `403`):
+
+| code | When |
+| --- | --- |
+| `account_suspended` | Login (password, Google) and every authenticated request of a suspended user. Envelope carries extra string fields `until` (ISO-8601 `Z`, when the suspension is timed) and `reason`. A timed suspension auto-lifts on the first check after `until`. Wrong passwords stay a generic `401` (no probing of suspended accounts). |
+| `ip_blocked` | Any `/api/*` request from a blocked client IP: `{"error":{"code":"ip_blocked","message":"Access denied"}}`. Exempt: `/api/v1/pay/notify/*`, `/healthz`, non-API paths, and IPs in `security.staff_ip_allowlist` (allowlist wins). The client IP is the trusted-proxy resolved one (an untrusted peer's `X-Forwarded-For` is ignored). Fails open on Redis/DB errors. |
+
+Admin endpoints:
+
+| Endpoint | Body / query | Returns | Notes |
+| --- | --- | --- | --- |
+| GET `/admin/users` | `?q=&role=&status=active\|suspended&page&page_size` | `Paginated<AdminUser>` | staff; `q` matches email/handle/name. Agents only see buyers (`role` ignored). `AdminUser = {id, email, handle, display_name, role, status: "active"\|"suspended", suspended_until, suspend_reason, created_at, last_login_at}` |
+| POST `/admin/users/{id}/suspend` | `{reason (1..200), until?: ISO-8601 with offset, future}` | `AdminUser` | staff. Admins can suspend buyers and agents; agents buyers only (`403`). Never self, never an admin (`403`). Other tenant → `404`. Revokes all the user's sessions; audit `user.suspend` (before/after/reason/ip) |
+| POST `/admin/users/{id}/unsuspend` | none | `AdminUser` | same permissions; audit `user.unsuspend` |
+| GET `/admin/blocked-ips` | `?page&page_size` | `Paginated<BlockedIp>` | admin only. `BlockedIp = {id, cidr, note, expires_at, created_at, created_by}` |
+| POST `/admin/blocked-ips` | `{cidr, note?, expires_at?}` | `BlockedIp` (201) | admin only. `cidr` is an IP or CIDR (normalised); IPv4 down to `/8`, IPv6 down to `/32`; `0.0.0.0/0` and `::/0` refused (`422 validation`), as is a range containing the caller's own IP. Duplicate → `409`. Audit `blocked_ip.add` |
+| DELETE `/admin/blocked-ips/{id}` | none | `204` | admin only; audit `blocked_ip.remove`. Takes effect within a few seconds (in-process cache) |
+
+Config is mirrored to Redis `cfg:blockedips:<tenant_id>` (TTL 600 s, rebuilt from the DB on a miss or after a
+Security settings save).

@@ -6,7 +6,7 @@ import asyncio
 import contextlib
 import json
 import logging
-from collections.abc import AsyncIterator, Iterable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
 from typing import Any
 
 from redis.asyncio import Redis
@@ -112,14 +112,21 @@ class RealtimeHub:
 
 
 async def sse_events(
-    hub: RealtimeHub, sub: Subscription, heartbeat_s: float = HEARTBEAT_S
+    hub: RealtimeHub,
+    sub: Subscription,
+    heartbeat_s: float = HEARTBEAT_S,
+    alive: Callable[[], Awaitable[bool]] | None = None,
 ) -> AsyncIterator[str]:
+    """``alive`` is re-checked at every heartbeat: a revoked session (logout, suspension)
+    closes the stream instead of receiving events until the client disconnects."""
     try:
         yield "retry: 4000\n\n"
         while not sub.overflowed:
             try:
                 item = await asyncio.wait_for(sub.queue.get(), heartbeat_s)
             except asyncio.TimeoutError:
+                if alive is not None and not await alive():
+                    break
                 yield ": ping\n\n"
                 continue
             data = json.dumps(item.get("data"), separators=(",", ":"), default=str)

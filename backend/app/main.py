@@ -15,6 +15,7 @@ from fastapi import APIRouter, FastAPI
 from app.core.config import get_settings
 from app.core.error_handlers import install_error_handlers
 from app.core.globallimit import GlobalRateLimitMiddleware
+from app.core.ipblock import IPBlockMiddleware
 from app.core.memtrim import trim
 from app.core.middleware import (
     SECURITY_HEADERS,
@@ -24,6 +25,7 @@ from app.core.middleware import (
 )
 from app.core.resources import Resources, build_resources
 from app.modules import emails, jobs
+from app.modules.admin.blocking import router as admin_blocking_router
 from app.modules.admin.categories import router as admin_categories_router
 from app.modules.admin.importer import router as admin_import_router
 from app.modules.admin.router import router as admin_router
@@ -118,6 +120,7 @@ def api_router() -> APIRouter:
         admin_import_router,
         admin_categories_router,
         admin_settings_router,
+        admin_blocking_router,
     ):
         r.include_router(sub)
     return r
@@ -164,7 +167,8 @@ def create_app(res: Resources | None = None, *, background: bool = True) -> Fast
     async def healthz() -> dict[str, str]:
         return {"status": "ok"}
 
-    # Added inner-most first: Core (outermost) -> GlobalRateLimit -> BodyLimit -> CSRF -> routes.
+    # Added inner-most first:
+    # Core (outermost) -> IPBlock -> GlobalRateLimit -> BodyLimit -> CSRF -> routes.
     app.add_middleware(CSRFMiddleware, exempt=[NOTIFY_PATH, NOTIFY_BEPUSDT_PATH])
     app.add_middleware(
         BodyLimitMiddleware,
@@ -173,6 +177,7 @@ def create_app(res: Resources | None = None, *, background: bool = True) -> Fast
         upload_paths=UPLOAD_PATHS,
     )
     app.add_middleware(GlobalRateLimitMiddleware)  # after Core: client IP is resolved
+    app.add_middleware(IPBlockMiddleware)  # outside the limiter: blocked IPs cost no limiter hits
     app.add_middleware(CoreMiddleware, trusted=settings.trusted_proxy_networks)
     return app
 

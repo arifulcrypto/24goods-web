@@ -27,7 +27,9 @@ _Last updated 2026-11-07 (v5.1 items 1, 2, 6; USDT on `feat/v52-usdt`)._
      model). Needs payment-auditor + security-reviewer, then demo env changes (see production.md "USDT").
   2. v5.1 §3 reseller subdomains + own domains (Cloudflare changes → show the owner first; set fallback
      origin `stores.kesiv.com`; verify token write permission with the prod token).
-  3. v5.1 §5 block IPs/users (needs the CF token permission for IP lists).
+  3. v5.1 §5 block IPs/users: app-level MVP done on `feat/v52-blocking` (user suspension, `blocked_ips`
+     middleware, admin Users page, full-page "Access denied"/"suspended" screens). Cloudflare IP-list sync
+     still open (needs the CF token permission); security-reviewer pass pending.
   4. Telegram staff notifications: implemented on `feat/v52-telegram` (review-v5.2 §10); owner sets the token in Settings -> Notifications.
   5. Older follow-ups: admin order `cost_minor` snapshot, promo redemptions `order_no`, dev DB probe-data
      cleanup, prod `APP_SETTINGS_KEY` before the v5 prod deploy.

@@ -1,3 +1,4 @@
+import { reportAccessBlock } from './accessBlock'
 import { ApiError, errorFromBody } from './errors'
 
 export type Query = Record<string, string | number | boolean | null | undefined>
@@ -119,6 +120,7 @@ export class ApiClient {
       const err = errorFromBody(res.status, parsed)
       if (res.status === 401 && !o.skipAuthHandler) this.opts.onUnauthorized?.(err)
       if (err.code === 'too_frequent') this.opts.onRateLimited?.(err)
+      reportAccessBlock(err)
       throw err
     }
     if (typeof parsed === 'string') {

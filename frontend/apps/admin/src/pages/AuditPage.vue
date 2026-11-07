@@ -5,11 +5,13 @@ import { Download, Search } from '@element-plus/icons-vue'
 import { formatDateTime } from '@24goods/shared'
 import { apiV5 } from '../api'
 import type { AuditFilters, AuditRowV5 } from '../api-v5'
+import { useAuthStore } from '../stores/auth'
 import { usePaged } from '../composables/usePaged'
 import { auditSides, rangeToQuery } from '../lib/auditRow'
 import { jsonDiff, showValue } from '../lib/diff'
 
 const { t, locale } = useI18n()
+const auth = useAuthStore()
 const f = reactive({ action: '', actor: '', target: '', severity: '' })
 const range = ref<[Date, Date] | null>(null)
 const filters = computed<AuditFilters>(() => ({
@@ -65,7 +67,9 @@ const SEV: Record<string, 'info' | 'warning' | 'danger'> = { info: 'info', warni
           <template #default="{ row }"><el-tag v-if="row.severity" size="small" :type="SEV[row.severity] ?? 'info'">{{ row.severity }}</el-tag></template>
         </el-table-column>
         <el-table-column :label="t('audit.target')" prop="target" min-width="200" show-overflow-tooltip />
-        <el-table-column :label="t('audit.ip')" width="140"><template #default="{ row }"><span class="mono">{{ row.ip ?? '—' }}</span></template></el-table-column>
+        <el-table-column :label="t('audit.ip')" width="140"><template #default="{ row }"><span class="mono">{{ row.ip ?? '—' }}</span>
+            <router-link v-if="row.ip && auth.isAdmin" class="blockip" :to="{ name: 'users', query: { tab: 'blocked', ip: row.ip } }" @click.stop>{{ t('v5.users.blockIp') }}</router-link>
+          </template></el-table-column>
       </el-table>
       <div class="pager"><el-pagination layout="total, prev, pager, next" :total="table.total.value" :page-size="table.pageSize" :current-page="table.page.value" @current-change="table.load" /></div>
     </div>
@@ -99,6 +103,10 @@ const SEV: Record<string, 'info' | 'warning' | 'danger'> = { info: 'info', warni
 </template>
 
 <style scoped>
+.blockip {
+  margin-left: 8px;
+  font-size: 12px;
+}
 .filters {
   flex-wrap: wrap;
   gap: 8px;

@@ -15,6 +15,7 @@ from app.core.errors import Forbidden, Unauthorized
 from app.core.i18n import resolve_lang
 from app.core.resources import Resources
 from app.core.security import STAFF_ROLES, SessionData
+from app.core.suspend import enforce as enforce_not_suspended
 from app.models import User
 
 
@@ -66,6 +67,7 @@ async def optional_user(
     user = await db.scalar(select(User).where(User.id == sess.user_id))
     if user is None or user.status != "active":
         return None
+    await enforce_not_suspended(db, user)
     return user
 
 

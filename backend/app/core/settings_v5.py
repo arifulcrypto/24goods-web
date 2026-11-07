@@ -203,6 +203,8 @@ def ip_in_nets(ip: str | None, nets: list[IPNet]) -> bool:
         addr = ipaddress.ip_address(ip)
     except ValueError:
         return False
+    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
+        addr = addr.ipv4_mapped  # ::ffff:a.b.c.d from a dual-stack socket = a.b.c.d
     return any(addr.version == n.version and addr in n for n in nets)
 
 

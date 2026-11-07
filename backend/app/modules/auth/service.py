@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import pow as powmod
+from app.core import suspend
 from app.core.audit import audit
 from app.core.config import Settings
 from app.core.errors import Conflict, Unauthorized
@@ -34,7 +35,7 @@ EMAIL_FAILURES = (50, 3600)  # looser per-email cap across IPs (distributed gues
 POW_AFTER_FAILURES = 3  # proof of work is required from the 4th attempt per (login, ip)
 
 HANDLE_ALPHABET = "abcdefghijklmnopqrstuvwxyz234567"  # base32, lowercase
-PASSWORD_ALPHABET = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # no 0/O/1/l/I  # noqa: S105
+PASSWORD_ALPHABET = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # noqa: S105  # gitleaks:allow (alphabet, not a secret)
 PASSWORD_LEN = 14
 
 
@@ -200,6 +201,7 @@ async def login(
         )
         await db.commit()
         raise Unauthorized(GENERIC_LOGIN_ERROR)
+    await suspend.enforce(db, user)  # only after the password matched: no account probing
     if rehash:
         user.pw_hash = await hash_password(body.password)
     user.last_login_at = datetime.now(timezone.utc)
