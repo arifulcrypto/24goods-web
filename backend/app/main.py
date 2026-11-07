@@ -51,6 +51,7 @@ from app.modules.realtime.router import router as realtime_router
 from app.modules.reseller import domains
 from app.modules.reseller.router import admin as reseller_admin_router
 from app.modules.reseller.router import router as reseller_router
+from app.modules.seo.router import router as seo_router
 from app.modules.uploads.router import router as uploads_router
 
 log = logging.getLogger("app.main")
@@ -166,6 +167,7 @@ def create_app(res: Resources | None = None, *, background: bool = True) -> Fast
     app.state.res = res
     install_error_handlers(app)
     app.include_router(api_router())
+    app.include_router(seo_router)  # root-level crawler HTML, sitemap, robots (ADR-024)
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:

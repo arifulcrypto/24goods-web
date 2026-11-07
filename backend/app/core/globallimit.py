@@ -67,7 +67,14 @@ async def mirror(
     await redis.set(cfg_key(tenant_id), json.dumps(_with_ips(cfg, staff_ips)), ex=MIRROR_TTL_S)
 
 
+# Root-level SEO routes (app/modules/seo) are crawler-facing and hit the DB: limited like /api.
+SEO_EXACT = frozenset({"/", "/help", "/search", "/sitemap.xml", "/robots.txt"})
+SEO_PREFIX = ("/p/", "/a/")
+
+
 def exempt(path: str) -> bool:
+    if path in SEO_EXACT or path.startswith(SEO_PREFIX):
+        return False
     return not path.startswith("/api/") or path in EXEMPT_EXACT or path.startswith(EXEMPT_PREFIX)
 
 

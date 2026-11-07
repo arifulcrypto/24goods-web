@@ -50,6 +50,10 @@ class Settings(BaseSettings):
     internal_port: int = 8081
     trusted_proxies: str = "127.0.0.1/32,::1/128"
     public_base_url: str = "http://localhost:8080"
+    # Built SPA shell the SEO pages are rendered into (review-v5.2 §6): Caddy's `web` container,
+    # internal edge network only. Falls back to APP_WEB_INDEX_PATH (a file) when set.
+    web_index_url: str = "http://web/index.html"
+    web_index_path: str = ""
 
     # --- storage ---
     database_url: str = "postgresql+asyncpg://app_api:app_api@localhost:5432/app"

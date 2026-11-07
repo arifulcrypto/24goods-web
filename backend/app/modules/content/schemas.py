@@ -18,6 +18,7 @@ from app.modules.content.schemas_v5 import (
     NotificationsIn,
     ResellersIn,
     SecurityIn,
+    SeoIn,
 )
 
 LOCALES = ("en", "zh-CN")
@@ -196,6 +197,7 @@ class SiteIn(BaseModel):
     import_: ImportIn | None = Field(None, alias="import")
     resellers: ResellersIn | None = None
     audit: AuditIn | None = None
+    seo: SeoIn | None = None
     announcement: AnnouncementIn | None = None
     payments: PaymentsIn | None = None
     support: SupportIn | None = None

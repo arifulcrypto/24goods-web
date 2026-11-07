@@ -181,6 +181,13 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     "audit": {
         "retention_days": 365,
     },
+    # SEO (review-v5.2 §6). indexing_enabled=false -> noindex everywhere + robots Disallow: /
+    "seo": {
+        "indexing_enabled": True,
+        "index_storefronts": False,  # white-label reseller hosts are indexable only when true
+        "default_description_i18n": {},
+        "og_image": "",  # "" | /path | https://... (absolute URL or same-origin path)
+    },
 }
 
 _INT_BOUNDS: dict[tuple[str, str], tuple[int, int]] = {
