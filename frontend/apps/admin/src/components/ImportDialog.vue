@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { SafeHtml } from '@24goods/shared/ui'
 import { apiV5 } from '../api'
 import type { ImportDraft, ProductPrefill } from '../api-v5'
-import { pickClipboard, rewriteImages } from '../lib/importDraft'
+import { copyImages, draftToFields, pickClipboard } from '../lib/importDraft'
 import { renderMarkdownPreview, safeUrl } from '../lib/markdown'
 import { minorToYuan, suggestPrice, yuanToMinor } from '../lib/money'
 import { toastError } from '../ui'
@@ -126,30 +126,16 @@ async function create() {
   creating.value = true
   try {
     const chosen = imgs.value.filter((i) => i.on)
-    const map = new Map<string, string>()
-    let failed = 0
-    const queue = [...chosen]
-    await Promise.all(
-      Array.from({ length: Math.min(3, queue.length) }, async () => {
-        for (let i = queue.shift(); i; i = queue.shift()) {
-          try {
-            const r = await apiV5.content.fetchImage(i.url)
-            if (safeUrl(r.url)) map.set(i.url, r.url)
-            else failed++
-          } catch {
-            failed++
-          }
-        }
-      }),
-    )
+    const { map, failed } = await copyImages(chosen, apiV5.content.fetchImage, safeUrl)
     if (failed) ElMessage.warning({ message: t('v5.import.imagesFailed', { n: failed }), grouping: true })
+    const out = draftToFields({ title: f.title.trim(), description_md: f.desc }, map, chosen)
     emit('create', {
-      title: f.title.trim(),
-      description_md: rewriteImages(f.desc, map, chosen),
+      title: out.title,
+      description_md: out.description_md,
       price_minor: f.price.trim() ? yuanToMinor(f.price) : suggested.value,
       cost_minor: costMinor.value,
       // fetched copies on our own origin, in the order shown; the first becomes the cover
-      images: chosen.map((i) => map.get(i.url)).filter((u): u is string => !!u),
+      images: out.images,
       source_url: draft.value.source_url ?? (tab.value === 'url' ? url.value.trim() : baseUrl.value.trim()) ?? null,
     })
   } finally {
