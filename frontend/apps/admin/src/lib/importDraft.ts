@@ -58,8 +58,8 @@ export async function copyImages(
 /** Map a draft + copied images to our fields: description with rewritten images and ordered own-origin image urls. */
 export function draftToFields(d: { title: string; description_md: string }, map: Map<string, string>, chosen: ImportImage[]) {
   return {
-    title: d.title,
-    description_md: rewriteImages(d.description_md, map, chosen),
+    title: d.title.slice(0, 120),
+    description_md: rewriteImages(d.description_md, map, chosen).slice(0, 5000),
     images: chosen.map((i) => map.get(i.url)).filter((u): u is string => !!u),
   }
 }
