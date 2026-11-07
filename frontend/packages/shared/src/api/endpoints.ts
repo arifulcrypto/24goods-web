@@ -8,6 +8,7 @@ import type {
   CheckoutResult,
   CheckoutView,
   PaymentChannel,
+  UsdtPayView,
   Article,
   ArticleSummary,
   InstantResult,
@@ -59,6 +60,8 @@ import type {
 } from '../types'
 
 export const DEFAULT_PAY_CHANNEL = 'zpay_alipay'
+/** Channels settled in USDT (BEpusdt); their pay_url is our own `/pay/usdt/:no` page. */
+export const isUsdtChannel = (id: string | null | undefined): boolean => !!id && id.startsWith('usdt_')
 
 export interface UploadOptions {
   kind: 'image' | 'voice' | 'file'
@@ -194,6 +197,8 @@ export function createBuyerApi(c: ApiClient) {
       confirm: (id: string) => c.post<Order>(`/orders/${seg(id)}/confirm`),
       afterSales: (id: string, b: AfterSalesInput) => c.post<AfterSales>(`/orders/${seg(id)}/after-sales`, b),
     },
+    /** v5.2 §7: data of the USDT pay page (owner only; 404 when no attempt exists). */
+    usdtPay: (no: string) => c.get<UsdtPayView>(`/pay/usdt/${seg(no)}`),
     /** v4 §1 */
     paymentChannels: () => c.get<PaymentChannel[]>('/site/payment-channels'),
     /** v4 §2: server truth for cart lines (no login needed). */

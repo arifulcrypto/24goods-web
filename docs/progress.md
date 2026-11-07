@@ -4,7 +4,7 @@ Update this file in every PR. Phases are defined in [review-v2.md §8](review-v2
 
 ## Current state — hand-off (read this first in a new session)
 
-_Last updated 2026-11-07 (v5.1 items 1, 2, 6)._
+_Last updated 2026-11-07 (v5.1 items 1, 2, 6; USDT on `feat/v52-usdt`)._
 
 - **Prod** https://shop.kesiv.com runs **v4** (c4 /opt/kesiv). `scripts/prod.sh deploy` is run by the owner.
 - **Demo** https://demo.kesiv.com runs `:main` (auto-updated by `goods24-demo-update.timer`, manual:
@@ -23,8 +23,8 @@ _Last updated 2026-11-07 (v5.1 items 1, 2, 6)._
   (`/root/.secrets/telegram.env`, not in git), Cloudflare for SaaS being enabled (read-only check OK,
   fallback origin not set). **Agents don't change Cloudflare settings.**
 - **Next steps, in order:**
-  1. v5.1 §4 USDT via BEpusdt (Arbitrum One + X Layer, TRC20 optional): payment provider instances.
-     Needs payment-auditor.
+  1. v5.2 §7 USDT via BEpusdt: implemented on `feat/v52-usdt` (ADR-023, fixed channels, no provider-instance
+     model). Needs payment-auditor + security-reviewer, then demo env changes (see production.md "USDT").
   2. v5.1 §3 reseller subdomains + own domains (Cloudflare changes → show the owner first; set fallback
      origin `stores.kesiv.com`; verify token write permission with the prod token).
   3. v5.1 §5 block IPs/users: app-level MVP done on `feat/v52-blocking` (user suspension, `blocked_ips`

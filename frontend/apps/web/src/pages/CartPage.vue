@@ -17,12 +17,14 @@ import BuyerInputSheet from '../components/BuyerInputSheet.vue'
 import CredentialsSheet from '../components/CredentialsSheet.vue'
 import FeeLines from '../components/FeeLines.vue'
 import ManualPromise from '../components/ManualPromise.vue'
+import PayChannelPicker from '../components/PayChannelPicker.vue'
 import PromoField, { type AppliedPromo } from '../components/PromoField.vue'
 import TurnstileBox from '../components/TurnstileBox.vue'
 import PowStatus from '../components/PowStatus.vue'
 import { isPowAbort } from '../composables/usePow'
 import { useEnsureAccount } from '../composables/useEnsureAccount'
 import { recalledSrc, stashAccessCode } from '../lib/attribution'
+import { channelId } from '../lib/orderActions'
 import { CART_MAX_QTY, useCartStore, type CartLine } from '../stores/cart'
 import { useAuthStore } from '../stores/auth'
 import { useSiteStore } from '../stores/site'
@@ -221,7 +223,7 @@ async function submit() {
       firstOrder ??= o.id
     }
     cart.removeMany(chosen.map((l) => l.product_id))
-    const { pay_url } = await api.checkout.pay(checkoutNo)
+    const { pay_url } = await api.checkout.pay(checkoutNo, await channelId())
     const safe = safePayUrl(pay_url)
     if (!safe) throw new Error('unsafe pay_url')
     window.location.assign(safe)
@@ -331,6 +333,7 @@ async function submit() {
       <div v-if="!managing && cart.payableCount" class="card summary">
         <PromoField v-model="promo" :items="promoItems" />
         <p v-if="promo?.stale" class="muted small stale">{{ t('promo.stale') }}</p>
+        <PayChannelPicker />
         <FeeLines
           :subtotal="totals.subtotal"
           :discount-minor="discountApplied"

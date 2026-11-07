@@ -5,6 +5,15 @@ import { BRAND, DEFAULT_PAY_CHANNEL, isWhiteLabel, promoAvailable } from '@24goo
 import { currentLocale } from '../i18n'
 import { api } from '../api'
 
+const PICK_KEY = 'pay_channel'
+function readPick(): string | null {
+  try {
+    return localStorage.getItem(PICK_KEY)
+  } catch {
+    return null
+  }
+}
+
 export const useSiteStore = defineStore('site', () => {
   const site = ref<SiteInfo | null>(null)
   const channels = ref<PaymentChannel[] | null>(null)
@@ -37,9 +46,23 @@ export const useSiteStore = defineStore('site', () => {
       })
     return loadingChannels
   }
-  /** The channel orders are created on (single channel today). */
+  /** The buyer's pick among the ENABLED channels (remembered per browser; a convenience only). */
+  const selectedId = ref<string | null>(readPick())
+  function select(id: string): void {
+    selectedId.value = id
+    try {
+      localStorage.setItem(PICK_KEY, id)
+    } catch {
+      /* private mode / blocked storage: the pick just isn't remembered */
+    }
+  }
+  /** Channel used for pay + fee display: the pick if still enabled, else Alipay, else the first enabled. */
   const channel = computed<PaymentChannel | null>(
-    () => channels.value?.find((c) => c.id === DEFAULT_PAY_CHANNEL) ?? channels.value?.[0] ?? null,
+    () =>
+      channels.value?.find((c) => c.id === selectedId.value) ??
+      channels.value?.find((c) => c.id === DEFAULT_PAY_CHANNEL) ??
+      channels.value?.[0] ??
+      null,
   )
   const permille = computed(() => channel.value?.permille ?? 0)
   /** Feature toggles: everything defaults to on (older backends / not loaded yet), resellers to off. */
@@ -78,6 +101,8 @@ export const useSiteStore = defineStore('site', () => {
     site,
     channels,
     channel,
+    selectedId,
+    select,
     permille,
     load,
     loadChannels,

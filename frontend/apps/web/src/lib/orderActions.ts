@@ -1,10 +1,18 @@
 /** Pay / cancel flows shared by My Orders and the order detail page (review-v4 §2, §3). */
 import { errorExtra, isApiError, safePayUrl, type Order } from '@24goods/shared'
 import { api } from '../api'
+import { useSiteStore } from '../stores/site'
 import { i18n } from '../i18n'
 import { closeToast, confirm, showLoadingToast, showSuccessToast, showToast, toastError } from '../ui'
 
 const t = (k: string, p?: Record<string, unknown>) => i18n.global.t(k, p ?? {})
+
+/** Channel the buyer picked (Alipay when channels are not loaded / only one is enabled). */
+async function channelId(): Promise<string | undefined> {
+  const site = useSiteStore()
+  await site.loadChannels()
+  return site.channel?.id
+}
 
 function go(payUrl: string): void {
   const safe = safePayUrl(payUrl)
@@ -13,9 +21,11 @@ function go(payUrl: string): void {
   window.location.assign(safe)
 }
 
+export { channelId }
+
 export async function payCheckout(no: string): Promise<void> {
   try {
-    go((await api.checkout.pay(no)).pay_url)
+    go((await api.checkout.pay(no, await channelId())).pay_url)
   } catch (e) {
     closeToast()
     toastError(e)
@@ -27,7 +37,7 @@ export async function payCheckout(no: string): Promise<void> {
 export async function payOrder(o: Pick<Order, 'id' | 'checkout_no'>): Promise<void> {
   if (o.checkout_no) return payCheckout(o.checkout_no)
   try {
-    go((await api.orders.pay(o.id)).pay_url)
+    go((await api.orders.pay(o.id, await channelId())).pay_url)
   } catch (e) {
     closeToast()
     if (isApiError(e) && e.code === 'pay_via_checkout') {

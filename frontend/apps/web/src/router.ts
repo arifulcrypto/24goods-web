@@ -36,6 +36,7 @@ const routes: RouteRecordRaw[] = [
   { path: '/messages', name: 'messages', component: () => import('./pages/MessagesPage.vue'), meta: { auth: true, tab: 'messages' } },
   { path: '/orders', name: 'orders', component: () => import('./pages/OrdersPage.vue'), meta: { auth: true, tab: 'orders' } },
   { path: '/orders/:id', name: 'order', component: () => import('./pages/OrderDetailPage.vue'), meta: { auth: true } },
+  { path: '/pay/usdt/:no', name: 'pay-usdt', component: () => import('./pages/UsdtPayPage.vue'), meta: { auth: true } },
   { path: '/me', name: 'me', component: () => import('./pages/MePage.vue'), meta: { tab: 'me' } },
   { path: '/forgot', name: 'forgot', component: () => import('./pages/ForgotPage.vue'), meta: { guestOnly: true, nobubble: true } },
   // v5 §7: reseller center (lazy chunks, own group)
