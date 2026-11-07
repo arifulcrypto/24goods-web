@@ -40,6 +40,13 @@ export const SUPPORTED_LOCALES = ['en', 'zh-CN'] as const
 
 export function detectLocale(): 'en' | 'zh-CN' {
   try {
+    // SEO hreflang alternates link to `?lang=zh-CN` (review-v5.2 §6): an explicit URL wins
+    const q = new URLSearchParams(location.search).get('lang')
+    if (q === 'en' || q === 'zh-CN') return q
+  } catch {
+    /* no location (tests / SSR) */
+  }
+  try {
     const saved = localStorage.getItem(LOCALE_STORAGE_KEY)
     if (saved === 'en' || saved === 'zh-CN') return saved
   } catch {

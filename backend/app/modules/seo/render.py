@@ -91,6 +91,7 @@ def head_block(p: Page) -> str:
         f"<title>{esc(p.title)}</title>",
         f'<meta name="description" content="{esc(p.description)}" />',
         f'<meta name="robots" content="{robots}" />',
+        '<meta name="seo-rendered" content="1" />',  # the SPA keeps this <title> on first load
     ]
     if p.status == 200:
         out.append(f'<link rel="canonical" href="{esc(canon)}" />')

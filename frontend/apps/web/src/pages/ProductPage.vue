@@ -15,6 +15,7 @@ import {
   type Product,
   type ProductSummary,
 } from '@24goods/shared'
+import { useNoindex } from '../composables/useNoindex'
 import { api } from '../api'
 import BuySheet from '../components/BuySheet.vue'
 import BuyerInputSheet from '../components/BuyerInputSheet.vue'
@@ -34,6 +35,7 @@ const site = useSiteStore()
 const product = ref<Product | null>(null)
 const loading = ref(true)
 const notFound = ref(false)
+useNoindex(() => notFound.value)
 const sheet = ref(false)
 const inputSheet = ref(false)
 const slide = ref(0)

@@ -521,6 +521,10 @@ export default {
   },
   notFound: {
     title: 'Page not found',
+    text: 'The page you are looking for does not exist or is no longer available.',
+    searchPlaceholder: 'Search products',
+    search: 'Search',
+    help: 'Help center',
     home: 'Back to home',
   },
 } as const

@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { formatDateTime, formatNumber, goBack, isApiError, type Article } from '@24goods/shared'
 import { SafeHtml } from '@24goods/shared/ui'
 import { api } from '../api'
+import { useNoindex } from '../composables/useNoindex'
 import { toastError } from '../ui'
 
 const { t, locale } = useI18n()
@@ -13,6 +14,7 @@ const router = useRouter()
 const article = ref<Article | null>(null)
 const loading = ref(true)
 const notFound = ref(false)
+useNoindex(() => notFound.value)
 
 watch(
   () => route.params.slug,
