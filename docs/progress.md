@@ -28,7 +28,7 @@ _Last updated 2026-11-07 (v5.1 items 1, 2, 6)._
   2. v5.1 §3 reseller subdomains + own domains (Cloudflare changes → show the owner first; set fallback
      origin `stores.kesiv.com`; verify token write permission with the prod token).
   3. v5.1 §5 block IPs/users (needs the CF token permission for IP lists).
-  4. Optional: Telegram staff notifications (new order / payment / CS message) through @shopkesivbot.
+  4. Telegram staff notifications: implemented on `feat/v52-telegram` (review-v5.2 §10); owner sets the token in Settings -> Notifications.
   5. Older follow-ups: admin order `cost_minor` snapshot, promo redemptions `order_no`, dev DB probe-data
      cleanup, prod `APP_SETTINGS_KEY` before the v5 prod deploy.
 - **Working rules:** AGENTS.md §7 (2 GB box: full suite in CI only, ≤ 2 agents, dev stack down when

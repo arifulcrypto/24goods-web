@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core import email_templates, mailer, secretbox
+from app.core import email_templates, mailer, notify_tg, secretbox
 from app.core.audit import audit
 from app.core.deps import client_ip, get_db, get_res, require_admin
 from app.core.errors import Validation
@@ -24,7 +24,7 @@ _EMAIL = re.compile(r"^[^@\s<>]{1,64}@[A-Za-z0-9.-]{1,253}$")
 
 
 class SecretIn(BaseModel):
-    name: Literal["turnstile_secret", "google_client_secret", "smtp_password"]
+    name: Literal["turnstile_secret", "google_client_secret", "smtp_password", "telegram_bot_token"]
     value: str | None = Field(None, max_length=512)  # null deletes
 
     @field_validator("value")
@@ -112,6 +112,31 @@ async def email_test(
         actor_id=admin.id,
         actor_role=admin.role,
         target="email:test",
+        ip=client_ip(request),
+        detail={"ok": ok, "error": error},
+        severity="info" if ok else "warning",
+    )
+    await db.commit()
+    return {"ok": ok, **({"error": error} if error else {})}
+
+
+@router.post("/telegram/test")
+async def telegram_test(
+    request: Request,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+    res: Resources = Depends(get_res),
+) -> dict:
+    """Send a test message to the configured chats (ignores the enable/event toggles)."""
+    await enforce(res.redis, "settings:tgtest", str(admin.id), 5, 600)
+    ok, error = await notify_tg.send_test(res, admin.tenant_id)
+    await audit(
+        db,
+        tenant_id=admin.tenant_id,
+        action="settings.telegram_test",
+        actor_id=admin.id,
+        actor_role=admin.role,
+        target="telegram:test",
         ip=client_ip(request),
         detail={"ok": ok, "error": error},
         severity="info" if ok else "warning",

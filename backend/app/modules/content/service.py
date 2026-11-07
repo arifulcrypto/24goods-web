@@ -41,6 +41,7 @@ V5_SECTIONS = (
     "security",
     "defaults",
     "email",
+    "notifications",
     "delivery",
     "import",
     "resellers",

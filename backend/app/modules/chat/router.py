@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Query, Request, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import notify_tg
 from app.core.deps import client_ip, current_user, get_db, get_lang, get_res
 from app.core.ratelimit import enforce
 from app.core.resources import Resources
@@ -92,6 +93,14 @@ async def send_message(
     )
     if created:
         await service.broadcast(res, db, conv, [msg])
+        notify_tg.notify_bg(
+            res,
+            conv.tenant_id,
+            "chat_message",
+            [f"From {notify_tg.mask_email(user.email)}", f"Type: {body.type}"],
+            link=notify_tg.admin_link(res, "inbox"),
+            once=(f"chat:{conv.id}", 300),
+        )
     (view,) = await service.message_views(db, [msg])
     return view
 

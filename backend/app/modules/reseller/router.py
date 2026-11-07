@@ -8,6 +8,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, Query, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import notify_tg
 from app.core.deps import (
     Page,
     client_ip,
@@ -73,6 +74,14 @@ async def apply(
         store_name=body.store_name,
         contact=body.contact,
         ip=client_ip(request),
+    )
+    notify_tg.notify_bg(
+        res,
+        user.tenant_id,
+        "reseller_application",
+        [f"Store: {body.slug}", f"Applicant: {notify_tg.mask_email(user.email)}"],
+        link=notify_tg.admin_link(res, "resellers"),
+        once=(f"reseller:{r.id}", 86400),
     )
     out = await service.me_view(db, r, rcfg)
     out["signup_order"] = order  # pay it with POST /orders/{no}/pay; None when the fee is 0

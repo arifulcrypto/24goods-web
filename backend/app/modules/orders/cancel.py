@@ -15,6 +15,7 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import notify_tg
 from app.core.audit import audit
 from app.core.errors import AlreadyPaid, InvalidState, NotFound, Unavailable
 from app.core.resources import Resources
@@ -128,13 +129,15 @@ async def cancel_group(
         await db.rollback()  # never hold row locks across the network call
         outcome = await _settle_if_paid(db, res, co_id, single_id, no, amount)
         if outcome is not None:
-            for o in outcome.orders or ([outcome.order] if outcome.order else []):
+            touched = outcome.orders or ([outcome.order] if outcome.order else [])
+            for o in touched:
                 await broadcast_order(
                     res,
                     db,
                     o,
                     [m for m in outcome.messages if m and m.conversation_id == o.conversation_id],
                 )
+            notify_tg.outcome_events(res, touched)
             raise AlreadyPaid("This order has already been paid")
         co, orders = await _load_group(db, tid, oid, cid)
         st = _status(co, orders)

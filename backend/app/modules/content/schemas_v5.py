@@ -12,7 +12,13 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-from app.core.settings_v5 import LOCALES, MAX_STAFF_IPS, TURNSTILE_ACTIONS, parse_net
+from app.core.settings_v5 import (
+    LOCALES,
+    MAX_STAFF_IPS,
+    TG_CHAT_ID,
+    TURNSTILE_ACTIONS,
+    parse_net,
+)
 
 _SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 _HOST = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$")
@@ -178,6 +184,27 @@ class EmailIn(BaseModel):
         if v is not None and any(ord(c) < 32 for c in v):
             raise ValueError("control characters are not allowed")
         return None if v is None else v.strip()
+
+
+class NotificationsIn(BaseModel):
+    telegram_enabled: bool | None = None
+    telegram_chat_ids: list[str] | None = Field(None, max_length=10)
+    event_order_paid: bool | None = None
+    event_chat_message: bool | None = None
+    event_after_sales: bool | None = None
+    event_payment_review: bool | None = None
+    event_reseller_application: bool | None = None
+    event_low_stock: bool | None = None
+
+    @field_validator("telegram_chat_ids")
+    @classmethod
+    def _c(cls, v: list[str] | None) -> list[str] | None:
+        if v is None:
+            return None
+        out = [x.strip() for x in v if x.strip()]
+        if any(not TG_CHAT_ID.match(x) for x in out):
+            raise ValueError("chat ids must be integers")
+        return list(dict.fromkeys(out))
 
 
 class DeliveryIn(BaseModel):
