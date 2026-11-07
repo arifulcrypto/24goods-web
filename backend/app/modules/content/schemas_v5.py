@@ -288,7 +288,9 @@ class SeoIn(BaseModel):
         if v is None:
             return None
         v = v.strip()
-        ok = v == "" or (v.startswith("/") and not v.startswith("//")) or v.startswith("https://")
+        ok = (
+            v == "" or (v.startswith("/") and v[1:2] not in ("/", "\\")) or v.startswith("https://")
+        )
         if not ok or any(c.isspace() or c in '"<>\\' for c in v):
             raise ValueError("og_image must be empty, a /path or an https:// URL")
         return v

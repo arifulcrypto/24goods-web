@@ -25,7 +25,7 @@ watch(
 async function save() {
   const e: Record<string, string> = {}
   const og = f.og.trim()
-  if (og && !/^(https:\/\/|\/(?!\/))/.test(og)) e.og = t('v5.seo.ogInvalid')
+  if (og && !/^(https:\/\/|\/(?![/\\]))/.test(og)) e.og = t('v5.seo.ogInvalid')
   errors.value = e
   if (Object.keys(e).length) return
   const r = await run(() =>
@@ -55,10 +55,10 @@ async function save() {
         <el-switch v-model="f.storefronts" :disabled="!f.indexing" />
         <div class="muted small full">{{ t('v5.seo.storefrontsHint') }}</div>
       </el-form-item>
-      <el-form-item :label="`${t('v5.seo.description')} (EN)`">
+      <el-form-item :label="`${t('v5.seo.description')} (${t('lang.en')})`">
         <el-input v-model="f.desc_en" type="textarea" :rows="2" maxlength="300" show-word-limit />
       </el-form-item>
-      <el-form-item :label="`${t('v5.seo.description')} (中文)`">
+      <el-form-item :label="`${t('v5.seo.description')} (${t('lang.zh')})`">
         <el-input v-model="f.desc_zh" type="textarea" :rows="2" maxlength="300" show-word-limit />
       </el-form-item>
       <el-form-item :label="t('v5.seo.og')" :error="errors.og">

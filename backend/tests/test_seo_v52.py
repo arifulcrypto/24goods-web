@@ -202,21 +202,54 @@ async def test_white_label_storefront_noindex_unless_enabled(env):
     await make_reseller(env, owner, slug="shopa")
     await set_settings(env, {"features": {"resellers": True}})
     c = env.client()
-    h = {"X-Storefront": "shopa"}
-    r = await c.get(f"/p/{p.id}", headers=h)
+    q = {"store": "shopa"}
+    r = await c.get(f"/p/{p.id}", params=q)
     assert r.status_code == 200 and "Store shopa" in r.text
     assert 'content="noindex,nofollow"' in r.text
     # the canonical stays on the platform host and never carries ?store=
     assert f'rel="canonical" href="http://testserver/p/{p.id}"' in r.text
-    r = await c.get(f"/p/{p.id}", params={"store": "shopa"})
-    assert 'content="noindex,nofollow"' in r.text
-    assert (await c.get("/robots.txt", headers=h)).text == "User-agent: *\nDisallow: /\n"
-    assert "<url>" not in (await c.get("/sitemap.xml", headers=h)).text
+    assert (await c.get("/robots.txt", params=q)).text == "User-agent: *\nDisallow: /\n"
+    assert "<url>" not in (await c.get("/sitemap.xml", params=q)).text
     # main store unaffected
     assert 'content="index,follow"' in (await c.get(f"/p/{p.id}")).text
     await set_settings(env, {"seo": {"index_storefronts": True}})
-    r = await c.get(f"/p/{p.id}", headers=h)
+    r = await c.get(f"/p/{p.id}", params=q)
     assert 'content="index,follow"' in r.text
+
+
+async def test_x_storefront_header_is_ignored(env):
+    """CDN cache poisoning: the header is not in the cache key, so it must not change output."""
+    p = await env.product()
+    owner = await env.user("buyer")
+    await make_reseller(env, owner, slug="shopa")
+    await set_settings(env, {"features": {"resellers": True}})
+    c = env.client()
+    plain_ = await c.get(f"/p/{p.id}")
+    hdr = await c.get(f"/p/{p.id}", headers={"X-Storefront": "shopa"})
+    assert plain_.text == hdr.text and "Store shopa" not in hdr.text
+    assert (await c.get("/robots.txt", headers={"X-Storefront": "shopa"})).text.startswith(
+        "User-agent: *\nAllow: /"
+    )
+
+
+async def test_stored_html_is_resanitized(env):
+    p = await env.product()
+    evil = '<p>ok</p><script>alert(1)</script><img src="https://evil.test/x.png" onerror="x()">'
+    async with env.owner_session() as db:
+        row = await db.get(type(p), p.id)
+        row.description_html_i18n = {"en": evil}
+        await db.commit()
+    await article(env, "bad")
+    async with env.owner_session() as db:
+        from sqlalchemy import update
+
+        await db.execute(update(Article).values(body_html_i18n={"en": evil}))
+        await db.commit()
+    c = env.client()
+    for url in (f"/p/{p.id}", "/a/bad"):
+        h = (await c.get(url)).text
+        assert "<p>ok</p>" in h
+        assert "<script>alert" not in h and "onerror" not in h and "evil.test" not in h
 
 
 async def test_cross_tenant_product_not_rendered_on_other_host(env):
@@ -261,7 +294,13 @@ async def test_seo_settings_roundtrip_and_validation(env):
         },
     )
     assert r.status_code == 200 and r.json()["seo"]["indexing_enabled"] is True
-    for bad in ("javascript:alert(1)", "//evil.com/x.png", 'https://x/"onerror='):
+    for bad in (
+        "javascript:alert(1)",
+        "data:text/html,x",
+        "//evil.com/x.png",
+        "/\\evil.com",
+        'https://x/"onerror=',
+    ):
         r = await admin.put("/api/v1/admin/site", json={"seo": {"og_image": bad}})
         assert r.status_code == 422, bad
     h = (await env.client().get("/")).text

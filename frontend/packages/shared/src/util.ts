@@ -38,14 +38,19 @@ export async function copyText(text: string): Promise<boolean> {
 export const LOCALE_STORAGE_KEY = '24goods.locale'
 export const SUPPORTED_LOCALES = ['en', 'zh-CN'] as const
 
-export function detectLocale(): 'en' | 'zh-CN' {
+/** `?lang=` of the current URL (SEO hreflang alternates, review-v5.2 §6), if valid. */
+export function localeFromQuery(): 'en' | 'zh-CN' | null {
   try {
-    // SEO hreflang alternates link to `?lang=zh-CN` (review-v5.2 §6): an explicit URL wins
     const q = new URLSearchParams(location.search).get('lang')
-    if (q === 'en' || q === 'zh-CN') return q
+    return q === 'en' || q === 'zh-CN' ? q : null
   } catch {
-    /* no location (tests / SSR) */
+    return null /* no location (tests / SSR) */
   }
+}
+
+export function detectLocale(): 'en' | 'zh-CN' {
+  const fromUrl = localeFromQuery()
+  if (fromUrl) return fromUrl
   try {
     const saved = localStorage.getItem(LOCALE_STORAGE_KEY)
     if (saved === 'en' || saved === 'zh-CN') return saved

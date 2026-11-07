@@ -29,6 +29,12 @@ router.afterEach((_to, from) => {
   if (from.name !== undefined && keepServerTitle) {
     keepServerTitle = false
     document.title = site.headerName
+    // the rest of the server-rendered metadata describes the landing page only
+    document.head
+      .querySelectorAll(
+        'meta[name="description"], meta[property^="og:"], meta[name^="twitter:"], link[rel="canonical"], link[rel="alternate"][hreflang], script[type="application/ld+json"]',
+      )
+      .forEach((el) => el.remove())
   }
 })
 watch(

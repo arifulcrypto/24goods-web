@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import Page, get_db, get_res, get_tenant_id
 from app.core.i18n import normalize, pick
+from app.core.markdown import sanitize_html
 from app.core.resources import Resources
 from app.core.settings_v5 import section
 from app.core.storefront import Storefront, is_custom_host, resolve
@@ -35,7 +36,7 @@ from app.modules.seo.render import esc, inject, lang_links, link, plain, url_for
 
 router = APIRouter(include_in_schema=False)
 
-SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
+SLUG_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,62}")
 OK_CACHE = "public, max-age=300"  # sitemap + robots
 # HTML embeds hashed asset URLs: browsers must revalidate (a deploy removes the old assets),
 # shared caches (Cloudflare) may keep it 5 minutes.
@@ -144,7 +145,7 @@ async def _ctx(request: Request, db: AsyncSession, tenant_id: uuid.UUID, res: Re
         db,
         tenant_id,
         host,
-        request.headers.get("x-storefront") or q.get("store"),
+        q.get("store"),  # never X-Storefront: not part of the CDN cache key (cache poisoning)
         ttl=0.0 if res.settings.env == "test" else 15.0,
     )
     public = urlparse(res.settings.public_base_url)
@@ -340,7 +341,7 @@ async def article(
 ) -> Response:
     ctx = await _ctx(request, db, tid, res)
     a = None
-    if SLUG_RE.match(slug):
+    if SLUG_RE.fullmatch(slug):
         a = await db.scalar(
             select(Article).where(
                 Article.tenant_id == tid, Article.slug == slug, Article.status == "published"
@@ -350,7 +351,7 @@ async def article(
         return await _page(ctx, res, not_found_doc(ctx))
     t = ctx.t
     name = pick(a.title_i18n, ctx.lang)
-    body_html = pick(a.body_html_i18n, ctx.lang)  # sanitized at save time (core/markdown.py)
+    body_html = sanitize_html(pick(a.body_html_i18n, ctx.lang))  # re-sanitized on output
     desc = plain(body_html) or ctx.description
     path = f"/a/{a.slug}"
     ld = [
@@ -424,7 +425,8 @@ async def product(
     path = f"/p/{view['id']}"
     purl = url_for(ctx.base, path, ctx.lang)
     in_stock = _availability(view)
-    desc = plain(view.get("description_html") or view.get("description") or "")
+    desc_html = sanitize_html(view.get("description_html") or "")
+    desc = plain(desc_html or view.get("description") or "")
     desc = desc or f"{view['title']} — {view['price']} {view['currency']}"
     cover = ctx.abs(view.get("cover"))
     imgs = [u for u in (ctx.abs(i) for i in view.get("images") or []) if u][:5]
@@ -464,7 +466,7 @@ async def product(
         f"<article><h1>{esc(view['title'])}</h1>"
         f"<p>{esc(t['price'])}: <strong>{esc(view['price'])} {esc(view['currency'])}</strong> · "
         f"{esc(t['in_stock'] if in_stock else t['out_stock'])} · {esc(delivery)}</p>"
-        f"<div>{view.get('description_html') or ''}</div></article>"
+        f"<div>{desc_html}</div></article>"
         f"<p>{link(ctx.base, '/', t['home'], ctx.lang)}</p>{lang_links(ctx.base, path, ctx.lang)}"
     )
     doc = ctx.doc(

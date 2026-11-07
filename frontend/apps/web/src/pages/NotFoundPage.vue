@@ -21,7 +21,7 @@ function submit() {
     <h1 class="title">{{ t('notFound.title') }}</h1>
     <p class="text">{{ t('notFound.text') }}</p>
     <form class="form" role="search" @submit.prevent="submit">
-      <van-search v-model="q" shape="round" maxlength="100" :placeholder="t('notFound.searchPlaceholder')" @search="submit" />
+      <van-search v-model="q" shape="round" maxlength="100" :aria-label="t('notFound.searchPlaceholder')" :placeholder="t('notFound.searchPlaceholder')" @search="submit" />
     </form>
     <div class="actions">
       <van-button round type="primary" to="/">{{ t('notFound.home') }}</van-button>
@@ -33,12 +33,13 @@ function submit() {
 <style scoped>
 .nf {
   min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  padding: 24px 16px;
+  padding: calc(24px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) calc(24px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));
   text-align: center;
 }
 .code {
@@ -47,7 +48,7 @@ function submit() {
   font-weight: 800;
   line-height: 1;
   letter-spacing: 2px;
-  color: var(--van-primary-color, #ffd60a);
+  color: var(--van-text-color, #323233);
 }
 .title {
   margin: 4px 0 0;

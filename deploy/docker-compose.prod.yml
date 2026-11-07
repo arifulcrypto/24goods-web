@@ -20,7 +20,7 @@ services:
     environment:
       ADMIN_ALLOW_IPS: ${ADMIN_ALLOW_IPS:?run deploy/bootstrap.sh (MODE=prod)}
     ports: !override
-      - "8088:8088"            # no port 80; the :80 site in Caddyfile.prod is loopback-only (healthcheck)
+      - "8088:8088"            # no port 80; the container-internal :80 site in Caddyfile.prod serves the healthcheck + the internal SPA shell for the API
     volumes:
       - caddy_data:/data
       - caddy_config:/config

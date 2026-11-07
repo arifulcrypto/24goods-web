@@ -54,7 +54,12 @@ def _attribute_filter(tag: str, attr: str, value: str) -> str | None:
 
 
 def render(markdown: str) -> str:
-    html = _MD.render(markdown or "")
+    return sanitize_html(_MD.render(markdown or ""))
+
+
+def sanitize_html(html: str) -> str:
+    """The allowlist pass alone (defence in depth for stored ``*_html`` fields re-embedded
+    outside the SPA, e.g. the SEO pages)."""
     return nh3.clean(
         html,
         tags=ALLOWED_TAGS,

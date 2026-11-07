@@ -83,6 +83,7 @@
 	handle @seo {
 		reverse_proxy api:8000 {
 			header_up X-Forwarded-For {client_ip}
+			header_up -X-Storefront
 			@unavailable status 502 503 504
 			handle_response @unavailable {
 				root * /srv/web
