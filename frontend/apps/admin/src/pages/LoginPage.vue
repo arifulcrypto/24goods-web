@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { LogoMark } from '@24goods/shared/ui'
-import { isApiError, safeRedirect } from '@24goods/shared'
+import { LogoMark, TurnstileWidget } from '@24goods/shared/ui'
+import { isApiError, safeRedirect, turnstileNeeded, type SiteInfo } from '@24goods/shared'
+import { client } from '../api'
 import { useAuthStore } from '../stores/auth'
 import { setLocale } from '../locale'
 import { toastError } from '../ui'
@@ -15,13 +16,25 @@ const auth = useAuthStore()
 const form = reactive({ email: '', password: '' })
 const busy = ref(false)
 const error = ref('')
+// Public /site tells whether the Turnstile challenge protects `login` (review-v5.2 §1)
+const site = ref<SiteInfo | null>(null)
+const token = ref('')
+const widget = ref<InstanceType<typeof TurnstileWidget> | null>(null)
+const tsNeeded = computed(() => turnstileNeeded(site.value, 'login'))
+onMounted(async () => {
+  try {
+    site.value = await client.get<SiteInfo>('/site')
+  } catch {
+    site.value = null
+  }
+})
 
 async function submit() {
   if (busy.value || !form.email || !form.password) return
   busy.value = true
   error.value = ''
   try {
-    await auth.login(form.email.trim(), form.password)
+    await auth.login(form.email.trim(), form.password, token.value || undefined)
     await router.replace(safeRedirect(route.query.redirect, '/'))
   } catch (e) {
     if (isApiError(e) && e.code === 'not_staff') error.value = t('login.notStaff')
@@ -30,6 +43,8 @@ async function submit() {
   } finally {
     busy.value = false
     form.password = ''
+    token.value = ''  // tokens are single use
+    widget.value?.reset()
   }
 }
 </script>
@@ -48,6 +63,15 @@ async function submit() {
         <el-form-item :label="t('login.password')">
           <el-input v-model="form.password" type="password" autocomplete="current-password" show-password size="large" />
         </el-form-item>
+        <TurnstileWidget
+          v-if="tsNeeded"
+          ref="widget"
+          v-model:token="token"
+          :site-key="site?.turnstile?.site_key ?? ''"
+          action="login"
+          :locale="locale"
+          class="ts"
+        />
         <el-button type="primary" native-type="submit" size="large" :loading="busy" class="submit">{{ t('login.submit') }}</el-button>
       </el-form>
       <div class="lang">
@@ -92,6 +116,9 @@ p {
 }
 .err {
   margin-bottom: 14px;
+}
+.ts {
+  margin-bottom: 8px;
 }
 .submit {
   width: 100%;

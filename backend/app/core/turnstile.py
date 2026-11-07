@@ -21,7 +21,7 @@ from app.core import secretbox
 from app.core.db import tenant_session
 from app.core.deps import client_ip
 from app.core.errors import ApiError
-from app.core.settings_v5 import section
+from app.core.settings_v5 import ip_allowlisted, section
 
 log = logging.getLogger("app.turnstile")
 
@@ -48,6 +48,8 @@ async def require_turnstile(
     sec = section(ts, "security")
     if not sec["turnstile_enabled"] or action not in sec["turnstile_actions"]:
         return
+    if action == "login" and ip_allowlisted(client_ip(request), sec["staff_ip_allowlist"]):
+        return  # staff office IPs skip the login challenge only (review-v5.2 §1)
     res = request.app.state.res
     tenant_id: uuid.UUID = request.state.tenant_id
     async with tenant_session(res.maker, tenant_id) as db:

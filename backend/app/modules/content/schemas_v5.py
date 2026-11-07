@@ -12,7 +12,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-from app.core.settings_v5 import LOCALES, TURNSTILE_ACTIONS
+from app.core.settings_v5 import LOCALES, MAX_STAFF_IPS, TURNSTILE_ACTIONS, parse_net
 
 _SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 _HOST = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$")
@@ -103,6 +103,19 @@ class SecurityIn(BaseModel):
     turnstile_actions: list[str] | None = None
     email_verify_on_register: bool | None = None
     google_client_id: str | None = Field(None, max_length=200)
+    staff_ip_allowlist: list[str] | None = None
+
+    @field_validator("staff_ip_allowlist")
+    @classmethod
+    def _ips(cls, v: list[str] | None) -> list[str] | None:
+        if v is None:
+            return None
+        v = [x.strip() for x in v if x.strip()]
+        if len(v) > MAX_STAFF_IPS:
+            raise ValueError(f"at most {MAX_STAFF_IPS} entries")
+        if any(len(x) > 64 or parse_net(x) is None for x in v):
+            raise ValueError("invalid IP or CIDR")
+        return v
 
     @field_validator("turnstile_actions")
     @classmethod

@@ -10,6 +10,7 @@ normalized output. Secrets are NEVER stored here: they live in ``tenant_secrets`
 from __future__ import annotations
 
 import copy
+import ipaddress
 from typing import Any
 
 LOCALES = ("en", "zh-CN")
@@ -61,6 +62,8 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         "turnstile_actions": ["login", "register", "instant_account", "password_reset"],
         "email_verify_on_register": False,
         "google_client_id": "",
+        # IPs / CIDRs that skip Turnstile and the global rate limit (review-v5.2 §1)
+        "staff_ip_allowlist": [],
     },
     # User defaults
     "defaults": {
@@ -161,6 +164,38 @@ _ENUMS: dict[tuple[str, str], tuple[str, ...]] = {
 }
 
 
+MAX_STAFF_IPS = 50
+IPNet = ipaddress.IPv4Network | ipaddress.IPv6Network
+
+
+def parse_net(raw: str) -> IPNet | None:
+    """An IP or CIDR as a network (host bits allowed); None when invalid or too broad.
+    Over-broad ranges (< /16 IPv4, < /48 IPv6), unspecified, multicast and link-local are refused:
+    one typo such as ``0.0.0.0/0`` would otherwise switch off Turnstile + the global limit."""
+    try:
+        net = ipaddress.ip_network(raw.strip(), strict=False)
+    except ValueError:
+        return None
+    min_prefix = 16 if net.version == 4 else 48
+    if net.prefixlen < min_prefix or net.is_unspecified or net.is_multicast or net.is_link_local:
+        return None
+    return net
+
+
+def ip_in_nets(ip: str | None, nets: list[IPNet]) -> bool:
+    if not ip or not nets:
+        return False
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    return any(addr.version == n.version and addr in n for n in nets)
+
+
+def ip_allowlisted(ip: str | None, entries: list[str]) -> bool:
+    return ip_in_nets(ip, [n for n in map(parse_net, entries) if n is not None])
+
+
 def _norm_value(name: str, key: str, default: Any, raw: Any) -> Any:
     if raw is None:
         return copy.deepcopy(default)
@@ -184,6 +219,8 @@ def _norm_value(name: str, key: str, default: Any, raw: Any) -> Any:
         items = [x for x in raw if isinstance(x, str)]
         if (name, key) == ("security", "turnstile_actions"):
             items = [x for x in items if x in TURNSTILE_ACTIONS]
+        if (name, key) == ("security", "staff_ip_allowlist"):
+            items = [x for x in items if parse_net(x) is not None][:MAX_STAFF_IPS]
         return list(dict.fromkeys(items))
     if isinstance(default, dict):  # *_i18n maps
         if not isinstance(raw, dict):
