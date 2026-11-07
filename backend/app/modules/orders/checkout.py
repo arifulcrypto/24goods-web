@@ -45,7 +45,8 @@ from app.modules.orders.service import (
     tenant_order_limits,
     utcnow,
 )
-from app.modules.payments.channels import channel_cfg, fee_rate, split_amount
+from app.modules.payments import usdt as usdt_svc
+from app.modules.payments.channels import entry_cfg, fee_rate, is_usdt, split_amount
 from app.modules.promo import service as promo_svc
 from app.modules.promo.service import PromoError, PromoLine
 from app.modules.reseller.pricing import Pricer
@@ -75,7 +76,7 @@ async def quote_cart(
     evaluated read-only (no lock, no reservation): the result is shown, never trusted."""
     ts = await tenant_settings(db, tenant_id)
     require_feature(ts, "cart")
-    cfg = channel_cfg(ts)
+    cfg = entry_cfg(ts)
     pricer = await Pricer.load(db, storefront)
     ids = list({i.product_id for i in items})
     products = {
@@ -301,7 +302,7 @@ async def create_checkout(
         p = products[pid]
         if p.delivery_mode == "auto_card" and stock.get(pid, 0) < qty:
             raise OutOfStock("Not enough stock", extra={"product_id": str(pid)})
-    cfg = channel_cfg(await tenant_settings(db, buyer.tenant_id))
+    cfg = entry_cfg(await tenant_settings(db, buyer.tenant_id))
     if not cfg.enabled:
         raise Unavailable("Payment channel is not available")
     inputs = [normalize_value(products[i.product_id].buyer_input, i.buyer_input) for i in items]
@@ -454,7 +455,10 @@ async def pay_checkout(
         raise InvalidState("Checkout is not awaiting payment")
     if co.expires_at is not None and co.expires_at <= utcnow():
         raise InvalidState("Checkout has expired")
-    if not (res.settings.zpay_pid and res.settings.zpay_key):
+    usdt = is_usdt(channel)
+    if usdt and not res.bepusdt.configured:
+        raise Unavailable("Payment channel not configured")
+    if not usdt and not (res.settings.zpay_pid and res.settings.zpay_key):
         raise Unavailable("Payment channel not configured")
     permille = await check_channel(db, co.tenant_id, channel)
     if any(o.fee_permille != permille for o in orders):
@@ -463,6 +467,13 @@ async def pay_checkout(
         await recompute_fees(db, co, orders, permille, user)
     co.channel = channel
     name = orders[0].title if len(orders) == 1 else f"{orders[0].title} +{len(orders) - 1}"
+    if usdt:
+        no, minor, cur = co.checkout_no, co.amount_minor, co.currency
+        await db.commit()  # release the row locks before the gateway call
+        await usdt_svc.start_attempt(
+            res, no=no, title=name, amount_minor=minor, currency=cur, channel=channel
+        )
+        return f"/pay/usdt/{no}"
     url = res.zpay.build_pay_url(co.checkout_no, name, to_decimal(co.amount_minor))
     await db.commit()
     return url

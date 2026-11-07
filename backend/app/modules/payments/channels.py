@@ -4,7 +4,9 @@ Config lives in ``tenants.settings.payments.channels``::
 
     {"zpay_alipay": {"enabled": true, "surcharge_permille": 30}}
 
-A missing config means ``zpay_alipay`` is enabled at ``DEFAULT_SURCHARGE_PERMILLE``.
+A missing config means ``zpay_alipay`` is enabled at ``DEFAULT_SURCHARGE_PERMILLE``;
+the ``usdt_*`` channels (self-hosted BEpusdt, docs/review-v5.2.md s7) are DISABLED by default
+with a 0 surcharge.
 Framework-free: the fee maths is integer-only and shared by orders, checkouts and tests.
 """
 
@@ -17,7 +19,26 @@ from typing import Any
 DEFAULT_CHANNEL = "zpay_alipay"
 DEFAULT_SURCHARGE_PERMILLE = 30
 MAX_SURCHARGE_PERMILLE = 200
-LABELS: dict[str, dict[str, str]] = {DEFAULT_CHANNEL: {"en": "Alipay", "zh-CN": "支付宝"}}
+USDT_CHANNELS: dict[str, str] = {  # channel id -> BEpusdt trade_type
+    "usdt_arbitrum": "usdt.arbitrum",
+    "usdt_xlayer": "usdt.xlayer",
+    "usdt_trc20": "usdt.trc20",
+}
+LABELS: dict[str, dict[str, str]] = {
+    DEFAULT_CHANNEL: {"en": "Alipay", "zh-CN": "支付宝"},
+    "usdt_arbitrum": {"en": "USDT (Arbitrum One)", "zh-CN": "USDT（Arbitrum One）"},
+    "usdt_xlayer": {"en": "USDT (X Layer)", "zh-CN": "USDT（X Layer）"},
+    "usdt_trc20": {"en": "USDT (TRON TRC20)", "zh-CN": "USDT（波场 TRC20）"},
+}
+
+
+def is_usdt(channel: str | None) -> bool:
+    return channel in USDT_CHANNELS
+
+
+def provider(channel: str | None) -> str:
+    """Ledger/gateway family of a channel: ``bepusdt`` or ``zpay``."""
+    return "bepusdt" if is_usdt(channel) else "zpay"
 
 
 @dataclass(frozen=True)
@@ -59,13 +80,27 @@ def channel_cfg(
 ) -> ChannelCfg:
     raw = (((tenant_settings or {}).get("payments") or {}).get("channels") or {}).get(channel)
     raw = raw if isinstance(raw, dict) else {}
-    enabled = raw.get("enabled", True)
+    default_on = not is_usdt(channel)
+    enabled = raw.get("enabled", default_on)
     permille = raw.get("surcharge_permille")
     return ChannelCfg(
         id=channel,
-        enabled=enabled if isinstance(enabled, bool) else True,
-        permille=permille if _valid_permille(permille) else DEFAULT_SURCHARGE_PERMILLE,
+        enabled=enabled if isinstance(enabled, bool) else default_on,
+        permille=permille
+        if _valid_permille(permille)
+        else (0 if is_usdt(channel) else DEFAULT_SURCHARGE_PERMILLE),
     )
+
+
+def entry_cfg(tenant_settings: dict[str, Any] | None) -> ChannelCfg:
+    """Channel used to price an order/checkout BEFORE the buyer picks one (fee is re-applied at
+    pay time): the default channel if enabled, else the first enabled one, else the default
+    (disabled)."""
+    for cid in LABELS:
+        cfg = channel_cfg(tenant_settings, cid)
+        if cfg.enabled:
+            return cfg
+    return channel_cfg(tenant_settings, DEFAULT_CHANNEL)
 
 
 def all_channels(tenant_settings: dict[str, Any] | None) -> list[ChannelCfg]:

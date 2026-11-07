@@ -9,7 +9,9 @@
 #   * Postgres: superuser only for initdb; app_owner is NOSUPERUSER (bound by FORCE RLS)
 # Networks:
 #   edge     10.89.10.0/24 – Caddy (fixed .10 = the only trusted proxy) <-> api / mockpay
-#   backend  10.89.11.0/24 – internal:true (no internet egress): postgres, redis, api, delivery, mockpay
+#   backend  10.89.11.0/24 – internal:true (no internet egress): postgres, redis, api, delivery, mockpay, mockusdt
+#   usdt     10.89.12.0/24 – api <-> bepusdt only (profile "usdt"); bepusdt needs chain-RPC egress,
+#                            has NO published port and NO Caddy route (admin via SSH tunnel)
 # NOTE: Docker-published ports bypass UFW. Never add `ports:` to anything but `web`.
 
 name: goods24
@@ -98,6 +100,7 @@ services:
     networks:
       edge: {}
       backend: {}
+      usdt: {}                            # reaches bepusdt (when the "usdt" profile runs)
     mem_limit: 192m
     depends_on:
       seed: { condition: service_completed_successfully }
@@ -123,6 +126,33 @@ services:
     mem_limit: 96m
     depends_on:
       redis: { condition: service_healthy }
+
+  mockusdt:                               # BEpusdt simulator — demo/CI only (profile "demo")
+    <<: *app
+    profiles: [demo]
+    command: ["python", "-m", "app.devtools.mock_bepusdt"]
+    env_file: [env/mockusdt.env]
+    networks:
+      edge: {}
+      backend: {}
+    mem_limit: 96m
+    depends_on:
+      redis: { condition: service_healthy }
+
+  bepusdt:                                # real USDT gateway (profile "usdt"); INTERNAL only
+    # BEpusdt v1.24.3 = upstream commit 0716485 (Docker Hub has no semver tags)
+    image: v03413/bepusdt:0716485@sha256:0a7d859e4f5022c9b53a9ed2fc06db1f3ca254ee40db0bfd72207e26517d0c69
+    profiles: [usdt]
+    restart: unless-stopped
+    env_file: [env/bepusdt.env]           # its own env file (may be empty); no app secrets
+    volumes: [bepusdt_data:/var/lib/bepusdt]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [usdt, usdt_egress]         # NO `ports:`, NO Caddy route; egress only for chain RPC
+    mem_limit: 160m
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
 
   web:
     image: ${WEB_IMAGE:-ghcr.io/arifulcrypto/goods24-web:main}
@@ -157,6 +187,13 @@ networks:
     internal: true
     ipam:
       config: [{ subnet: 10.89.11.0/24 }]
+  usdt:                                    # api <-> bepusdt only; never attach other services
+    internal: true
+    ipam:
+      config: [{ subnet: 10.89.12.0/24 }]
+  usdt_egress:                             # bepusdt's own route to chain RPC endpoints
+    ipam:
+      config: [{ subnet: 10.89.13.0/24 }]
 
 volumes:
   pgdata: {}
@@ -164,6 +201,7 @@ volumes:
   uploads: {}
   caddy_data: {}
   caddy_config: {}
+  bepusdt_data: {}
 
 secrets:
   vault_public_keys:

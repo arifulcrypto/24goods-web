@@ -270,6 +270,26 @@ export interface PaymentChannel {
   fee_rate: string
   permille: number
 }
+/** GET /pay/usdt/{no}: our own USDT pay page (display + polling; never trusted for fulfilment). */
+export interface UsdtPayView {
+  channel: string
+  label: string
+  network: string
+  address: string
+  /** exact USDT to send (decimal string) */
+  usdt_amount: string
+  fiat_amount_minor: number
+  currency: string
+  expires_at: number
+  seconds_left: number
+  expired: boolean
+  /** order / checkout status */
+  status: string
+  /** server-generated QR (SVG markup) of the address: render via an <img> data URI only */
+  qr_svg: string
+  /** demo only: the BEpusdt simulator's pay page (null in production) */
+  sim_url?: string | null
+}
 export interface CartQuoteLine {
   product_id: string
   title: string

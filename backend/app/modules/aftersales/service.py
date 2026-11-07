@@ -23,6 +23,7 @@ from app.modules.orders.events import add_event, snapshot
 from app.modules.orders.service import get_owned
 from app.modules.payments.ledger import Line, post_txn
 from app.modules.payments.settle import payment_lines
+from app.payments.zpay import CHANNEL
 
 ELIGIBLE = ("delivered", "completed")
 # From the Nth replacement on (3rd), replacing needs an admin (agents can't loop replacements).
@@ -355,7 +356,10 @@ async def _refund(db: AsyncSession, order: Order, staff: User, ip: str | None) -
         # MONEY: the exact mirror of the payment lines (sales_revenue, reseller_payable,
         # promo_discount, surcharge_revenue, gateway_clearing), so a refund can never leave a
         # residue on any account. A paid-out reseller balance may go negative (clawback).
-        lines=[Line(ln.account, -ln.amount_minor) for ln in reversed(payment_lines(order))],
+        lines=[
+            Line(ln.account, -ln.amount_minor)
+            for ln in reversed(payment_lines(order, order.channel or CHANNEL))
+        ],
     )
     await audit(
         db,

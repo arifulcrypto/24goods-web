@@ -23,6 +23,8 @@ from app.models import Checkout, Message, Order, User
 from app.modules.chat.messages import post_system
 from app.modules.orders.events import add_event, snapshot
 from app.modules.orders.service import broadcast_order
+from app.modules.payments import usdt as usdt_svc
+from app.modules.payments.channels import is_usdt
 from app.modules.payments.settle import (
     PAID_STATES,
     NotifyOutcome,
@@ -31,6 +33,8 @@ from app.modules.payments.settle import (
     lock_checkout,
 )
 from app.modules.promo import service as promo_svc
+from app.payments import bepusdt
+from app.payments.bepusdt import BepusdtError
 from app.payments.zpay import ZPayQueryError
 
 
@@ -74,9 +78,14 @@ async def _settle_if_paid(
     order_id: uuid.UUID | None,
     out_trade_no: str,
     amount_minor: int,
+    channel: str | None = None,
 ) -> NotifyOutcome | None:
     """Re-query the gateway (no row locks held). If it says paid, settle and return the
     outcome; if it says unpaid / not found, ``None``; if the query fails or is malformed, 503."""
+    if is_usdt(channel):
+        return await _settle_usdt_if_paid(
+            db, res, checkout_id, order_id, out_trade_no, amount_minor, channel or ""
+        )
     try:
         q = await res.zpay.query_order(out_trade_no)
     except ZPayQueryError:
@@ -101,6 +110,53 @@ async def _settle_if_paid(
     return await apply_order_payment(db, res.settings, order_id, q.trade_no, paid, raw, None)
 
 
+async def _settle_usdt_if_paid(
+    db: AsyncSession,
+    res: Resources,
+    checkout_id: uuid.UUID | None,
+    order_id: uuid.UUID | None,
+    no: str,
+    amount_minor: int,
+    channel: str,
+) -> NotifyOutcome | None:
+    """Same as the ZPay path for a USDT order: re-query the stored trade_id (BEpusdt cannot be
+    queried by our order number)."""
+    att = await usdt_svc.load_attempt(res, no)
+    if not att or att.get("channel") != channel or not att.get("trade_id"):
+        return None  # no transaction was ever opened: nothing can have been paid
+    try:
+        info = await res.bepusdt.query_info(str(att["trade_id"]))
+    except BepusdtError:
+        raise Unavailable("Could not verify the payment status; please try again") from None
+    if not info.found or info.status != bepusdt.STATUS_PAID:
+        return None
+    expected = Decimal(amount_minor) / 100
+    if (
+        info.order_id != no
+        or info.trade_id != att["trade_id"]
+        or info.money != expected
+        or info.fiat != bepusdt.FIAT
+        or bepusdt.TRADE_TYPE_TO_CHANNEL.get(info.trade_type) != channel
+    ):
+        raise Unavailable("Could not verify the payment status; please try again")
+    raw = {
+        "order_id": no,
+        "trade_id": info.trade_id,
+        "amount": str(info.money),
+        "actual_amount": str(info.actual_amount),
+        "token": info.address,
+        "via": "cancel_requery",
+    }
+    if checkout_id is not None:
+        return await apply_checkout_payment(
+            db, res.settings, checkout_id, info.trade_id, expected, raw, None, channel
+        )
+    assert order_id is not None
+    return await apply_order_payment(
+        db, res.settings, order_id, info.trade_id, expected, raw, None, channel
+    )
+
+
 async def cancel_group(
     db: AsyncSession,
     res: Resources,
@@ -120,14 +176,20 @@ async def cancel_group(
 
     # Query the gateway whenever it is configured (not only when a pay URL is known to have
     # been issued): "not found / unpaid" means proceed, a paid answer settles instead.
-    if res.settings.zpay_pid and res.settings.zpay_key:
+    group_channel = co.channel if co is not None else orders[0].channel
+    gateway_ready = (
+        res.bepusdt.configured
+        if is_usdt(group_channel)
+        else bool(res.settings.zpay_pid and res.settings.zpay_key)
+    )
+    if gateway_ready:
         no = co.checkout_no if co is not None else orders[0].order_no
         amount = co.amount_minor if co is not None else orders[0].amount_minor
         oid, cid = order_id, checkout_id
         co_id = co.id if co is not None else None
         single_id = orders[0].id if co is None else None
         await db.rollback()  # never hold row locks across the network call
-        outcome = await _settle_if_paid(db, res, co_id, single_id, no, amount)
+        outcome = await _settle_if_paid(db, res, co_id, single_id, no, amount, group_channel)
         if outcome is not None:
             touched = outcome.orders or ([outcome.order] if outcome.order else [])
             for o in touched:

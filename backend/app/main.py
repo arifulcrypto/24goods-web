@@ -42,7 +42,7 @@ from app.modules.me.router import router as me_router
 from app.modules.orders.checkout_router import router as checkout_router
 from app.modules.orders.router import router as orders_router
 from app.modules.orders.service import expire_pending
-from app.modules.payments.router import NOTIFY_PATH
+from app.modules.payments.router import NOTIFY_BEPUSDT_PATH, NOTIFY_PATH
 from app.modules.payments.router import router as payments_router
 from app.modules.promo.router import admin as promo_admin_router
 from app.modules.promo.router import router as promo_router
@@ -171,7 +171,7 @@ def create_app(res: Resources | None = None, *, background: bool = True) -> Fast
 
     # Added inner-most first:
     # Core (outermost) -> IPBlock -> GlobalRateLimit -> BodyLimit -> CSRF -> routes.
-    app.add_middleware(CSRFMiddleware, exempt=[NOTIFY_PATH])
+    app.add_middleware(CSRFMiddleware, exempt=[NOTIFY_PATH, NOTIFY_BEPUSDT_PATH])
     app.add_middleware(
         BodyLimitMiddleware,
         default_limit=JSON_BODY_LIMIT,

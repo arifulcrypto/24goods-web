@@ -15,7 +15,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import storefront
@@ -139,7 +139,10 @@ async def resolve_signup(
                 select(LedgerEntry).where(
                     LedgerEntry.order_id == order.id,
                     LedgerEntry.tenant_id == order.tenant_id,
-                    LedgerEntry.memo.like("zpay payment%"),
+                    or_(
+                        LedgerEntry.memo.like("zpay payment%"),
+                        LedgerEntry.memo.like("bepusdt payment%"),
+                    ),
                 )
             )
         )

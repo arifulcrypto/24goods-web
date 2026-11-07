@@ -159,6 +159,7 @@ export type AdminSiteV5 = AdminSiteV4 &
     email_templates?: EmailTemplates
     /** read-only status of the server-configured ZPay channel (never a secret) */
     zpay?: ZpayStatus | null
+    bepusdt?: { configured: boolean } | null
   }
 /** PUT /admin/site body: any subset of the sections (each field optional). */
 export type SiteSectionPatch = Partial<{ [K in keyof SiteSections]: Partial<SiteSections[K]> }> &
