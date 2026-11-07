@@ -137,9 +137,36 @@ function applyUpdate(o: Order) {
 
 // ---- change price ----
 const priceDlg = ref(false)
-const price = reactive({ amount: '', reason: '', busy: false, error: '' })
+const price = reactive({ amount: '', reason: '', removeMarkup: false, busy: false, error: '' })
+const hasMarkup = computed(() => (order.value?.reseller_markup_minor ?? 0) > 0)
+/** Live preview mirroring the server: promo dropped, a discount comes out of the markup first
+ * (base = current subtotal − markup), fee rounded up. */
+const preview = computed(() => {
+  const o = order.value
+  const sub = isValidAmount(price.amount) ? yuanToMinor(normalizeAmount(price.amount)) : null
+  if (!o || sub === null) return null
+  const oldMarkup = o.reseller_markup_minor ?? 0
+  const base = (yuanToMinor(o.subtotal) ?? 0) - oldMarkup
+  const markup = price.removeMarkup ? 0 : Math.max(0, Math.min(oldMarkup, sub - base))
+  const permille = Math.round((parseFloat(o.fee_rate ?? '0') || 0) * 10)
+  const fee = Math.ceil((sub * permille) / 1000)
+  return { subtotal: sub, markup, fee, total: sub + fee }
+})
+const currentBreakdown = computed(() => {
+  const o = order.value
+  if (!o) return null
+  return {
+    subtotal: yuanToMinor(o.subtotal ?? o.amount) ?? 0,
+    discount: o.discount_minor ?? 0,
+    markup: o.reseller_markup_minor ?? 0,
+    fee: yuanToMinor(o.fee ?? '0') ?? 0,
+    total: yuanToMinor(o.amount) ?? 0,
+  }
+})
+const moneyMinor = (m: number) => money(minorToYuan(m))
 function openPrice() {
-  price.amount = order.value?.amount ?? ''
+  price.amount = order.value?.subtotal ?? order.value?.amount ?? ''
+  price.removeMarkup = false
   price.reason = ''
   price.error = ''
   priceDlg.value = true
@@ -161,7 +188,7 @@ async function submitPrice() {
   }
   price.busy = true
   try {
-    applyUpdate(await api.orders.changePrice(o.id, normalizeAmount(price.amount)!, price.reason.trim()))
+    applyUpdate(await api.orders.changePrice(o.id, normalizeAmount(price.amount)!, price.reason.trim(), price.removeMarkup))
     toastOk(t('orders.priceChanged'))
     priceDlg.value = false
   } catch (e) {
@@ -350,7 +377,25 @@ defineExpose({ reload: () => props.orderId && load(props.orderId) })
             <template v-else>{{ t('orders.floorUnknown') }}</template>
           </div>
         </el-form-item>
-        <el-form-item :label="t('orders.reason')">
+        <el-form-item v-if="hasMarkup">
+          <el-checkbox v-model="price.removeMarkup">{{ t('orders.reprice.removeMarkup') }}</el-checkbox>
+        </el-form-item>
+        <el-descriptions v-if="currentBreakdown" :title="t('orders.reprice.current')" :column="1" size="small" border>
+          <el-descriptions-item :label="t('orders.reprice.subtotal')">{{ moneyMinor(currentBreakdown.subtotal) }}</el-descriptions-item>
+          <el-descriptions-item :label="t('orders.reprice.discount')">{{ moneyMinor(currentBreakdown.discount) }}</el-descriptions-item>
+          <el-descriptions-item :label="t('orders.reprice.markup')">{{ moneyMinor(currentBreakdown.markup) }}</el-descriptions-item>
+          <el-descriptions-item :label="t('orders.reprice.fee')">{{ moneyMinor(currentBreakdown.fee) }}</el-descriptions-item>
+          <el-descriptions-item :label="t('orders.reprice.total')"><b>{{ moneyMinor(currentBreakdown.total) }}</b></el-descriptions-item>
+        </el-descriptions>
+        <el-descriptions v-if="preview" class="reprice-preview" :title="t('orders.reprice.result')" :column="1" size="small" border>
+          <el-descriptions-item :label="t('orders.reprice.subtotal')">{{ moneyMinor(preview.subtotal) }}</el-descriptions-item>
+          <el-descriptions-item :label="t('orders.reprice.discount')">{{ moneyMinor(0) }}</el-descriptions-item>
+          <el-descriptions-item :label="t('orders.reprice.markup')">{{ moneyMinor(preview.markup) }}</el-descriptions-item>
+          <el-descriptions-item :label="t('orders.reprice.fee')">{{ moneyMinor(preview.fee) }}</el-descriptions-item>
+          <el-descriptions-item :label="t('orders.reprice.total')"><b>{{ moneyMinor(preview.total) }}</b></el-descriptions-item>
+        </el-descriptions>
+        <div class="small muted hint">{{ t('orders.reprice.note') }}</div>
+        <el-form-item :label="t('orders.reason')" class="reprice-reason">
           <el-input v-model="price.reason" :placeholder="t('orders.reasonPlaceholder')" maxlength="200" show-word-limit />
         </el-form-item>
       </el-form>
@@ -399,6 +444,10 @@ defineExpose({ reload: () => props.orderId && load(props.orderId) })
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+.reprice-preview,
+.reprice-reason {
+  margin-top: 12px;
 }
 .price.big {
   font-size: 22px;

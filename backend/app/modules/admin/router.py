@@ -281,7 +281,13 @@ async def change_price(
     res: Resources = Depends(get_res),
 ) -> dict:
     order, msg = await order_admin.change_price(
-        db, order_id, body.amount, body.reason, staff, client_ip(request)
+        db,
+        order_id,
+        body.amount,
+        body.reason,
+        staff,
+        client_ip(request),
+        remove_markup=body.remove_markup,
     )
     return await _order_reply(res, db, order, msg)
 
