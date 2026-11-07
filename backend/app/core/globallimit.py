@@ -16,10 +16,13 @@ from typing import Any
 
 from redis.asyncio import Redis
 from sqlalchemy import select
+from starlette.requests import cookie_parser
 
 from app.core.db import tenant_session
 from app.core.middleware import ASGIApp, Receive, Scope, Send, _header
 from app.core.ratelimit import hit
+from app.core.security import STAFF_ROLES
+from app.core.settings_v5 import ip_in_nets, parse_net, section
 from app.models import Tenant
 
 log = logging.getLogger("app.ratelimit")
@@ -48,8 +51,18 @@ def normalize(raw: Any) -> dict[str, Any]:
     }
 
 
-async def mirror(redis: Redis, tenant_id: uuid.UUID, cfg: dict[str, Any]) -> None:
-    await redis.set(cfg_key(tenant_id), json.dumps(normalize(cfg)))
+def _with_ips(cfg: dict[str, Any], staff_ips: Any) -> dict[str, Any]:
+    ips = [x for x in staff_ips if isinstance(x, str)] if isinstance(staff_ips, list) else []
+    out = normalize(cfg)
+    out["staff_ips"] = [x for x in ips if parse_net(x) is not None][:50]
+    return out
+
+
+async def mirror(
+    redis: Redis, tenant_id: uuid.UUID, cfg: dict[str, Any], staff_ips: list[str] | None = None
+) -> None:
+    """Cache config + the staff IP allowlist (security section) for the middleware."""
+    await redis.set(cfg_key(tenant_id), json.dumps(_with_ips(cfg, staff_ips)))
 
 
 def exempt(path: str) -> bool:
@@ -70,20 +83,31 @@ class GlobalRateLimitMiddleware:
             return hit_[1]
         raw = await res.redis.get(cfg_key(tid))
         if raw:
-            cfg = normalize(json.loads(raw))
+            parsed = json.loads(raw)
+            cfg = _with_ips(parsed, parsed.get("staff_ips") if isinstance(parsed, dict) else None)
         else:
             # Redis miss (flush / restart): the DB is the source of truth. Reload and re-mirror.
             async with tenant_session(res.maker, None) as s:
                 stored = await s.scalar(select(Tenant.settings).where(Tenant.id == tid))
-            cfg = normalize((stored or {}).get("rate_limit"))
+            ips = section(stored, "security")["staff_ip_allowlist"]
+            cfg = _with_ips((stored or {}).get("rate_limit"), ips)
             try:
-                await mirror(res.redis, tid, cfg)
+                await mirror(res.redis, tid, cfg, ips)
             except Exception as exc:
                 log.warning("rate limit config re-mirror failed error=%s", type(exc).__name__)
+        cfg["nets"] = [n for n in map(parse_net, cfg["staff_ips"]) if n is not None]
         self._cache[tid] = (now + CFG_TTL_S, cfg)
         if len(self._cache) > 500:
             self._cache.clear()
         return cfg
+
+    @staticmethod
+    async def _is_staff(scope: Scope, res: Any, tid: uuid.UUID) -> bool:
+        raw = _header(scope, b"cookie")
+        if not raw:
+            return False
+        sess = await res.sessions.get(res.sessions.token_from(cookie_parser(raw)))
+        return sess is not None and sess.tenant_id == tid and sess.role in STAFF_ROLES
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http" or exempt(scope.get("path", "")):
@@ -95,12 +119,15 @@ class GlobalRateLimitMiddleware:
             tid = await res.tenants.resolve(_header(scope, b"host"))
             cfg = await self._config(res, tid)
             ip = (scope.get("state") or {}).get("client_ip")
-            if cfg["enabled"] and ip:  # unknown IP: skip, never a shared bucket
+            # unknown IP: skip, never a shared bucket; allowlisted staff IPs are never limited
+            if cfg["enabled"] and ip and not ip_in_nets(ip, cfg["nets"]):
                 allowed, reset = await hit(
                     res.redis, f"global:{tid}", ip, cfg["limit"], cfg["window_s"]
                 )
                 if not allowed:
                     retry = max(1, reset)
+                    if await self._is_staff(scope, res, tid):  # over-limit path only
+                        retry = 0
         except Exception as exc:  # fail open
             log.warning("global rate limit skipped error=%s", type(exc).__name__)
         if retry:

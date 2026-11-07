@@ -334,9 +334,14 @@ async def update_site(
             detail={"sections": sorted(v5_changed)},
         )
     await db.commit()
-    if body.rate_limit is not None and redis is not None:
+    if (body.rate_limit is not None or body.security is not None) and redis is not None:
         try:  # mirror for the middleware (fail open: a Redis error never fails the save)
-            await globallimit.mirror(redis, admin.tenant_id, after["rate_limit"])
+            await globallimit.mirror(
+                redis,
+                admin.tenant_id,
+                after["rate_limit"],
+                section(new, "security")["staff_ip_allowlist"],
+            )
         except Exception:
             log.error("rate limit config mirror to Redis failed")
     return after
