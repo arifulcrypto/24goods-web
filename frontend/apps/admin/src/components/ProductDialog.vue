@@ -85,9 +85,10 @@ async function autofill(kind: 'url' | 'paste') {
     const out = draftToFields(d, map, chosen)
     form.title_en = out.title.slice(0, 120)
     form.desc_en = out.description_md.slice(0, 5000)
+    // prices only on a new product: never silently overwrite a deliberately set price / floor
     const sell = d.suggested_price_minor ?? d.price_minor
-    if (sell != null) form.price = minorToYuan(sell)
-    if (d.price_minor != null) {
+    if (isNew.value && sell != null) form.price = minorToYuan(sell)
+    if (isNew.value && d.price_minor != null) {
       cost.value = minorToYuan(d.price_minor)
       form.floor_price = minorToYuan(d.price_minor)
     }
@@ -287,6 +288,7 @@ async function importInlineCards(id: string) {
     cardError.value = ''
   } catch (e) {
     cardError.value = `${t(errorI18nKey(e))} - ${t('v5.autofill.cardsFailed')}`
+    if (!cardLines.value) cardLines.value = lines // let staff retry instead of re-pasting
   }
 }
 
@@ -380,10 +382,10 @@ async function removeImage(url: string) {
       <el-collapse-item :title="t('v5.autofill.title')" name="af">
         <p class="hint muted">{{ t('v5.autofill.hint') }}</p>
         <div class="af-row">
-          <el-input v-model="afUrl" inputmode="url" :placeholder="URL_HINT" spellcheck="false" @keyup.enter="autofill('url')" />
+          <el-input v-model="afUrl" inputmode="url" :placeholder="URL_HINT" :aria-label="t('v5.autofill.fetch')" spellcheck="false" @keyup.enter="autofill('url')" />
           <el-button type="primary" :loading="afBusy" @click="autofill('url')">{{ t('v5.autofill.fetch') }}</el-button>
         </div>
-        <el-input :model-value="afText" type="textarea" :rows="4" :placeholder="t('v5.import.pastePlaceholder')" class="af-paste" @paste="onAfPaste" @update:model-value="onAfInput" />
+        <el-input :model-value="afText" type="textarea" :rows="4" :placeholder="t('v5.import.pastePlaceholder')" :aria-label="t('v5.autofill.parse')" class="af-paste" @paste="onAfPaste" @update:model-value="onAfInput" />
         <el-button :loading="afBusy" @click="autofill('paste')">{{ t('v5.autofill.parse') }}</el-button>
         <el-alert v-if="errors.autofill" type="error" :closable="false" :title="errors.autofill" class="af-paste" />
       </el-collapse-item>
@@ -569,7 +571,7 @@ async function removeImage(url: string) {
       <el-form-item :label="t('products.form.images')">
         <div v-if="isNew" class="images">
           <div v-for="url in form.images" :key="url" class="img">
-            <el-image :src="url" fit="cover" />
+            <el-image :src="url" fit="cover" :alt="form.title_en" />
             <el-button class="rm" size="small" circle type="danger" :aria-label="t('products.form.removeImage')" @click="dropNewImage(url)">×</el-button>
           </div>
           <div class="muted">{{ t('products.form.saveFirst') }}</div>
