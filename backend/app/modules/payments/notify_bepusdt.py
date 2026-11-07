@@ -137,6 +137,8 @@ async def handle_bepusdt_notify(
     paid = bepusdt.decimal_of(params.get("amount"))
     if paid is None:
         return await review("bad_amount")
+    if paid <= 0:
+        return await review("bad_amount")
     trade_id = params.get("trade_id")
     if not isinstance(trade_id, str) or not trade_id:
         return await review("missing_trade_no")

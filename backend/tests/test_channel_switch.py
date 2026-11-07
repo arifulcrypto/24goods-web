@@ -282,3 +282,32 @@ async def test_promo_and_markup_orders_switched_then_paid_balance(env, gw, mock)
         assert (await buyer.get(f"/api/v1/orders/{o['id']}")).json()["status"] == "paid"
     assert await env.scalar("SELECT count(*) FROM payments") == 2
     assert await env.scalar(BALANCED) == 0
+
+
+async def test_second_paid_trade_is_critical_held_and_alerted(env, gw, monkeypatch):
+    from app.core import notify_tg
+
+    calls: list[tuple] = []
+    monkeypatch.setattr(
+        notify_tg,
+        "order_event",
+        lambda res, o, ev, extra=None, once_suffix="": calls.append((ev, extra)),
+    )
+    await _two_channels(env)
+    p = await env.product(mode="manual", price=1000, floor=100)
+    buyer, _ = await env.login("buyer")
+    o = await buy(buyer, p)
+    await buyer.post(PAY.format(o["id"]), json={"channel": "zpay_alipay"})  # old URL: 10.30
+    await buyer.post(PAY.format(o["id"]), json={"channel": "usdt_trc20"})  # new amount 10.00
+    assert await _zpay_notify(env, gw, o["order_no"], "10.30", "TFIRST") == "success"  # held
+    assert await env.scalar("SELECT count(*) FROM payments") == 1
+    assert await _zpay_notify(env, gw, o["order_no"], "10.30", "TSECOND") == "success"
+    assert await env.scalar("SELECT count(*) FROM payments") == 1
+    d = await env.scalar(
+        "SELECT detail::text FROM audit_log "
+        "WHERE action='payment.duplicate' AND severity='critical'"
+    )
+    assert "TSECOND" in d and "1030" in d and "TFIRST" in d
+    assert (await buyer.get(f"/api/v1/orders/{o['id']}")).json()["status"] == "manual_review"
+    assert any(ev == "payment_review" and "TSECOND" in str(x) for ev, x in calls)
+    assert await env.scalar("SELECT count(*) FROM outbox WHERE topic='order.paid'") == 0

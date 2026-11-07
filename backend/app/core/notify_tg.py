@@ -175,7 +175,13 @@ def order_lines(order: Any) -> list[str]:
     ]
 
 
-def order_event(res: Resources, order: Any, event: str, extra: list[str] | None = None) -> None:
+def order_event(
+    res: Resources,
+    order: Any,
+    event: str,
+    extra: list[str] | None = None,
+    once_suffix: str = "",
+) -> None:
     """Notify about one order (plain attributes only: safe to call after commit)."""
     notify_bg(
         res,
@@ -183,15 +189,24 @@ def order_event(res: Resources, order: Any, event: str, extra: list[str] | None 
         event,
         [*order_lines(order), *(extra or [])],
         link=admin_link(res, "orders"),
-        once=(f"{event}:{order.id}", 7 * 86400),
+        once=(f"{event}:{order.id}{once_suffix}", 7 * 86400),
     )
 
 
-def outcome_events(res: Resources, orders: list[Any]) -> None:
+def outcome_events(res: Resources, orders: list[Any], dup_trade_no: str | None = None) -> None:
     """After a settled payment: paid -> order_paid (+ low stock); manual_review -> review.
     Never raises: runs inline on the payment-notify path after commit."""
     try:
         _outcome_events(res, orders)
+        if dup_trade_no:  # a second paid trade: never throttled behind the first review alert
+            for o in orders:
+                order_event(
+                    res,
+                    o,
+                    "payment_review",
+                    [f"SECOND payment, refund it: trade {dup_trade_no[:32]}"],
+                    once_suffix=f":{dup_trade_no[:64]}",
+                )
     except Exception as exc:  # a notification bug must not fail a notify reply
         log.warning("telegram outcome events skipped (%s)", type(exc).__name__)
 
