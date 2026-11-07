@@ -62,6 +62,23 @@
 		}
 	}
 
+	# SEO documents rendered by the API (review-v5.2 §6, ADR-024): crawler HTML + first paint.
+	# The SPA still boots from the same shell; the API serves it with per-route metadata. If the
+	# API cannot answer (down / 503 shell unavailable) the static shell is served instead.
+	@seo path / /p/* /a/* /help /search /sitemap.xml /robots.txt
+	handle @seo {
+		reverse_proxy api:8000 {
+			header_up X-Forwarded-For {client_ip}
+			header_up -X-Storefront
+			@unavailable status 502 503 504
+			handle_response @unavailable {
+				root * /srv/web
+				rewrite * /index.html
+				file_server
+			}
+		}
+	}
+
 	# Demo-only ZPay simulator. Remove this block in production.
 	handle_path /mockpay/* {
 		reverse_proxy mockpay:8002
@@ -93,6 +110,18 @@
 		file_server
 	}
 
+	handle_errors {
+		@seo_down {
+			path / /p/* /a/* /help /search
+			expression {http.error.status_code} in [502, 503, 504]
+		}
+		handle @seo_down {
+			root * /srv/web
+			rewrite * /index.html
+			file_server
+		}
+	}
+
 	log {
 		output stdout
 		format json
@@ -101,6 +130,18 @@
 
 {$SITE_ADDRESS::80} {
 	import app
+}
+
+# Internal only (edge network, never published): the API fetches the built SPA shell from here
+# to render the SEO pages (APP_WEB_INDEX_URL=http://web/index.html). /index.html and nothing else.
+http://web {
+	handle /index.html {
+		root * /srv/web
+		file_server
+	}
+	handle {
+		respond 404
+	}
 }
 
 # --- M4: reseller custom domains via On-Demand TLS ------------------------

@@ -125,6 +125,12 @@ export const TG_EVENTS = ['order_paid', 'chat_message', 'after_sales', 'payment_
 export interface AuditCfg {
   retention_days: number
 }
+export interface SeoCfg {
+  indexing_enabled: boolean
+  index_storefronts: boolean
+  default_description_i18n: Partial<I18nText>
+  og_image: string
+}
 export interface EmailTemplate {
   subject_i18n: Partial<I18nText>
   body_i18n: Partial<I18nText>
@@ -151,6 +157,7 @@ export interface SiteSections {
   import: MarkupCfg
   resellers: ResellersCfg
   audit: AuditCfg
+  seo: SeoCfg
 }
 export type AdminSiteV5 = AdminSiteV4 &
   Partial<SiteSections> & {

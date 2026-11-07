@@ -509,3 +509,28 @@ ledger, audit, resellers, order mutations or card listing/reveal.
 
 Storage: table `api_tokens` (migration 0009): SHA-256 hex unique, RLS forced, `app_api` may only
 update `last_used_at`, `last_used_ip`, `revoked_at` (last-used written at most once a minute).
+
+## SEO routes v5.2 (root level, not under `/api`) — review-v5.2 §6, ADR-024
+
+Public, no auth, tenant from the Host header, GET/HEAD. Caddy proxies exactly these paths to the API;
+the global per-IP limiter covers them like `/api`. `?lang=en|zh-CN` picks the language (default: the
+tenant's `defaults.locale`; `Accept-Language` is ignored). A page the SPA does not know a route for is
+not served here.
+
+| Path | Response |
+| --- | --- |
+| `/`, `/help`, `/search` | the SPA `index.html` with `<title>`, description, canonical, `hreflang` en / zh-CN / x-default, Open Graph, Twitter, JSON-LD (`WebSite`+`SearchAction`, `Organization`, `BreadcrumbList`) and a pre-rendered content block. `/search` is always `noindex,follow` |
+| `/p/{id}` | same, with `Product`+`Offer` (price, currency, `InStock`/`OutOfStock`: manual stock NULL = unlimited, auto = available cards) and `BreadcrumbList`. Not a UUID / unknown / archived / other tenant / disabled category / hidden by the reseller: **404** + `noindex,nofollow` + SPA shell |
+| `/a/{slug}` | `Article` + `BreadcrumbList`; unknown or unpublished: 404 as above |
+| `/sitemap.xml` | `urlset` with `xhtml:link` alternates: home, help, active products, published articles, `lastmod`; empty when indexing is off; cached 10 min |
+| `/robots.txt` | `Allow: /`, `Disallow:` `/admin /api /cart /orders /pay /me /messages /reseller /chat /lookup`, `Sitemap: <base>/sitemap.xml`; indexing off: `Disallow: /` |
+
+Headers: HTML `Cache-Control: public, max-age=0, s-maxage=300, must-revalidate` (404: `max-age=60`),
+sitemap/robots `public, max-age=300`; `X-Robots-Tag: noindex, nofollow` on 404s and when indexing is off.
+`503` (no cache) when the SPA shell cannot be loaded; Caddy then serves the static shell.
+
+Settings: `PUT /admin/site` accepts `seo: {indexing_enabled, index_storefronts,
+default_description_i18n, og_image}` (`og_image`: empty, `/path` or `https://` URL); returned by
+`GET /admin/site` as `seo`. Audited with the other v5 sections. Env: `APP_WEB_INDEX_URL`
+(default `http://web/index.html`), `APP_WEB_INDEX_PATH` (file, overrides the URL).
+

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import TabBar from './components/TabBar.vue'
 import CsBubble from './components/CsBubble.vue'
@@ -22,10 +22,25 @@ const site = useSiteStore()
 
 // v5 §4/§7: document title = storefront name / Settings → General name / brand.ts
 // White-label storefronts (owner rule): no platform brand in title, meta tags or favicon.
+// Server-rendered SEO pages carry a per-page <title>: keep it until the first in-app navigation.
+let keepServerTitle = !!document.head.querySelector('meta[name="seo-rendered"]')
+const router = useRouter()
+router.afterEach((_to, from) => {
+  if (from.name !== undefined && keepServerTitle) {
+    keepServerTitle = false
+    document.title = site.headerName
+    // the rest of the server-rendered metadata describes the landing page only
+    document.head
+      .querySelectorAll(
+        'meta[name="description"], meta[property^="og:"], meta[name^="twitter:"], link[rel="canonical"], link[rel="alternate"][hreflang], script[type="application/ld+json"]',
+      )
+      .forEach((el) => el.remove())
+  }
+})
 watch(
   () => [site.headerName, site.whiteLabel, site.storefront?.welcome, site.storefront?.logo_url] as const,
   ([n, wl, welcome, logo]) => {
-    document.title = n
+    if (!keepServerTitle || wl) document.title = n
     if (!wl) return
     const setMeta = (sel: string, attr: string, key: string, val: string) => {
       let el = document.head.querySelector<HTMLMetaElement>(sel)

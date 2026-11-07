@@ -521,6 +521,10 @@ const zhCN: WebMessages = {
   },
   notFound: {
     title: '页面不存在',
+    text: '你访问的页面不存在或已下架。',
+    searchPlaceholder: '搜索商品',
+    search: '搜索',
+    help: '帮助中心',
     home: '返回首页',
   },
 }

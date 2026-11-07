@@ -271,6 +271,31 @@ class AuditIn(BaseModel):
     retention_days: int | None = Field(None, ge=30, le=3650)
 
 
+class SeoIn(BaseModel):
+    indexing_enabled: bool | None = None
+    index_storefronts: bool | None = None
+    default_description_i18n: dict[str, str] | None = None
+    og_image: str | None = Field(None, max_length=500)
+
+    @field_validator("default_description_i18n")
+    @classmethod
+    def _d(cls, v: dict[str, str] | None) -> dict[str, str] | None:
+        return _i18n(v, 300)
+
+    @field_validator("og_image")
+    @classmethod
+    def _o(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        v = v.strip()
+        ok = (
+            v == "" or (v.startswith("/") and v[1:2] not in ("/", "\\")) or v.startswith("https://")
+        )
+        if not ok or any(c.isspace() or c in '"<>\\' for c in v):
+            raise ValueError("og_image must be empty, a /path or an https:// URL")
+        return v
+
+
 class EmailTemplateIn(BaseModel):
     subject_i18n: dict[str, str] | None = None
     body_i18n: dict[str, str] | None = None

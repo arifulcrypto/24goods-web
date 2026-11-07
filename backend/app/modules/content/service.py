@@ -46,6 +46,7 @@ V5_SECTIONS = (
     "import",
     "resellers",
     "audit",
+    "seo",
 )
 
 

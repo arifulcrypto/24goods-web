@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { nextTick, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { copyText, formatDateTime } from '@24goods/shared'
 import { apiV5 } from '../../api'
@@ -11,6 +11,7 @@ const rows = ref<ApiTokenRow[]>([])
 const loading = ref(false)
 const creating = ref(false)
 const form = reactive({ name: '', scopes: [] as ApiTokenScope[], days: 90 })
+const copyBtn = ref<{ $el?: HTMLElement } | null>(null)
 const shown = ref<string | null>(null) // plaintext, held in memory only until dismissed
 
 async function load() {
@@ -29,6 +30,7 @@ async function create() {
   try {
     const r = await apiV5.apiTokens.create({ name: form.name.trim(), scopes: form.scopes, expires_in_days: form.days })
     shown.value = r.token
+    void nextTick(() => (copyBtn.value?.$el as HTMLElement | undefined)?.focus())
     form.name = ''
     form.scopes = []
     await load()
@@ -60,10 +62,10 @@ onMounted(load)
       <h2 class="h2">{{ t('v5.tokens.title') }}</h2>
       <p class="muted small">{{ t('v5.tokens.note') }}</p>
       <p class="muted small">{{ t('v5.tokens.docs') }}</p>
-      <el-alert v-if="shown" type="warning" :closable="false" show-icon :title="t('v5.tokens.shownOnce')" class="once">
+      <el-alert v-if="shown" role="alert" type="warning" :closable="false" show-icon :title="t('v5.tokens.shownOnce')" class="once">
         <code class="tok">{{ shown }}</code>
         <div class="row">
-          <el-button type="primary" @click="copy">{{ t('v5.tokens.copy') }}</el-button>
+          <el-button ref="copyBtn" type="primary" @click="copy">{{ t('v5.tokens.copy') }}</el-button>
           <el-button @click="shown = null">{{ t('v5.tokens.done') }}</el-button>
         </div>
       </el-alert>

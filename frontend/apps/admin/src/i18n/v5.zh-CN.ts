@@ -38,6 +38,7 @@ export default {
       resellers: "分销商",
       import: "导入",
       tokens: "API 令牌",
+      seo: "SEO",
     },
   },
   secret: {
@@ -125,6 +126,18 @@ export default {
     googleId: "客户端 ID",
     googleSecret: "客户端密钥",
     redirectUri: "授权重定向 URI：",
+  },
+  seo: {
+    title: "搜索引擎 (SEO)",
+    note: "爬虫会获得服务端渲染的页面、/sitemap.xml 与 /robots.txt。演示站或测试站请关闭收录。",
+    indexing: "允许搜索引擎收录本站",
+    indexingHint: "关闭后所有页面都带 noindex，robots.txt 禁止抓取全部内容。",
+    storefronts: "允许收录白标分销店铺",
+    storefrontsHint: "默认关闭：分销店铺域名始终 noindex。",
+    description: "默认描述（页面没有描述时使用）",
+    og: "社交分享图片",
+    ogHint: "留空、以 / 开头的路径（如 /og.png）或 https:// 链接，建议 1200x630。",
+    ogInvalid: "请填写以 / 开头的路径或 https:// 链接。",
   },
   defaults: {
     title: "用户默认",

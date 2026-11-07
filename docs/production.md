@@ -102,6 +102,22 @@ reaches `manual_review` (amount or re-query mismatch, late payment) is resolved 
 transaction hash is in the payment record (`block_transaction_id`). Back up the `bepusdt_data` volume with
 the other volumes (it only holds addresses, settings and trade history, no private keys).
 
+## SEO and Google Search Console (review-v5.2 §6, ADR-024)
+
+- Public pages (`/`, `/p/*`, `/a/*`, `/help`) are rendered by the API into the SPA shell for crawlers;
+  `/sitemap.xml` and `/robots.txt` are dynamic. Caddy needs no extra config beyond the shipped
+  `Caddyfile.prod` (it routes those paths to `api:8000` and serves the internal shell as `Host: web`
+  on the container-internal `:80`). The API fetches `http://web/index.html` (override: `APP_WEB_INDEX_URL`).
+- Production: Settings -> SEO -> "Allow search engines to index this site" **on** (the code default).
+  Demo/staging: switch it **off** (everything becomes `noindex` and `robots.txt` = `Disallow: /`).
+  White-label reseller stores stay `noindex` unless "Allow indexing of white-label reseller stores" is on.
+- After the first prod deploy: add the property in Google Search Console (DNS TXT verification on the
+  apex), **submit `https://<domain>/sitemap.xml`**, request indexing of `/`, and check the Pages report
+  for "Excluded by noindex" on anything that should rank. Bing Webmaster Tools can import the property.
+- Cloudflare: do not cache HTML aggressively (the API sets `s-maxage=300` and `max-age=0`); after a deploy
+  purge `/` and `/p/*` if a "cache everything" rule exists, because HTML embeds hashed asset URLs.
+- Optional share image: Settings -> SEO -> social share image (e.g. an `/og.png` shipped in the web image).
+
 ## Refreshing Cloudflare IP ranges
 
 `curl https://www.cloudflare.com/ips-v4; curl https://www.cloudflare.com/ips-v6`, update `trusted_proxies static ...` and the date comment in `deploy/Caddyfile.prod`, validate (`caddy validate` in the web image), sync, `up -d web`.

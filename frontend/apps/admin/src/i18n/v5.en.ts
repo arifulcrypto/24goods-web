@@ -38,6 +38,7 @@ export default {
       resellers: "Resellers",
       import: "Import",
       tokens: "API tokens",
+      seo: "SEO",
     },
   },
   secret: {
@@ -125,6 +126,18 @@ export default {
     googleId: "Client ID",
     googleSecret: "Client secret",
     redirectUri: "Authorized redirect URI:",
+  },
+  seo: {
+    title: "Search engines (SEO)",
+    note: "Crawlers get server-rendered pages, /sitemap.xml and /robots.txt. Turn indexing off on demo or staging sites.",
+    indexing: "Allow search engines to index this site",
+    indexingHint: "Off: every page is noindex and robots.txt disallows everything.",
+    storefronts: "Allow indexing of white-label reseller stores",
+    storefrontsHint: "Off (default): reseller storefront hosts are always noindex.",
+    description: "Default description (used when a page has none)",
+    og: "Social share image",
+    ogHint: "Empty, a path such as /og.png, or an https:// URL. Recommended 1200x630.",
+    ogInvalid: "Use a path starting with / or an https:// URL.",
   },
   defaults: {
     title: "User defaults",
