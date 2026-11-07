@@ -353,7 +353,7 @@ async def test_failed_bearer_attempts_limited_per_ip(env, monkeypatch):
 
 async def test_suspending_owner_revokes_tokens(env):
     admin, _ = await env.login("admin")
-    agent, a = await env.login("agent")
+    _agent, a = await env.login("agent")
     t = await mint(admin, ("stats",))
     # token owned by the agent: create directly (agents cannot mint)
     async with env.owner_session() as db:

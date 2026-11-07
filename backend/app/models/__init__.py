@@ -23,9 +23,9 @@ from app.models.tenancy import CustomDomain, Tenant
 from app.models.users import AgentStatus, User
 
 __all__ = [
-    "ApiToken",
     "AfterSales",
     "AgentStatus",
+    "ApiToken",
     "Article",
     "Attachment",
     "AuditLog",
