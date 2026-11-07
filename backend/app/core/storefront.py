@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import get_db, get_res, get_tenant_id
 from app.core.resources import Resources
 from app.core.settings_v5 import section
-from app.models import Reseller, Tenant
+from app.models import Reseller, ResellerDomain, Tenant
 
 SLUG_RE = re.compile(r"^[a-z0-9]([a-z0-9-]{1,30}[a-z0-9])$")
 _TTL_S = 15.0  # small cache; invalidate() on every reseller write; disabled when env=test
@@ -61,9 +61,53 @@ _cfg_cache: dict[uuid.UUID, tuple[float, bool, str, int, int]] = {}
 _sf_cache: dict[tuple[uuid.UUID, str], tuple[float, Storefront | None]] = {}
 
 
+# (tenant_id, hostname) -> (expires, reseller slug | None): active custom domains only
+_dom_cache: dict[tuple[uuid.UUID, str], tuple[float, str | None]] = {}
+
+
 def invalidate() -> None:
     _cfg_cache.clear()
     _sf_cache.clear()
+    _dom_cache.clear()
+
+
+def _hostname(host: str | None) -> str:
+    return (host or "").split(":", 1)[0].strip().lower().rstrip(".")
+
+
+async def _custom_domain_slug(
+    db: AsyncSession, tenant_id: uuid.UUID, host: str | None, base_domain: str, ttl: float
+) -> str | None:
+    """Slug of the active reseller owning ``host`` as an ACTIVE custom domain (tenant-scoped)."""
+    hostname = _hostname(host)
+    base = base_domain.strip().lower()
+    if (
+        not hostname
+        or "." not in hostname
+        or (base and (hostname == base or hostname.endswith("." + base)))
+    ):
+        return None  # platform hosts never hit the table
+    key = (tenant_id, hostname)
+    hit = _dom_cache.get(key)
+    now = time.monotonic()
+    if hit and hit[0] > now:
+        return hit[1]
+    slug = await db.scalar(
+        select(Reseller.slug)
+        .join(ResellerDomain, ResellerDomain.reseller_id == Reseller.id)
+        .where(
+            ResellerDomain.hostname == hostname,
+            ResellerDomain.status == "active",
+            ResellerDomain.tenant_id == tenant_id,
+            Reseller.tenant_id == tenant_id,
+            Reseller.status == "active",
+        )
+    )
+    if ttl > 0:
+        _dom_cache[key] = (now + ttl, slug)
+        if len(_dom_cache) > 2000:
+            _dom_cache.clear()
+    return slug
 
 
 def _ttl(res: Resources) -> float:
@@ -90,11 +134,15 @@ async def _cfg(db: AsyncSession, tenant_id: uuid.UUID, ttl: float) -> tuple[bool
     return out
 
 
-def candidate_slug(host: str | None, header: str | None, base_domain: str) -> str | None:
-    """THE single host -> reseller-slug seam. Today: ``{slug}.{base_domain}`` or the
-    ``X-Storefront`` header. A later custom-domain lookup (hostname -> slug) slots in here;
-    nothing else in the code base parses the Host header for storefronts."""
-    hostname = (host or "").split(":", 1)[0].strip().lower().rstrip(".")
+def candidate_slug(
+    host: str | None, header: str | None, base_domain: str, custom_slug: str | None = None
+) -> str | None:
+    """THE single host -> reseller-slug seam: an active custom domain (``custom_slug``, looked up
+    by :func:`resolve`), ``{slug}.{base_domain}`` or the ``X-Storefront`` header. Nothing else in
+    the code base parses the Host header for storefronts."""
+    if custom_slug is not None:
+        return custom_slug
+    hostname = _hostname(host)
     base = base_domain.strip().lower()
     if base and hostname.endswith("." + base):
         prefix = hostname[: -(len(base) + 1)]
@@ -115,7 +163,8 @@ async def resolve(
     enabled, base_domain, max_pm, max_fx = await _cfg(db, tenant_id, ttl)
     if not enabled:
         return None
-    slug = candidate_slug(host, header, base_domain)
+    custom = await _custom_domain_slug(db, tenant_id, host, base_domain, ttl)
+    slug = candidate_slug(host, header, base_domain, custom)
     if slug is None:
         return None
     key = (tenant_id, slug)

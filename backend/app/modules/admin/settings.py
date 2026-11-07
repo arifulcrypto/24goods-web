@@ -24,7 +24,13 @@ _EMAIL = re.compile(r"^[^@\s<>]{1,64}@[A-Za-z0-9.-]{1,253}$")
 
 
 class SecretIn(BaseModel):
-    name: Literal["turnstile_secret", "google_client_secret", "smtp_password", "telegram_bot_token"]
+    name: Literal[
+        "turnstile_secret",
+        "google_client_secret",
+        "smtp_password",
+        "telegram_bot_token",
+        "cloudflare_saas_token",
+    ]
     value: str | None = Field(None, max_length=512)  # null deletes
 
     @field_validator("value")

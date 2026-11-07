@@ -28,11 +28,12 @@ from app.modules.common import turnstile_hook
 from app.modules.content.site import tenant_settings
 from app.modules.orders import admin as order_admin
 from app.modules.orders.service import broadcast_order
-from app.modules.reseller import service, signup
+from app.modules.reseller import domains, service, signup
 from app.modules.reseller.schemas import (
     AdminResellerPatch,
     ApplyIn,
     DecideIn,
+    DomainIn,
     MePatch,
     PayoutIn,
     ProductPut,
@@ -178,6 +179,62 @@ async def request_payout(
     return await service.request_payout(db, user, body.amount_minor, client_ip(request))
 
 
+# ----------------------------------------------------------------------------- domains
+@router.get("/domains")
+async def my_domains(
+    user: User = Depends(current_user), db: AsyncSession = Depends(get_db)
+) -> dict:
+    rcfg = section(await _ts(db, user), "resellers")
+    r = await service.require_mine(db, user)
+    return await domains.list_mine(db, r, rcfg)
+
+
+@router.post("/domains", status_code=201)
+async def add_domain(
+    body: DomainIn,
+    request: Request,
+    user: User = Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+    res: Resources = Depends(get_res),
+) -> dict:
+    await _ts(db, user)
+    r = await service.require_mine(db, user, active=True)
+    await enforce(res.redis, "reseller:domain_add", str(user.id), 10, 3600)
+    d = await domains.add(db, res, user, r, body.hostname, client_ip(request))
+    return domains.view(d)
+
+
+@router.post("/domains/{did}/refresh")
+async def refresh_domain(
+    did: uuid.UUID,
+    request: Request,
+    user: User = Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+    res: Resources = Depends(get_res),
+) -> dict:
+    await _ts(db, user)
+    r = await service.require_mine(db, user)
+    await enforce(res.redis, "reseller:domain_refresh", str(user.id), 30, 3600)
+    d = await domains.refresh(db, res, user, r, did, client_ip(request))
+    return domains.view(d)
+
+
+@router.delete("/domains/{did}", status_code=204)
+async def delete_domain(
+    did: uuid.UUID,
+    request: Request,
+    user: User = Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+    res: Resources = Depends(get_res),
+) -> Response:
+    await _ts(db, user)
+    r = await service.require_mine(db, user)
+    await enforce(res.redis, "reseller:domain_del", str(user.id), 20, 3600)
+    d = await domains._get_mine(db, r, did)
+    await domains.remove(db, res, user, d, client_ip(request))
+    return Response(status_code=204)
+
+
 # ----------------------------------------------------------------------------- admin
 admin = APIRouter(prefix="/admin", tags=["admin-resellers"])
 
@@ -253,3 +310,23 @@ async def admin_resolve_signup(
     await broadcast_order(res, db, order, [])
     (view,) = await order_admin.admin_views(db, [order])
     return view
+
+
+@admin.get("/reseller-domains")
+async def admin_domains(
+    staff: User = Depends(require_admin), db: AsyncSession = Depends(get_db)
+) -> list[dict]:
+    return await domains.admin_list(db, staff)
+
+
+@admin.delete("/reseller-domains/{did}", status_code=204)
+async def admin_remove_domain(
+    did: uuid.UUID,
+    request: Request,
+    staff: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+    res: Resources = Depends(get_res),
+) -> Response:
+    d = await domains.admin_get(db, staff, did)
+    await domains.remove(db, res, staff, d, client_ip(request), force=True)
+    return Response(status_code=204)
