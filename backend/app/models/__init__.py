@@ -5,6 +5,7 @@ from app.models.catalog import Category, Product
 from app.models.chat import Attachment, Conversation, Message, Quote
 from app.models.content import AfterSales, Article
 from app.models.growth import (
+    BlockedIP,
     PromoCode,
     PromoRedemption,
     Reseller,
@@ -25,6 +26,7 @@ __all__ = [
     "Article",
     "Attachment",
     "AuditLog",
+    "BlockedIP",
     "Base",
     "CardBatch",
     "CardStock",

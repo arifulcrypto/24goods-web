@@ -27,7 +27,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core import secretbox
+from app.core import secretbox, suspend
 from app.core.audit import audit
 from app.core.deps import client_ip, get_db, get_res, get_tenant_id
 from app.core.errors import ApiError, Forbidden
@@ -263,6 +263,7 @@ async def callback(
         raise Forbidden("Staff accounts cannot sign in with Google")
     if user.status != "active":
         raise Forbidden("Account is not active")
+    await suspend.enforce(db, user)
     user.last_login_at = datetime.now(timezone.utc)
     await audit(
         db,

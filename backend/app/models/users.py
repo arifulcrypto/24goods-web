@@ -25,6 +25,9 @@ class User(Base):
     handle: Mapped[str | None] = mapped_column(String(16))
     google_sub: Mapped[str | None] = mapped_column(String(64))
     last_login_at: Mapped[datetime | None]
+    suspended_at: Mapped[datetime | None]
+    suspended_until: Mapped[datetime | None]
+    suspend_reason: Mapped[str | None] = mapped_column(String(200))
     created_at: Mapped[datetime] = created_at()
 
 

@@ -12,7 +12,7 @@ from sqlalchemy import Text, cast, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core import email_templates, globallimit, secretbox
+from app.core import email_templates, globallimit, ipblock, secretbox
 from app.core.audit import audit
 from app.core.config import Settings
 from app.core.deps import Page
@@ -345,6 +345,11 @@ async def update_site(
             )
         except Exception:
             log.error("rate limit config mirror to Redis failed")
+    if body.security is not None and redis is not None:
+        try:  # the IP-block middleware rebuilds its copy (incl. the allowlist) from the DB
+            await redis.delete(ipblock.cfg_key(admin.tenant_id))
+        except Exception:
+            log.error("ip block config invalidation failed")
     return after
 
 

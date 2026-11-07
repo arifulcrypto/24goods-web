@@ -114,3 +114,15 @@ class ResellerPayout(Base):
     decided_at: Mapped[datetime | None]
     created_at: Mapped[datetime] = created_at()
     updated_at: Mapped[datetime] = updated_at()
+
+
+class BlockedIP(Base):
+    __tablename__ = "blocked_ips"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id"))
+    cidr: Mapped[str] = mapped_column(String(64))
+    note: Mapped[str | None] = mapped_column(String(200))
+    expires_at: Mapped[datetime | None]
+    created_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = created_at()
