@@ -42,6 +42,7 @@ from app.modules.orders.service import (
     check_channel,
     create_order,
     enforce_payables_cap,
+    lock_manual_products,
     tenant_order_limits,
     utcnow,
 )
@@ -308,12 +309,7 @@ async def create_checkout(
             raise OutOfStock("Not enough stock", extra={"product_id": str(pid)})
     manual_ids = sorted(pid for pid in want if products[pid].delivery_mode == "manual")
     if manual_ids:  # lock product rows in id order: carts never deadlock each other
-        await db.execute(
-            select(Product.id)
-            .where(Product.id.in_(manual_ids))
-            .order_by(Product.id)
-            .with_for_update()
-        )
+        await lock_manual_products(db, buyer.tenant_id, manual_ids)
         for pid in manual_ids:
             await db.refresh(products[pid], ["manual_stock"])
             ms = products[pid].manual_stock

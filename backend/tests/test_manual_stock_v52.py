@@ -130,3 +130,36 @@ async def test_cross_tenant_edit_refused(env):
     r = await admin.patch(f"/api/v1/admin/products/{p.id}", json={"manual_stock": 99})
     assert r.status_code == 404
     assert await stock(env, p.id) is None
+
+
+async def test_buy_now_and_checkout_same_promo_and_product_no_deadlock(env):
+    from tests.test_commerce_v5 import make_promo
+
+    admin, _ = await env.login("admin")
+    await make_promo(admin, code="MIX", per_user_limit=5)
+    p = await stocked(env, 6)
+    buyers = [(await env.login("buyer"))[0] for _ in range(8)]
+    calls = []
+    for i, b in enumerate(buyers):
+        if i % 2:
+            calls.append(
+                b.post("/api/v1/orders", json={"product_id": str(p.id), "promo_code": "MIX"})
+            )
+        else:
+            calls.append(
+                b.post(
+                    "/api/v1/checkout",
+                    json={"items": [{"product_id": str(p.id), "qty": 1}], "promo_code": "MIX"},
+                )
+            )
+    rs = await asyncio.gather(*calls)
+    assert all(r.status_code in (200, 201, 409) for r in rs), [r.text for r in rs]
+    ok = sum(r.status_code in (200, 201) for r in rs)
+    assert ok == 6 and await stock(env, p.id) == 0
+
+
+async def test_switch_to_manual_defaults_stock_one(env):
+    admin, _ = await env.login("admin")
+    p = await env.product(mode="auto_card")
+    r = await admin.patch(f"/api/v1/admin/products/{p.id}", json={"delivery_mode": "manual"})
+    assert r.status_code == 200 and r.json()["manual_stock"] == 1

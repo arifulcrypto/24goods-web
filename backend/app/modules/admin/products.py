@@ -187,6 +187,10 @@ async def patch(
     if data.get("description_i18n") is not None:
         p.description_i18n = data["description_i18n"]
         p.description_html_i18n = render_i18n(data["description_i18n"])
+    if data.get("delivery_mode") == "manual" and p.delivery_mode != "manual":
+        # switching to manual: finite default like create (unless the admin sent a value)
+        if "manual_stock" not in data:
+            p.manual_stock = 1
     for key in ("delivery_mode", "category", "status", "delivery_separator", "group_sort"):
         if data.get(key) is not None:
             setattr(p, key, data[key])

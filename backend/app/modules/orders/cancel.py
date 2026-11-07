@@ -212,7 +212,6 @@ async def cancel_group(
     msgs: list[Message | None] = []
     for o in orders:
         before = snapshot(o)
-        await release_manual_stock(db, o)
         o.status = "cancelled"
         o.cancel_reason = clean[:200] if clean else None
         o.version += 1
@@ -259,6 +258,7 @@ async def cancel_group(
                 by=by,
             )
         )
+    await release_manual_stock(db, tid, orders)
     # promo: reserved -> released (-used_count), buyer and staff cancel alike
     has_promo = (co.promo_code_id is not None) if co is not None else bool(orders[0].promo_code_id)
     if co is not None:
