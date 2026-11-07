@@ -4,39 +4,34 @@ Update this file in every PR. Phases are defined in [review-v2.md §8](review-v2
 
 ## Current state — hand-off (read this first in a new session)
 
-_Last updated 2026-11-07 (v5.1 items 1, 2, 6; USDT on `feat/v52-usdt`)._
+_Last updated 2026-11-07 (v5.1 + v5.2)._
 
-- **Prod** https://shop.kesiv.com runs **v4** (c4 /opt/kesiv). `scripts/prod.sh deploy` is run by the owner.
-- **Demo** https://demo.kesiv.com runs `:main` (auto-updated by `goods24-demo-update.timer`, manual:
+- **Prod** https://shop.kesiv.com (c4, IIJ Japan) runs **v4**; deployed by the owner from another session
+  (`scripts/prod.sh`). This box = dev + demo. Prod needs `APP_SETTINGS_KEY` and the new env vars
+  (BEpusdt, see docs/production.md) before the v5 deploy.
+- **Demo** https://demo.kesiv.com runs `:main` (timer `goods24-demo-update`, manual
   `/opt/24goods-demo/deploy/demo-update.sh`). Logins: `/opt/24goods-demo/deploy/secrets/demo-credentials.txt`.
-- **v5.1 done (2026-11-07)** — `docs/review-v5.1.md`:
-  - §1 staff reprice on promo/reseller orders — PR #11 (payment-auditor pass; fixes: a discount comes
-    out of the reseller markup first, base = subtotal − markup at order time; missing product → refused).
-    Known edge (accepted): a late notify for the old discounted amount lands in manual review and the
-    released promo is not re-counted.
-  - §2 storefront clarity — PR #12: `resellers.link_mode` (`query` default → `{public_base_url}/?store=slug`),
-    store remembered 30 days in localStorage (`?store=off` clears), order page shows the order's store.
-  - §6 product dialog auto-fill + inline card codes (auto delivery) — PR #13.
-  - i18n-mobile-reviewer pass on all three (Low findings fixed). CI fix: web image Caddy rebuilt with
-    `golang.org/x/net` v0.62.0 (CVE-2026-78661) via `xcaddy --replace`.
-- **Owner inputs received** (see review-v5.1 "Owner inputs"): USDT EVM + TRC20 addresses, Telegram bot
-  (`/root/.secrets/telegram.env`, not in git), Cloudflare for SaaS being enabled (read-only check OK,
-  fallback origin not set). **Agents don't change Cloudflare settings.**
-- **Next steps, in order:**
-  1. v5.2 §7 USDT via BEpusdt: implemented on `feat/v52-usdt` (ADR-023, fixed channels, no provider-instance
-     model). Needs payment-auditor + security-reviewer, then demo env changes (see production.md "USDT").
-  2. v5.1 §3 reseller subdomains + own domains (Cloudflare changes → show the owner first; set fallback
-     origin `stores.kesiv.com`; verify token write permission with the prod token).
-  3. v5.1 §5 block IPs/users: app-level MVP done on `feat/v52-blocking` (user suspension, `blocked_ips`
-     middleware, admin Users page, full-page "Access denied"/"suspended" screens). Cloudflare IP-list sync
-     still open (needs the CF token permission); security-reviewer pass pending.
-  4. Telegram staff notifications: implemented on `feat/v52-telegram` (review-v5.2 §10); owner sets the token in Settings -> Notifications.
-  4b. SEO (review-v5.2 §6): implemented on `feat/v52-seo` (ADR-024). Orchestrator: set Settings -> SEO
-     indexing OFF on the demo; ON in prod, then submit `/sitemap.xml` in Search Console (production.md).
-  5. Older follow-ups: admin order `cost_minor` snapshot, promo redemptions `order_no`, dev DB probe-data
-     cleanup, prod `APP_SETTINGS_KEY` before the v5 prod deploy.
-- **Working rules:** AGENTS.md §7 (2 GB box: full suite in CI only, ≤ 2 agents, dev stack down when
-  idle, never run servers under `flock`).
+  Demo config set 2026-11-07: rate limit 120/60 s, Telegram on (owner chat), Alipay + 3 USDT channels on
+  (USDT = simulator `mockusdt`; env in `deploy/env/{api,mockusdt}.env`), SEO indexing **off**.
+- **Done 2026-11-07** (all with security-reviewer / payment-auditor / i18n-mobile-reviewer passes, findings fixed):
+  - v5.1: §1 staff reprice (#11), §2 storefront clarity (#12), §6 product auto-fill + inline cards (#13).
+  - v5.2 (`docs/review-v5.2.md`): §1 staff access — admin login Turnstile, staff IP allowlist, no 429 for
+    staff (#14); §10 Telegram notifications (#15); bilingual README + Cloudflare plan (#16); §7 USDT via
+    BEpusdt, ADR-023 (#17); IP/user blocking (#18); reseller subdomains + custom domains app side (#19);
+    §2 manual stock default 1 + §3 Ctrl+V paste (#20); §5 agent API tokens + Claude skill (#21);
+    §6 SEO crawler HTML, sitemap, robots, 404, ADR-024 (#22).
+- **Owner decisions / actions open:**
+  1. Cloudflare changes for reseller subdomains + custom domains: `docs/cloudflare-reseller-domains.md`
+     (proposal, not applied). Then: Settings → Resellers → custom domains (zone id, token with
+     "SSL and Certificates: Edit").
+  2. Prod domain: apex `kesiv.com` vs `shop.kesiv.com` as the main host (the other 301s).
+  3. Real USDT: start BEpusdt on prod (profile `usdt`), set the Arbitrum/X Layer/TRC20 addresses in its
+     console, copy its token into api.env (docs/production.md). Independent pentest before real money (M1 gate).
+  4. Staff IPs for Settings → Security → staff IP allowlist. Telegram bot token rotation is the owner's call.
+  5. Cloudflare 5-second challenge / IP-list sync for blocked IPs: Cloudflare settings + token permission.
+- **Next (code):** v5.2 §8 optional entry check (Turnstile on entry), category pages for SEO, Telegram for
+  manual-delivery completion, persisting USDT trade ids on the order (cancel-time re-query without Redis).
+- **Working rules:** AGENTS.md §7 (2 GB box: full suite in CI only, ≤ 2 agents, dev stack down when idle).
 
 ## Current phase: **MVP-0: local demo with mock data** (finishing) → next: **M1 production MVP**
 
