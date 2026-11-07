@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import safefetch
+from app.core.apitoken import require_scope
 from app.core.audit import audit
 from app.core.deps import client_ip, get_db, get_res, require_admin
 from app.core.errors import Validation
@@ -51,7 +52,7 @@ def _host(url: str) -> str:
     return (urlsplit(url).hostname or "")[:253]
 
 
-@router.post("/products/import/fetch")
+@router.post("/products/import/fetch", dependencies=[Depends(require_scope("products"))])
 async def import_fetch(
     body: FetchIn,
     request: Request,
@@ -74,7 +75,7 @@ async def import_fetch(
     return await importer.import_from_url(body.url, cfg, resolver=_resolver, transport=_transport)
 
 
-@router.post("/products/import/parse")
+@router.post("/products/import/parse", dependencies=[Depends(require_scope("products"))])
 async def import_parse(
     body: ParseIn,
     admin: User = Depends(require_admin),
@@ -92,7 +93,7 @@ async def import_parse(
     )
 
 
-@router.post("/content/images/fetch")
+@router.post("/content/images/fetch", dependencies=[Depends(require_scope("products"))])
 async def import_image_fetch(
     body: FetchIn,
     request: Request,

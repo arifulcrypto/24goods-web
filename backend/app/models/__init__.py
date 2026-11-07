@@ -5,6 +5,7 @@ from app.models.catalog import Category, Product
 from app.models.chat import Attachment, Conversation, Message, Quote
 from app.models.content import AfterSales, Article
 from app.models.growth import (
+    ApiToken,
     BlockedIP,
     PromoCode,
     PromoRedemption,
@@ -22,6 +23,7 @@ from app.models.tenancy import CustomDomain, Tenant
 from app.models.users import AgentStatus, User
 
 __all__ = [
+    "ApiToken",
     "AfterSales",
     "AgentStatus",
     "Article",

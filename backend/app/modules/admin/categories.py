@@ -11,6 +11,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.apitoken import require_scope
 from app.core.audit import audit
 from app.core.deps import client_ip, get_db, require_admin, require_staff
 from app.core.errors import Conflict, NotFound
@@ -125,7 +126,7 @@ async def _get(db: AsyncSession, category_id: uuid.UUID, tenant_id: uuid.UUID) -
     return c
 
 
-@router.get("")
+@router.get("", dependencies=[Depends(require_scope("products"))])
 async def list_categories(
     admin: User = Depends(require_staff), db: AsyncSession = Depends(get_db)
 ) -> list[dict]:

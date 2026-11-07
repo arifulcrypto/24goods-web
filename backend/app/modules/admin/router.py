@@ -8,6 +8,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, File, Query, Request, Response, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.apitoken import require_scope
 from app.core.audit import audit
 from app.core.deps import (
     Page,
@@ -59,7 +60,7 @@ OrderStatus = Literal[
 
 
 # ---------------------------------------------------------------- dashboard
-@router.get("/stats")
+@router.get("/stats", dependencies=[Depends(require_scope("stats"))])
 async def stats(
     _: User = Depends(require_staff),
     lang: str = Depends(get_lang),
@@ -69,7 +70,7 @@ async def stats(
 
 
 # ---------------------------------------------------------------- products
-@router.get("/products")
+@router.get("/products", dependencies=[Depends(require_scope("products"))])
 async def list_products(
     q: str | None = Query(None, max_length=100),
     status: Literal["active", "draft", "archived"] | None = None,
@@ -80,14 +81,14 @@ async def list_products(
     return await product_svc.list_products(db, page, q, status)
 
 
-@router.get("/products/{product_id}")
+@router.get("/products/{product_id}", dependencies=[Depends(require_scope("products"))])
 async def get_product(
     product_id: uuid.UUID, _: User = Depends(require_staff), db: AsyncSession = Depends(get_db)
 ) -> dict:
     return await product_svc.view(db, await product_svc.get(db, product_id))
 
 
-@router.post("/products")
+@router.post("/products", dependencies=[Depends(require_scope("products"))])
 async def create_product(
     body: ProductIn,
     request: Request,
@@ -98,7 +99,7 @@ async def create_product(
     return await product_svc.view(db, p)
 
 
-@router.patch("/products/{product_id}")
+@router.patch("/products/{product_id}", dependencies=[Depends(require_scope("products"))])
 async def patch_product(
     product_id: uuid.UUID,
     body: ProductPatch,
@@ -110,7 +111,7 @@ async def patch_product(
     return await product_svc.view(db, p)
 
 
-@router.post("/products/bulk")
+@router.post("/products/bulk", dependencies=[Depends(require_scope("products"))])
 async def bulk_products(
     body: BulkProductsIn,
     request: Request,
@@ -120,7 +121,9 @@ async def bulk_products(
     return {"updated": await product_svc.bulk(db, body, admin, client_ip(request))}
 
 
-@router.delete("/products/{product_id}", status_code=204)
+@router.delete(
+    "/products/{product_id}", status_code=204, dependencies=[Depends(require_scope("products"))]
+)
 async def delete_product(
     product_id: uuid.UUID,
     request: Request,
@@ -132,7 +135,7 @@ async def delete_product(
     return Response(status_code=204)
 
 
-@router.post("/products/{product_id}/restore")
+@router.post("/products/{product_id}/restore", dependencies=[Depends(require_scope("products"))])
 async def restore_product(
     product_id: uuid.UUID,
     request: Request,
@@ -143,7 +146,7 @@ async def restore_product(
     return await product_svc.view(db, p)
 
 
-@router.post("/products/{product_id}/images")
+@router.post("/products/{product_id}/images", dependencies=[Depends(require_scope("products"))])
 async def upload_product_image(
     product_id: uuid.UUID,
     request: Request,
@@ -181,7 +184,9 @@ async def upload_product_image(
     return {"url": url}
 
 
-@router.post("/products/{product_id}/cards/import")
+@router.post(
+    "/products/{product_id}/cards/import", dependencies=[Depends(require_scope("cards:import"))]
+)
 async def import_cards(
     product_id: uuid.UUID,
     body: CardsImportIn,
@@ -235,7 +240,7 @@ async def list_cards(
 
 
 # ---------------------------------------------------------------- orders
-@router.get("/orders")
+@router.get("/orders", dependencies=[Depends(require_scope("orders:read"))])
 async def list_orders(
     status: OrderStatus | None = None,
     q: str | None = Query(None, max_length=100),
@@ -258,7 +263,7 @@ async def list_orders(
     )
 
 
-@router.get("/orders/{order_id}")
+@router.get("/orders/{order_id}", dependencies=[Depends(require_scope("orders:read"))])
 async def order_detail(
     order_id: uuid.UUID, staff: User = Depends(require_staff), db: AsyncSession = Depends(get_db)
 ) -> dict:
@@ -322,7 +327,7 @@ async def cancel(
 
 
 # ---------------------------------------------------------------- conversations
-@router.get("/conversations")
+@router.get("/conversations", dependencies=[Depends(require_scope("chat"))])
 async def list_conversations(
     filter: Literal["all", "mine", "unassigned"] = "all",
     status: Literal["open", "closed"] | None = None,
@@ -334,7 +339,7 @@ async def list_conversations(
     return await service.list_conversations(db, staff, page, filter, status, lang)
 
 
-@router.get("/conversations/{conv_id}/messages")
+@router.get("/conversations/{conv_id}/messages", dependencies=[Depends(require_scope("chat"))])
 async def conversation_messages(
     conv_id: uuid.UUID,
     after_id: int | None = Query(None, ge=0),
@@ -347,7 +352,7 @@ async def conversation_messages(
     return await chat.list_messages(db, conv, after_id, before_id, limit)
 
 
-@router.post("/conversations/{conv_id}/messages")
+@router.post("/conversations/{conv_id}/messages", dependencies=[Depends(require_scope("chat"))])
 async def send_message(
     conv_id: uuid.UUID,
     body: MessageIn,
@@ -375,7 +380,7 @@ async def send_message(
     return view
 
 
-@router.post("/content/images")
+@router.post("/content/images", dependencies=[Depends(require_scope("uploads"))])
 async def upload_content_image(
     request: Request,
     file: UploadFile = File(...),
