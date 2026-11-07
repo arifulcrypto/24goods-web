@@ -135,6 +135,12 @@ class Unavailable(ApiError):
     status, code = 503, "unavailable"
 
 
+class ChannelUnavailable(Unavailable):
+    """The requested payment channel is not enabled"""
+
+    code = "channel_unavailable"
+
+
 def error_body(
     code: str, message: str, extra: dict[str, str] | None = None
 ) -> dict[str, dict[str, object]]:

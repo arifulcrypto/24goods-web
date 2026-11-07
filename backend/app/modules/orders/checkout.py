@@ -19,6 +19,7 @@ from app.core.audit import audit
 from app.core.config import Settings
 from app.core.errors import (
     ApiError,
+    ChannelUnavailable,
     InvalidState,
     NotFound,
     OutOfStock,
@@ -86,6 +87,7 @@ async def quote_cart(
     ts = await tenant_settings(db, tenant_id)
     require_feature(ts, "cart")
     cfg = channel_by_id(ts, channel)
+    fallback = bool(channel) and cfg.id != channel  # requested channel is off: flagged
     pricer = await Pricer.load(db, storefront)
     ids = list({i.product_id for i in items})
     products = {
@@ -210,6 +212,7 @@ async def quote_cart(
         "fee_rate": fee_rate(cfg.permille),
         "total": fmt(subtotal - discount + fee),
         "channel": cfg.id,
+        "channel_fallback": fallback,
         # per enabled channel, per-line ceiling (identical to create_checkout)
         "channel_totals": channel_totals_view(
             totals_by_channel(ts, [(sub, d) for (_i, _p, sub), d in zip(avail, alloc, strict=True)])
@@ -341,6 +344,8 @@ async def create_checkout(
             if ms is not None and ms < want[pid]:
                 raise OutOfStock("Not enough stock", extra={"product_id": str(pid)})
     cfg = channel_by_id(await tenant_settings(db, buyer.tenant_id), channel)
+    if channel and cfg.id != channel:
+        raise ChannelUnavailable("Payment channel is not available")  # never a silent re-price
     if not cfg.enabled:
         raise Unavailable("Payment channel is not available")
     inputs = [normalize_value(products[i.product_id].buyer_input, i.buyer_input) for i in items]
@@ -464,7 +469,23 @@ async def recompute_fees(
 ) -> None:
     """Re-apply the chosen channel's rate to every member and the checkout amount
     (caller holds the checkout + orders locks)."""
-    before = {"amount_minor": co.amount_minor}
+
+    def snap() -> dict[str, Any]:
+        return {
+            "amount_minor": co.amount_minor,
+            "orders": [
+                {
+                    "id": str(o.id),
+                    "fee_minor": o.fee_minor,
+                    "fee_permille": o.fee_permille,
+                    "amount_minor": o.amount_minor,
+                    "version": o.version,
+                }
+                for o in orders
+            ],
+        }
+
+    before = snap()
     for o in orders:
         fee, total = split_amount(o.subtotal_minor, permille, o.discount_minor)
         o.fee_minor, o.fee_permille, o.amount_minor = fee, permille, total
@@ -478,7 +499,7 @@ async def recompute_fees(
         actor_role=user.role,
         target=f"checkout:{co.id}",
         before=before,
-        after={"amount_minor": co.amount_minor},
+        after=snap(),
         detail={"fee_permille": permille, "channel": channel, "was_channel": co.channel},
     )
 
@@ -512,6 +533,7 @@ async def pay_checkout(
     ):
         raise InvalidState("A payment was already received for this checkout")
     old_minor = co.amount_minor
+    old_by_order = {o.id: o.amount_minor for o in orders}
     if any(o.fee_permille != permille for o in orders):
         # a pay URL / USDT attempt for the old amount may be out: its notify will no longer match
         # co.amount_minor -> manual review (settle amount-mismatch path)
@@ -526,12 +548,24 @@ async def pay_checkout(
                 event="price_changed",
                 order_id=str(o.id),
                 amount=fmt(o.amount_minor),
+                old_amount=fmt(old_by_order[o.id]),
                 currency=o.currency,
                 version=o.version,
             )
             if m is not None:
                 msgs.append((o, m))
     if co.channel is not None and co.channel != channel:
+        if co.amount_minor == old_minor:  # fee unchanged: the switch itself is still audited
+            await audit(
+                db,
+                tenant_id=co.tenant_id,
+                action="checkout.channel_changed",
+                actor_id=user.id,
+                actor_role=user.role,
+                target=f"checkout:{co.id}",
+                before={"channel": co.channel},
+                after={"channel": channel},
+            )
         await usdt_svc.drop_attempt(res, co.checkout_no)
     co.channel = channel
     name = orders[0].title if len(orders) == 1 else f"{orders[0].title} +{len(orders) - 1}"

@@ -797,7 +797,9 @@ async def test_promo_manual_review_paths_mark_the_redemption_used(env, gw):
     assert await env.scalar("SELECT status FROM promo_redemptions") == "reserved"
     assert await notify(env, gw, no, "1.00", "TDRIFT") == "success"
     assert (await buyer.get(f"{API}/checkouts/{no}")).json()["status"] == "manual_review"
-    assert await env.scalar("SELECT count(*) FROM payments") == 0
+    assert (
+        await env.scalar("SELECT count(*) FROM payments") == 1
+    )  # M1: the confirmed wrong-amount payment is recorded and held
     assert await notify(env, gw, no, body["checkout"]["amount"], "TRIGHT") == "success"
     assert await env.scalar("SELECT count(*) FROM payments") == 1
     assert await env.scalar("SELECT status FROM promo_redemptions") == "used"

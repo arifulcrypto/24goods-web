@@ -452,8 +452,10 @@ async def apply_order_payment(
     raw: dict[str, str],
     ip: str | None,
     channel: str = CHANNEL,
+    hold: str | None = None,
 ) -> NotifyOutcome:
-    """Locked transaction for a verified + re-queried payment of one order."""
+    """Locked transaction for a verified + re-queried payment of one order. ``hold`` (a reason)
+    records the Payment but never fulfils: the order goes to manual_review."""
     amount_minor = exact_minor(paid_amount)
     if amount_minor is None:
         return await to_manual_review(db, order_id, "bad_amount", ip, {})
@@ -557,10 +559,19 @@ async def apply_order_payment(
         ]
         await db.commit()
         return NotifyOutcome(SUCCESS, order, msgs, [order])
-    if amount_minor != order.amount_minor:  # price changed after the pay URL was issued
-        return await to_manual_review(
-            db, order.id, "amount_changed", ip, {"paid_minor": amount_minor}
+    if hold or amount_minor != order.amount_minor:
+        # price/channel changed after the pay URL was issued. The gateway re-query confirmed
+        # real money, so RECORD it (Payment row, UNIQUE(channel, trade_no) keeps this idempotent)
+        # and hold the order for review: received money must never vanish (audit M1).
+        reason = hold or "amount_changed"
+        ok = await _record_unrecorded_payment(
+            db, settings, order, trade_no, amount_minor, raw, ip, reason, channel
         )
+        if not ok:
+            return NotifyOutcome(SUCCESS)
+        msgs = await _order_to_manual_review(db, order, reason, ip, {"paid_minor": amount_minor})
+        await db.commit()
+        return NotifyOutcome(SUCCESS, order, msgs, [order])
 
     db.add(
         _payment_row(
@@ -598,6 +609,7 @@ async def apply_checkout_payment(
     raw: dict[str, str],
     ip: str | None,
     channel: str = CHANNEL,
+    hold: str | None = None,
 ) -> NotifyOutcome:
     """Locked transaction for a verified + re-queried payment of a whole checkout.
 
@@ -703,7 +715,7 @@ async def apply_checkout_payment(
 
     msgs: list[Message | None] = []
     total = sum(o.amount_minor for o in orders)
-    if total != amount_minor or amount_minor != co.amount_minor:
+    if hold or total != amount_minor or amount_minor != co.amount_minor:
         # amounts drifted after the pay URL was issued: money is recorded, nothing is fulfilled
         co.status = "manual_review"
         co.paid_at = datetime.now(timezone.utc)
@@ -714,7 +726,7 @@ async def apply_checkout_payment(
             await promo_svc.mark_used(db, checkout_id=co.id, tenant_id=co.tenant_id, expect=True)
         for o in orders:
             msgs += await _order_to_manual_review(
-                db, o, "amount_changed", ip, {"paid_minor": amount_minor}
+                db, o, hold or "amount_changed", ip, {"paid_minor": amount_minor}
             )
         await audit(
             db,
@@ -723,7 +735,7 @@ async def apply_checkout_payment(
             actor_role="gateway",
             target=f"checkout:{co.id}",
             ip=ip,
-            detail={"reason": "amount_changed", "paid_minor": amount_minor},
+            detail={"reason": hold or "amount_changed", "paid_minor": amount_minor},
             severity="warning",
         )
         await db.commit()

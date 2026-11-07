@@ -159,9 +159,14 @@ async def handle_notify(
             )
             await db.commit()
             return NotifyOutcome(SUCCESS, order)
-        if checkout is not None:
-            return await checkout_to_manual_review(db, target_id, rej.reason, ip, detail)
-        return await to_manual_review(db, target_id, rej.reason, ip, detail)
+        if rej.reason != "amount_mismatch" or not params.get("trade_no"):
+            if checkout is not None:
+                return await checkout_to_manual_review(db, target_id, rej.reason, ip, detail)
+            return await to_manual_review(db, target_id, rej.reason, ip, detail)
+        # Signature, merchant, order and status are fine; only the amount differs (typically the
+        # buyer paid an old pay URL after switching channel). Do NOT drop it: the re-query below
+        # must confirm the gateway really holds this payment, then it is RECORDED and held.
+        trade_no = params["trade_no"]
 
     # Replay guard: identical notifies are processed at most once. The key starts as a
     # short in-flight lock and becomes a 24 h "done" marker only after settling.

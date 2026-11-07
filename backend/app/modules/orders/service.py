@@ -467,6 +467,7 @@ async def pay_url(db: AsyncSession, res: Resources, ref: str, user: User, channe
     if await db.scalar(select(Payment.id).where(Payment.order_id == order.id)):
         raise InvalidState("A payment was already received for this order")
     msg = None
+    before_permille = order.fee_permille
     if permille != order.fee_permille:
         # Re-apply the chosen channel's fee (server side). A pay URL / USDT attempt issued for the
         # OLD amount stays payable at the gateway, but its notify no longer matches
@@ -500,6 +501,17 @@ async def pay_url(db: AsyncSession, res: Resources, ref: str, user: User, channe
                 version=order.version,
             )
     if order.channel is not None and order.channel != channel:
+        if permille == before_permille:  # fee unchanged: the switch itself is still audited
+            await audit(
+                db,
+                tenant_id=order.tenant_id,
+                action="order.channel_changed",
+                actor_id=user.id,
+                actor_role=user.role,
+                target=f"order:{order.id}",
+                before={"channel": order.channel},
+                after={"channel": channel},
+            )
         await usdt_svc.drop_attempt(res, order.order_no)  # the old USDT quote is void
     order.channel = channel
     if usdt:
