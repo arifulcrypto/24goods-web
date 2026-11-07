@@ -13,11 +13,19 @@ const { t } = useI18n()
 const { saving, run } = useSave()
 const errors = ref<Record<string, string>>({})
 const other = ref<Record<string, ChannelCfg>>({})
+const USDT = ['usdt_arbitrum', 'usdt_xlayer', 'usdt_trc20'] as const
+const usdt = reactive<Record<string, { on: boolean; pct: number }>>(
+  Object.fromEntries(USDT.map((id) => [id, { on: false, pct: 0 }])),
+)
 const f = reactive({ on: true, pct: permilleToPercent(DEFAULT_SURCHARGE_PERMILLE), as_hours: 672, manual: 72, auto_card: 24, eta: 24, note_en: '', note_zh: '' })
 watch(
   () => props.site,
   (s) => {
     const { zpay_alipay, ...rest } = s.payments?.channels ?? {}
+    for (const id of USDT) {
+      usdt[id] = { on: rest[id]?.enabled ?? false, pct: permilleToPercent(rest[id]?.surcharge_permille ?? 0) }
+      delete rest[id]
+    }
     other.value = rest
     f.on = zpay_alipay?.enabled ?? true
     f.pct = permilleToPercent(zpay_alipay?.surcharge_permille ?? DEFAULT_SURCHARGE_PERMILLE)
@@ -36,6 +44,12 @@ async function save() {
   const e: Record<string, string> = {}
   const pm = percentToPermille(f.pct)
   if (!Number.isInteger(pm) || pm < 0 || pm > MAX_SURCHARGE_PERMILLE) e.fee = t('site.v.fee')
+  const usdtCfg: Record<string, ChannelCfg> = {}
+  for (const id of USDT) {
+    const p = percentToPermille(usdt[id].pct)
+    if (!Number.isInteger(p) || p < 0 || p > MAX_SURCHARGE_PERMILLE) e[id] = t('site.v.fee')
+    usdtCfg[id] = { enabled: usdt[id].on, surcharge_permille: p }
+  }
   if (!okHours(f.as_hours, 8760)) e.as = t('delivery.hoursInvalid')
   if (!okHours(f.manual, 720) || !okHours(f.auto_card, 720) || f.manual < 1 || f.auto_card < 1) e.ac = t('site.v.autoConfirm')
   if (!okHours(f.eta, 720) || f.eta < 1) e.eta = t('v5.payment.etaInvalid')
@@ -43,7 +57,7 @@ async function save() {
   if (Object.keys(e).length) return
   const r = await run(() =>
     apiV5.site.put({
-      payments: { channels: { ...other.value, zpay_alipay: { enabled: f.on, surcharge_permille: pm } } },
+      payments: { channels: { ...other.value, ...usdtCfg, zpay_alipay: { enabled: f.on, surcharge_permille: pm } } },
       after_sales_default_hours: f.as_hours,
       auto_confirm_hours: { manual: f.manual, auto_card: f.auto_card },
       delivery: { manual_eta_hours: f.eta, manual_note_i18n: { en: f.note_en.trim(), 'zh-CN': f.note_zh.trim() } },
@@ -67,6 +81,19 @@ async function save() {
         <span class="unit muted">% ({{ percentToPermille(f.pct) }}‰)</span>
       </el-form-item>
       <p class="muted small">{{ t('site.feeExample', { fee: feeExample }) }}</p>
+    </section>
+    <section class="panel block">
+      <h2 class="h2">{{ t('v5.payment.usdtTitle') }}</h2>
+      <p class="muted small">{{ t('v5.payment.usdtNote') }}</p>
+      <el-alert v-if="site.bepusdt" :type="site.bepusdt.configured ? 'success' : 'warning'" :closable="false" class="zp" show-icon
+        :title="site.bepusdt.configured ? t('v5.payment.usdtOk') : t('v5.payment.usdtMissing')" />
+      <template v-for="id in USDT" :key="id">
+        <el-form-item :label="t('v5.payment.usdtEnabled', { name: t(`v5.payment.ch${id[0].toUpperCase()}${id.slice(1)}`) })"><el-switch v-model="usdt[id].on" /></el-form-item>
+        <el-form-item :label="t('v5.payment.usdtFee', { name: t(`v5.payment.ch${id[0].toUpperCase()}${id.slice(1)}`) })" :error="errors[id]">
+          <el-input-number v-model="usdt[id].pct" :min="0" :max="MAX_SURCHARGE_PERMILLE / 10" :step="0.1" :precision="1" />
+          <span class="unit muted">% ({{ percentToPermille(usdt[id].pct) }}‰)</span>
+        </el-form-item>
+      </template>
     </section>
     <section class="panel block">
       <h2 class="h2">{{ t('site.defaults') }}</h2>
