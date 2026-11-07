@@ -5,6 +5,7 @@ import type { UploadRequestOptions } from 'element-plus'
 import {
   compareAmount,
   compressImage,
+  errorI18nKey,
   imageExtension,
   isAcceptedImage,
   isValidAmount,
@@ -13,8 +14,10 @@ import {
   type DeliveryMode,
   type ProductStatus,
 } from '@24goods/shared'
-import { api, apiV3 } from '../api'
-import type { AdminProductInputV3 } from '../api-v3'
+import { api, apiV3, apiV5 } from '../api'
+import { copyImages, draftToFields, pickClipboard } from '../lib/importDraft'
+import { safeUrl } from '../lib/markdown'
+import type { AdminProductInputV3, CardImportResultV3 } from '../api-v3'
 import { BUYER_INPUT_DEFAULT, type BuyerInputForm } from '../api-v4'
 import type { AdminProductV5 as AdminProduct, ProductPrefill } from '../api-v5'
 import { marginMinor, marginPct, minorToYuan, yuanToMinor } from '../lib/money'
@@ -37,6 +40,67 @@ import {
   type FormatPresetKey,
 } from '../lib/delivery'
 import { toastError, toastOk } from '../ui'
+
+const MAX_AUTOFILL_IMAGES = 5
+const afOpen = ref<string[]>([])
+const afUrl = ref('')
+const afText = ref('')
+const afHtml = ref('')
+const afBusy = ref(false)
+const cardLines = ref('')
+const cardResult = ref<CardImportResultV3 | null>(null)
+const cardError = ref('')
+const cardSummary = computed(() => (cardResult.value ? t('v5.autofill.cardsDone', { imported: cardResult.value.imported, duplicates: cardResult.value.duplicates, rejected: cardResult.value.rejected }) : ''))
+const cardCount = computed(() => cardLines.value.split(/\r?\n/).filter((l) => l.trim()).length)
+
+function onAfPaste(e: ClipboardEvent) {
+  const c = pickClipboard(e.clipboardData)
+  if (c.html) {
+    e.preventDefault()
+    afHtml.value = c.html.slice(0, 2_000_000)
+    afText.value = (e.clipboardData?.getData('text/plain') ?? '').slice(0, 20000)
+  } else afHtml.value = ''
+}
+function onAfInput(v: string) {
+  afText.value = v
+  afHtml.value = ''
+}
+async function autofill(kind: 'url' | 'paste') {
+  if (afBusy.value) return
+  const u = afUrl.value.trim()
+  if (kind === 'url' ? !/^https?:\/\/\S+$/i.test(u) : !afHtml.value && !afText.value.trim()) {
+    errors.value = { ...errors.value, autofill: kind === 'url' ? t('v5.import.urlInvalid') : t('v5.import.pasteEmpty') }
+    return
+  }
+  afBusy.value = true
+  const { autofill: _drop, ...rest } = errors.value
+  errors.value = rest
+  try {
+    const d = await (kind === 'url'
+      ? apiV5.products.importFetch(u)
+      : apiV5.products.importParse({ ...(afHtml.value ? { html: afHtml.value } : { text: afText.value }), ...(/^https?:\/\/\S+$/i.test(u) ? { base_url: u } : {}) }))
+    const chosen = isNew.value ? d.images.filter((i) => safeUrl(i.url)).slice(0, MAX_AUTOFILL_IMAGES) : []
+    const { map, failed } = await copyImages(chosen, apiV5.content.fetchImage, safeUrl)
+    if (failed) ElMessage.warning({ message: t('v5.autofill.imagesFailed', { n: failed }), grouping: true })
+    const out = draftToFields(d, map, chosen)
+    form.title_en = out.title.slice(0, 120)
+    form.desc_en = out.description_md.slice(0, 5000)
+    // prices only on a new product: never silently overwrite a deliberately set price / floor
+    const sell = d.suggested_price_minor ?? d.price_minor
+    if (isNew.value && sell != null) form.price = minorToYuan(sell)
+    if (isNew.value && d.price_minor != null) {
+      cost.value = minorToYuan(d.price_minor)
+      form.floor_price = minorToYuan(d.price_minor)
+    }
+    if (isNew.value) form.images = out.images
+    sourceUrl.value = (d.source_url ?? (kind === 'url' ? u : '')) || sourceUrl.value
+    toastOk(t('v5.autofill.filled'))
+  } catch (e) {
+    toastError(e)
+  } finally {
+    afBusy.value = false
+  }
+}
 
 const props = defineProps<{ modelValue: boolean; product: AdminProduct | null; categories: Category[]; prefill?: ProductPrefill | null; defaultEtaHours?: number }>()
 const emit = defineEmits<{ 'update:modelValue': [v: boolean]; saved: [p: AdminProduct] }>()
@@ -87,6 +151,13 @@ watch(
     current.value = p
     tab.value = 'en'
     errors.value = {}
+    afOpen.value = []
+    afUrl.value = ''
+    afText.value = ''
+    afHtml.value = ''
+    cardLines.value = ''
+    cardResult.value = null
+    cardError.value = ''
     const d = p ? null : (props.prefill ?? null)
     form.title_en = p?.title_i18n.en ?? d?.title ?? ''
     form.title_zh = p?.title_i18n['zh-CN'] ?? ''
@@ -204,6 +275,23 @@ function payload(): AdminProductInputV3 & { buyer_input: BuyerInputForm; deliver
   }
 }
 
+function dropNewImage(url: string) {
+  form.images = form.images.filter((x) => x !== url)
+}
+
+async function importInlineCards(id: string) {
+  if (form.delivery_mode !== 'auto_card' || !cardCount.value) return
+  const lines = cardLines.value
+  cardLines.value = '' // never keep plaintext around
+  try {
+    cardResult.value = await apiV3.products.importCards(id, { lines })
+    cardError.value = ''
+  } catch (e) {
+    cardError.value = `${t(errorI18nKey(e))} - ${t('v5.autofill.cardsFailed')}`
+    if (!cardLines.value) cardLines.value = lines // let staff retry instead of re-pasting
+  }
+}
+
 async function save() {
   if (saving.value || !validate()) return
   saving.value = true
@@ -220,6 +308,7 @@ async function save() {
       form.images = [...p.images]
       emit('saved', p)
       toastOk(t('products.created'))
+      await importInlineCards(p.id)
     }
   } catch (e) {
     toastError(e)
@@ -289,6 +378,20 @@ async function removeImage(url: string) {
     destroy-on-close
     @update:model-value="emit('update:modelValue', $event)"
   >
+    <el-collapse v-model="afOpen" class="af">
+      <el-collapse-item :title="t('v5.autofill.title')" name="af">
+        <p class="hint muted">{{ t('v5.autofill.hint') }}</p>
+        <div class="af-row">
+          <el-input v-model="afUrl" inputmode="url" :placeholder="URL_HINT" :aria-label="t('v5.autofill.fetch')" spellcheck="false" @keyup.enter="autofill('url')" />
+          <el-button type="primary" :loading="afBusy" @click="autofill('url')">{{ t('v5.autofill.fetch') }}</el-button>
+        </div>
+        <el-input :model-value="afText" type="textarea" :rows="4" :placeholder="t('v5.import.pastePlaceholder')" :aria-label="t('v5.autofill.parse')" class="af-paste" @paste="onAfPaste" @update:model-value="onAfInput" />
+        <el-button :loading="afBusy" @click="autofill('paste')">{{ t('v5.autofill.parse') }}</el-button>
+        <el-alert v-if="errors.autofill" type="error" :closable="false" :title="errors.autofill" class="af-paste" />
+      </el-collapse-item>
+    </el-collapse>
+    <el-alert v-if="cardResult" type="success" :closable="false" show-icon :title="cardSummary" class="af-paste" />
+    <el-alert v-if="cardError" type="error" :closable="false" show-icon :title="cardError" class="af-paste" />
     <el-form label-position="top" @submit.prevent="save">
       <el-tabs v-model="tab">
         <el-tab-pane :label="t('products.form.tabEn')" name="en">
@@ -344,6 +447,11 @@ async function removeImage(url: string) {
           <div class="hint muted">{{ t('v5.product.noRush') }}</div>
         </el-form-item>
       </template>
+
+      <el-form-item v-if="isNew && form.delivery_mode === 'auto_card' && !cardResult" :label="t('v5.autofill.cardsLabel')">
+        <el-input v-model="cardLines" type="textarea" :rows="5" spellcheck="false" autocomplete="off" class="mono" :placeholder="t('inventory.placeholder')" />
+        <div class="hint muted">{{ t('v5.autofill.cardsHint') }} ({{ cardCount }})</div>
+      </el-form-item>
 
       <h3 class="sec">{{ t('v5.product.sourcing') }}</h3>
       <p class="hint muted">{{ t('v5.product.sourcingNote') }}</p>
@@ -461,7 +569,13 @@ async function removeImage(url: string) {
       </template>
 
       <el-form-item :label="t('products.form.images')">
-        <div v-if="isNew" class="muted">{{ t('products.form.saveFirst') }}</div>
+        <div v-if="isNew" class="images">
+          <div v-for="url in form.images" :key="url" class="img">
+            <el-image :src="url" fit="cover" :alt="form.title_en" />
+            <el-button class="rm" size="small" circle type="danger" :aria-label="t('products.form.removeImage')" @click="dropNewImage(url)">×</el-button>
+          </div>
+          <div class="muted">{{ t('products.form.saveFirst') }}</div>
+        </div>
         <div v-else class="images" tabindex="0" :aria-label="t('v5.product.pasteHint')" @paste="onImgPaste" @dragover.prevent @drop="onImgDrop">
           <div v-for="(url, i) in form.images" :key="url" class="img">
             <el-image :src="url" fit="cover" :preview-src-list="form.images" :initial-index="i" preview-teleported />
@@ -488,6 +602,16 @@ async function removeImage(url: string) {
 </template>
 
 <style scoped>
+.af-row {
+  display: flex;
+  gap: 8px;
+}
+.af-paste {
+  margin: 8px 0;
+}
+.af {
+  margin-bottom: 12px;
+}
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));

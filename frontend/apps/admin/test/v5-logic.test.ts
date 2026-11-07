@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { marginMinor, marginPct, minorToYuan, pctToPermille, permilleToPct, roundUp, suggestPrice, yuanToMinor } from '../src/lib/money'
 import { secretChange, secretFromServer, secretLabel } from '../src/lib/secret'
 import { jsonDiff } from '../src/lib/diff'
-import { cleanAlt, pickClipboard, rewriteImages } from '../src/lib/importDraft'
+import { cleanAlt, copyImages, draftToFields, pickClipboard, rewriteImages } from '../src/lib/importDraft'
 import { emptyPromoForm, formFromPromo, promoToInput, promoValueText, randomCode } from '../src/lib/promo'
 import { insertPlaceholder } from '../src/lib/emailTemplates'
 import { auditSides } from '../src/lib/auditRow'
@@ -112,5 +112,31 @@ describe('email template placeholders', () => {
     expect(insertPlaceholder('Hi , bye', 3, 3, '{code}')).toEqual({ text: 'Hi {code}, bye', caret: 9 })
     expect(insertPlaceholder('abc', 1, 2, '{x}').text).toBe('a{x}c')
     expect(insertPlaceholder('abc', 99, 99, '!').text).toBe('abc!')
+  })
+})
+
+describe('import draft helpers', () => {
+  const imgs = [
+    { url: 'https://a/1.png', alt: 'one' },
+    { url: 'https://a/2.png', alt: 'two' },
+  ]
+  it('copyImages counts failures and keeps ours', async () => {
+    const { map, failed } = await copyImages(
+      imgs,
+      async (u) => {
+        if (u.endsWith('2.png')) throw new Error('x')
+        return { url: '/media/1.png' }
+      },
+      (u) => typeof u === 'string' && u.startsWith('/media/'),
+    )
+    expect(failed).toBe(1)
+    expect(map.get(imgs[0].url)).toBe('/media/1.png')
+  })
+  it('draftToFields rewrites description and orders images', () => {
+    const map = new Map([[imgs[0].url, '/media/1.png']])
+    const r = draftToFields({ title: 'T', description_md: `hi ![x](${imgs[0].url}) ![y](${imgs[1].url})` }, map, imgs)
+    expect(r.images).toEqual(['/media/1.png'])
+    expect(r.description_md).toBe('hi ![one](/media/1.png)')
+    expect(r.title).toBe('T')
   })
 })

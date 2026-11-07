@@ -29,3 +29,37 @@ export function pickClipboard(dt: Pick<DataTransfer, 'getData'> | null | undefin
   const text = dt?.getData('text/plain') ?? ''
   return text.trim() ? { text } : {}
 }
+
+/** Copy selected remote images to our own origin (3 at a time). Failed ones are counted, not thrown. */
+export async function copyImages(
+  chosen: ImportImage[],
+  fetchOne: (url: string) => Promise<{ url: string }>,
+  accept: (u: string) => unknown,
+): Promise<{ map: Map<string, string>; failed: number }> {
+  const map = new Map<string, string>()
+  let failed = 0
+  const queue = [...chosen]
+  await Promise.all(
+    Array.from({ length: Math.min(3, queue.length) }, async () => {
+      for (let i = queue.shift(); i; i = queue.shift()) {
+        try {
+          const r = await fetchOne(i.url)
+          if (accept(r.url)) map.set(i.url, r.url)
+          else failed++
+        } catch {
+          failed++
+        }
+      }
+    }),
+  )
+  return { map, failed }
+}
+
+/** Map a draft + copied images to our fields: description with rewritten images and ordered own-origin image urls. */
+export function draftToFields(d: { title: string; description_md: string }, map: Map<string, string>, chosen: ImportImage[]) {
+  return {
+    title: d.title.slice(0, 120),
+    description_md: rewriteImages(d.description_md, map, chosen).slice(0, 5000),
+    images: chosen.map((i) => map.get(i.url)).filter((u): u is string => !!u),
+  }
+}

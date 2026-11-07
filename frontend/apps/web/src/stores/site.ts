@@ -65,9 +65,9 @@ export const useSiteStore = defineStore('site', () => {
     return loc === 'zh-CN' ? BRAND.nameZh : BRAND.name
   })
   const whiteLabel = computed(() => isWhiteLabel(site.value))
-  /** Name shown wherever the brand would appear: the store name on a white-label storefront. */
   /** Set by the order page: a storefront order always shows its own store's name. */
   const orderStoreName = ref<string | null>(null)
+  /** Name shown wherever the brand would appear: the store name on a white-label storefront. */
   const headerName = computed(
     () => orderStoreName.value ?? (whiteLabel.value ? storefront.value!.store_name : siteName.value),
   )
