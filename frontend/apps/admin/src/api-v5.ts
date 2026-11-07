@@ -98,6 +98,17 @@ export interface ResellersCfg {
   settle_after_hours: number
   reserved_slugs: string[]
 }
+export interface NotificationsCfg {
+  telegram_enabled: boolean
+  telegram_chat_ids: string[]
+  event_order_paid: boolean
+  event_chat_message: boolean
+  event_after_sales: boolean
+  event_payment_review: boolean
+  event_reseller_application: boolean
+  event_low_stock: boolean
+}
+export const TG_EVENTS = ['order_paid', 'chat_message', 'after_sales', 'payment_review', 'reseller_application', 'low_stock'] as const
 export interface AuditCfg {
   retention_days: number
 }
@@ -106,7 +117,7 @@ export interface EmailTemplate {
   body_i18n: Partial<I18nText>
 }
 export type EmailTemplates = Record<'verify_code' | 'password_reset' | 'order_paid' | 'order_delivered', EmailTemplate>
-export type SecretName = 'turnstile_secret' | 'google_client_secret' | 'smtp_password'
+export type SecretName = 'turnstile_secret' | 'google_client_secret' | 'smtp_password' | 'telegram_bot_token' | 'telegram_bot_token'
 export interface SecretState {
   configured: boolean
   last4?: string | null
@@ -122,6 +133,7 @@ export interface SiteSections {
   security: SecurityCfg
   defaults: DefaultsCfg
   email: EmailCfg
+  notifications: NotificationsCfg
   delivery: DeliveryCfg
   import: MarkupCfg
   resellers: ResellersCfg
@@ -371,6 +383,7 @@ export function createAdminV5Api(c: ApiClient) {
       put: (b: SiteSectionPatch) => c.put<AdminSiteV5>('/admin/site', b),
       /** value null deletes the secret. Never echoed back. */
       setSecret: (name: SecretName, value: string | null) => c.put<unknown>('/admin/site/secrets', { name, value }),
+      testTelegram: () => c.post<{ ok: boolean; error?: string }>('/admin/site/telegram/test'),
       testEmail: (to: string, template?: string) =>
         c.post<{ ok: boolean; error?: string }>('/admin/site/email/test', template ? { to, template } : { to }),
     },

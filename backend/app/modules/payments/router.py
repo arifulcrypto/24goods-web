@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import PlainTextResponse, RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import notify_tg
 from app.core.deps import client_ip, get_db, get_res, get_tenant_id
 from app.core.ratelimit import hit
 from app.core.resources import Resources
@@ -45,13 +46,15 @@ async def notify_zpay(
         return PlainTextResponse("fail", status_code=200)
     params = await _params(request)
     outcome = await handle_notify(db, res, tenant_id, params, ip)
-    for o in outcome.orders or ([outcome.order] if outcome.order is not None else []):
+    touched = outcome.orders or ([outcome.order] if outcome.order is not None else [])
+    for o in touched:
         await broadcast_order(
             res,
             db,
             o,
             [m for m in outcome.messages if m and m.conversation_id == o.conversation_id],
         )
+    notify_tg.outcome_events(res, touched)
     return PlainTextResponse(outcome.reply, status_code=200)
 
 

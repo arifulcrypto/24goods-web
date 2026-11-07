@@ -6,6 +6,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import notify_tg
 from app.core.deps import (
     Page,
     client_ip,
@@ -47,6 +48,14 @@ async def open_after_sales(
     t, order, msg = await service.open_ticket(db, user, ref, body, client_ip(request))
     await broadcast_order(res, db, order, [msg])
     await _publish(res, db, t)
+    notify_tg.notify_bg(
+        res,
+        order.tenant_id,
+        "after_sales",
+        [f"Order {order.order_no}", order.title, f"Reason: {t.reason}"],
+        link=notify_tg.admin_link(res, "after-sales"),
+        once=(f"aftersales:{t.id}", 86400),
+    )
     return await service.buyer_view(db, t)
 
 

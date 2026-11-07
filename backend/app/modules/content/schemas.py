@@ -15,6 +15,7 @@ from app.modules.content.schemas_v5 import (
     GeneralIn,
     ImportIn,
     LegalIn,
+    NotificationsIn,
     ResellersIn,
     SecurityIn,
 )
@@ -189,6 +190,7 @@ class SiteIn(BaseModel):
     security: SecurityIn | None = None
     defaults: DefaultsIn | None = None
     email: EmailIn | None = None
+    notifications: NotificationsIn | None = None
     email_templates: EmailTemplatesIn | None = None
     delivery: DeliveryIn | None = None
     import_: ImportIn | None = Field(None, alias="import")

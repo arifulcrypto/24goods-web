@@ -11,12 +11,13 @@ from __future__ import annotations
 
 import copy
 import ipaddress
+import re
 from typing import Any
 
 LOCALES = ("en", "zh-CN")
 
 # tenant_secrets.name values (write-only through the admin API; responses show last4 only)
-SECRET_NAMES = ("turnstile_secret", "google_client_secret", "smtp_password")
+SECRET_NAMES = ("turnstile_secret", "google_client_secret", "smtp_password", "telegram_bot_token")
 
 # Actions Turnstile can protect (review-v5 §5.1)
 TURNSTILE_ACTIONS = (
@@ -82,6 +83,17 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         "security": "starttls",  # starttls | ssl | none
         "notify_order_paid": True,
         "notify_order_delivered": True,
+    },
+    # Telegram staff notifications (review-v5.2 §10). Token is the telegram_bot_token secret.
+    "notifications": {
+        "telegram_enabled": False,
+        "telegram_chat_ids": [],  # int-like strings (users 123, groups -100123), at most 10
+        "event_order_paid": True,
+        "event_chat_message": True,
+        "event_after_sales": True,
+        "event_payment_review": True,
+        "event_reseller_application": True,
+        "event_low_stock": True,
     },
     # Manual delivery promise shown on product/cart/checkout
     "delivery": {
@@ -165,6 +177,8 @@ _ENUMS: dict[tuple[str, str], tuple[str, ...]] = {
 
 
 MAX_STAFF_IPS = 50
+MAX_TG_CHATS = 10
+TG_CHAT_ID = re.compile(r"^-?[0-9]{1,20}$")
 IPNet = ipaddress.IPv4Network | ipaddress.IPv6Network
 
 
@@ -221,6 +235,8 @@ def _norm_value(name: str, key: str, default: Any, raw: Any) -> Any:
             items = [x for x in items if x in TURNSTILE_ACTIONS]
         if (name, key) == ("security", "staff_ip_allowlist"):
             items = [x for x in items if parse_net(x) is not None][:MAX_STAFF_IPS]
+        if (name, key) == ("notifications", "telegram_chat_ids"):
+            items = [x.strip() for x in items if TG_CHAT_ID.match(x.strip())][:MAX_TG_CHATS]
         return list(dict.fromkeys(items))
     if isinstance(default, dict):  # *_i18n maps
         if not isinstance(raw, dict):
