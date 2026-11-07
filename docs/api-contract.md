@@ -484,3 +484,28 @@ Security settings save).
 
 **v5.2 manual stock.** `products.manual_stock` int, NULL = unlimited (existing rows migrate to NULL). Admin `POST /admin/products` for `delivery_mode=manual`: omitted `manual_stock` = 1, explicit `null` = unlimited; `PATCH /admin/products/{id}` accepts `manual_stock` (>= 0 or null), audited in `product.updated` before/after. Admin product views expose `manual_stock`.
 Manual-stock caveats: lock order for order creation is buyer row -> product rows (sorted by id) -> promo row; releases are aggregated per product and applied in product-id order. Setting a number while earlier orders reserved against NULL (unlimited) is outstanding lets later releases inflate the count (releases just add back). Switching a product to `manual` via PATCH without `manual_stock` sets it to 1 (it is NULL otherwise = unlimited). An order that expired (stock released) and is paid late is refund-only.
+
+## Staff API tokens v5.2 (agent / admin API) — review-v5.2 §5
+
+Guide with curl recipes: [`docs/agent-api.md`](agent-api.md).
+
+`Authorization: Bearer kst_<43 urlsafe chars>` is accepted **only** on `/api/v1/admin/*` and
+`POST /api/v1/uploads`, and only when no session cookie is sent (a cookie request keeps the CSRF
+header rule; a cookie-less token request needs no `X-Requested-With`). Anywhere else, or if the token
+is unknown/expired/revoked/owner no longer an active, non-suspended staff user of the request's
+tenant: `401 unauthorized`. The request acts as the owner (role never exceeds the owner's). A route
+without a declared scope, or a scope the token lacks, returns `403` code **`token_scope`**.
+Rate limit 600/min per token (`429`).
+
+Scopes: `products:read`, `products:write`, `cards:import`, `orders:read`, `chat`, `uploads`, `stats` (route mapping in
+agent-api.md). Tokens cannot reach settings, secrets, tokens, users, blocked IPs, payouts, refunds,
+ledger, audit, resellers, order mutations or card listing/reveal.
+
+| Endpoint | Body | Returns | Notes |
+| --- | --- | --- | --- |
+| GET `/admin/api-tokens` | none | `{items: ApiToken[], scopes: string[]}` | admin session only (never a token). `ApiToken = {id, name, prefix, scopes, user_id, expires_at, last_used_at, last_used_ip, revoked_at, created_at, status: "active"\|"revoked"\|"expired"}`; never the secret or hash |
+| POST `/admin/api-tokens` | `{name (1..60), scopes (>=1 of the list), expires_in_days (1..365, default 90)}` | `ApiToken` + `token` (201) | the **only** response containing the plaintext token. 20 creates/hour/admin. Audit `api_token.create` (name, prefix, scopes; no secret) |
+| POST `/admin/api-tokens/{id}/revoke` | none | `ApiToken` | admin session only; other tenant → `404`; idempotent. Audit `api_token.revoke` |
+
+Storage: table `api_tokens` (migration 0009): SHA-256 hex unique, RLS forced, `app_api` may only
+update `last_used_at`, `last_used_ip`, `revoked_at` (last-used written at most once a minute).

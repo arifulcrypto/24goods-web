@@ -21,7 +21,7 @@ from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core import mailer
+from app.core import apitoken, mailer
 from app.core.audit import audit
 from app.core.config import Settings
 from app.core.email_templates import render_template, site_name
@@ -184,6 +184,7 @@ async def reset_password(
     if user is None or user.status != "active" or user.is_instant or user.role != "buyer":
         raise InvalidCode("The verification code is invalid or expired")
     user.pw_hash = await hash_password(new_password)
+    await apitoken.revoke_user_tokens(db, user.tenant_id, user.id)
     user.email_verified = True
     await audit(
         db,

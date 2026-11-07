@@ -10,6 +10,7 @@ from fastapi import Depends, Query, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import apitoken
 from app.core.db import tenant_session
 from app.core.errors import Forbidden, Unauthorized
 from app.core.i18n import resolve_lang
@@ -60,8 +61,19 @@ async def get_session(
 
 
 async def optional_user(
-    sess: SessionData | None = Depends(get_session), db: AsyncSession = Depends(get_db)
+    request: Request,
+    sess: SessionData | None = Depends(get_session),
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    res: Resources = Depends(get_res),
 ) -> User | None:
+    # API token: only without a session cookie (cookie flow keeps its CSRF protection).
+    if res.sessions.token_from(request.cookies) is None:
+        bearer = apitoken.bearer_from(request)
+        if bearer is not None:
+            owner, row = await apitoken.authenticate(request, db, res, tenant_id, bearer)
+            apitoken.check_scope(request, row)
+            return owner
     if sess is None:
         return None
     user = await db.scalar(select(User).where(User.id == sess.user_id))

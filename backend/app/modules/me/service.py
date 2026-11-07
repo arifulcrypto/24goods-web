@@ -10,6 +10,7 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import apitoken
 from app.core.audit import audit
 from app.core.errors import ApiError, Conflict, Forbidden, Validation
 from app.core.resources import Resources
@@ -85,6 +86,7 @@ async def change_credentials(
             fields.append("email")
     if body.new_password is not None:
         user.pw_hash = await hash_password(body.new_password)
+        await apitoken.revoke_user_tokens(db, user.tenant_id, user.id)
         fields.append("password")
     if user.is_instant and not user.email.endswith("@" + INSTANT_DOMAIN):
         user.is_instant = False  # now a regular account (kept out of the instant purge)

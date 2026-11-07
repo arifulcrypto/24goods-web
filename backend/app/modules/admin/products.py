@@ -63,6 +63,7 @@ def _summary(p: Product) -> dict[str, Any]:
         "delivery_mode": p.delivery_mode,
         "after_sales_hours": p.after_sales_hours,
         "manual_stock": p.manual_stock,
+        "redeem_url": p.redeem_url,
         "archived_at": p.archived_at.isoformat() if p.archived_at else None,
     }
 

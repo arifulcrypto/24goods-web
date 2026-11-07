@@ -30,6 +30,7 @@ from app.modules.admin.categories import router as admin_categories_router
 from app.modules.admin.importer import router as admin_import_router
 from app.modules.admin.router import router as admin_router
 from app.modules.admin.settings import router as admin_settings_router
+from app.modules.admin.tokens import router as admin_tokens_router
 from app.modules.admin.v3 import router as admin_v3_router
 from app.modules.aftersales.router import router as aftersales_router
 from app.modules.auth.oauth import router as oauth_router
@@ -123,6 +124,7 @@ def api_router() -> APIRouter:
         admin_categories_router,
         admin_settings_router,
         admin_blocking_router,
+        admin_tokens_router,
     ):
         r.include_router(sub)
     return r

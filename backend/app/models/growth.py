@@ -143,3 +143,22 @@ class ResellerDomain(Base):
     verification: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     created_at: Mapped[datetime] = created_at()
     verified_at: Mapped[datetime | None]
+
+
+class ApiToken(Base):
+    """Staff API token. Only the SHA-256 of the secret is stored (never the token itself)."""
+
+    __tablename__ = "api_tokens"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id"))
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    name: Mapped[str] = mapped_column(String(60))
+    prefix: Mapped[str] = mapped_column(String(8))
+    token_hash: Mapped[str] = mapped_column(String(64))
+    scopes: Mapped[list[str]] = mapped_column(ARRAY(Text))
+    expires_at: Mapped[datetime | None]
+    last_used_at: Mapped[datetime | None]
+    last_used_ip: Mapped[str | None] = mapped_column(String(64))
+    revoked_at: Mapped[datetime | None]
+    created_at: Mapped[datetime] = created_at()

@@ -6,7 +6,7 @@ import { apiV5 } from '../api'
 import type { AdminSiteV5 } from '../api-v5'
 import { toastError } from '../ui'
 
-const TABS = ['general', 'legal', 'features', 'security', 'defaults', 'payment', 'email', 'notifications', 'resellers', 'import'] as const
+const TABS = ['general', 'legal', 'features', 'security', 'defaults', 'payment', 'email', 'notifications', 'resellers', 'import', 'tokens'] as const
 type Tab = (typeof TABS)[number]
 const comps = {
   general: defineAsyncComponent(() => import('../components/settings/GeneralTab.vue')),
@@ -19,6 +19,7 @@ const comps = {
   notifications: defineAsyncComponent(() => import('../components/settings/NotificationsTab.vue')),
   resellers: defineAsyncComponent(() => import('../components/settings/ResellersTab.vue')),
   import: defineAsyncComponent(() => import('../components/settings/ImportTab.vue')),
+  tokens: defineAsyncComponent(() => import('../components/settings/ApiTokensTab.vue')),
 } satisfies Record<Tab, unknown>
 
 const { t } = useI18n()

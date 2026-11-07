@@ -101,6 +101,9 @@ class CoreMiddleware:
             rid = secrets.token_hex(8)
         peer = scope.get("client")[0] if scope.get("client") else None
         ip = client_ip_from(peer, _header(scope, b"x-forwarded-for"), self.trusted)
+        from app.core.audit import api_token_ctx
+
+        api_token_ctx.set(None)  # never inherit a previous request's token attribution
         state = scope.setdefault("state", {})
         state["request_id"] = rid
         state["client_ip"] = ip
@@ -136,11 +139,34 @@ class CoreMiddleware:
             )
 
 
+def _is_token_request(scope: Scope) -> bool:
+    """API-token call: kst_ bearer on a token-eligible path and NO session cookie.
+
+    Browsers attach cookies ambiently, tokens never; so CSRF protection is only needed when a
+    cookie is present. Bearer tokens are re-validated in the auth dependency.
+    """
+    from app.core.apitoken import TOKEN_PREFIX, path_allows_token
+    from app.core.security import COOKIE_NAME, SECURE_COOKIE_NAME
+
+    auth = _header(scope, b"authorization") or ""
+    if auth[:7].lower() != "bearer " or not auth[7:].strip().startswith(TOKEN_PREFIX):
+        return False
+    if not path_allows_token(scope["path"]):
+        return False
+    for k, v in scope.get("headers", []):
+        if k == b"cookie":
+            names = {c.split("=", 1)[0].strip() for c in v.decode("latin-1").split(";")}
+            if names & {COOKIE_NAME, SECURE_COOKIE_NAME}:
+                return False
+    return True
+
+
 class CSRFMiddleware:
     """Unsafe methods under /api/ must carry ``X-Requested-With: fetch``.
 
     A cross-site form or simple fetch cannot set custom headers without a CORS
-    preflight, which this API never grants. Gateway notify callbacks are exempt.
+    preflight, which this API never grants. Gateway notify callbacks and cookie-less API-token
+    requests are exempt. The access log records method, path and status only: never headers.
     """
 
     def __init__(self, app: ASGIApp, exempt: Iterable[str] = ()):
@@ -154,6 +180,7 @@ class CSRFMiddleware:
             and scope["path"].startswith("/api/")
             and scope["path"] not in self.exempt
             and _header(scope, b"x-requested-with") != "fetch"
+            and not _is_token_request(scope)
         ):
             await _send_json(send, 403, error_body("csrf", "Missing or invalid CSRF header"))
             return

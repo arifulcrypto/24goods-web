@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, File, Form, UploadFile
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.apitoken import require_scope
 from app.core.deps import current_user, get_db, get_res, optional_user
 from app.core.errors import NotFound, Unauthorized
 from app.core.features import require_feature
@@ -25,7 +26,7 @@ def get_store(res: Resources = Depends(get_res)) -> FileStore:
     return FileStore(res.settings.upload_dir)
 
 
-@router.post("/uploads")
+@router.post("/uploads", dependencies=[Depends(require_scope("uploads"))])
 async def upload(
     file: UploadFile = File(...),
     kind: str = Form(...),
