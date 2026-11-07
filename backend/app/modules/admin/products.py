@@ -62,6 +62,7 @@ def _summary(p: Product) -> dict[str, Any]:
         "status": p.status,
         "delivery_mode": p.delivery_mode,
         "after_sales_hours": p.after_sales_hours,
+        "manual_stock": p.manual_stock,
         "archived_at": p.archived_at.isoformat() if p.archived_at else None,
     }
 
@@ -126,6 +127,11 @@ async def create(db: AsyncSession, body: ProductIn, admin: User, ip: str | None)
         delivery_eta_hours=body.delivery_eta_hours,
         cost_minor=body.cost_minor,
         source_url=body.source_url,
+        manual_stock=(
+            (1 if "manual_stock" not in body.model_fields_set else body.manual_stock)
+            if body.delivery_mode == "manual"
+            else None
+        ),
     )
     db.add(p)
     await db.flush()
@@ -181,6 +187,10 @@ async def patch(
     if data.get("description_i18n") is not None:
         p.description_i18n = data["description_i18n"]
         p.description_html_i18n = render_i18n(data["description_i18n"])
+    if data.get("delivery_mode") == "manual" and p.delivery_mode != "manual":
+        # switching to manual: finite default like create (unless the admin sent a value)
+        if "manual_stock" not in data:
+            p.manual_stock = 1
     for key in ("delivery_mode", "category", "status", "delivery_separator", "group_sort"):
         if data.get(key) is not None:
             setattr(p, key, data[key])
@@ -192,6 +202,7 @@ async def patch(
         "delivery_eta_hours",
         "cost_minor",
         "source_url",
+        "manual_stock",
     ):
         if key in data:
             setattr(p, key, data[key])

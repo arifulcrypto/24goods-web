@@ -365,6 +365,9 @@ export default {
     inUse: "该商品已有订单、库存或其他关联，请改为归档。",
   },
   product: {
+    manualStock: "库存",
+    manualStockHint: "留空表示不限量。下单即占用库存，取消或超时会自动退回。",
+    unlimited: "不限量",
     eta: "发货时限",
     etaDefault: "留空 = 站点默认 {h}",
     etaReset: "使用默认",

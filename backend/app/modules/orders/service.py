@@ -85,6 +85,64 @@ async def available_stock(db: AsyncSession, product_id: uuid.UUID) -> int:
     return int(n or 0)
 
 
+async def lock_manual_products(
+    db: AsyncSession, tenant_id: uuid.UUID, product_ids: list[uuid.UUID]
+) -> None:
+    """Lock the given product rows in id order. Global lock order for order creation:
+    buyer row -> products (sorted by id) -> promo row."""
+    if product_ids:
+        await db.execute(
+            select(Product.id)
+            .where(Product.id.in_(sorted(set(product_ids))), Product.tenant_id == tenant_id)
+            .order_by(Product.id)
+            .with_for_update()
+        )
+
+
+async def reserve_manual_stock(
+    db: AsyncSession, tenant_id: uuid.UUID, product_id: uuid.UUID, qty: int
+) -> None:
+    """Manual products with a finite ``manual_stock``: decrement under the product row lock
+    (no oversell between concurrent orders). NULL = unlimited. Released by
+    ``release_manual_stock`` when the order is cancelled or expires."""
+    stock = await db.scalar(
+        select(Product.manual_stock)
+        .where(
+            Product.id == product_id,
+            Product.tenant_id == tenant_id,
+            Product.delivery_mode == "manual",
+        )
+        .with_for_update()
+    )
+    if stock is None:
+        return
+    if stock < qty:
+        raise OutOfStock("Not enough stock", extra={"product_id": str(product_id)})
+    await db.execute(
+        update(Product)
+        .where(Product.id == product_id, Product.tenant_id == tenant_id)
+        .values(manual_stock=stock - qty)
+    )
+
+
+async def release_manual_stock(db: AsyncSession, tenant_id: uuid.UUID, orders: list[Order]) -> None:
+    """Give pending orders' reservations back (call once, at the single pending_payment ->
+    cancelled/expired transition; paid orders keep it). Aggregated per product and applied
+    in product id order (stable lock order, like ``apply_sold``)."""
+    back: dict[uuid.UUID, int] = {}
+    for o in orders:
+        if o.product_id is not None and o.delivery_mode == "manual" and o.kind == "goods":
+            back[o.product_id] = back.get(o.product_id, 0) + o.qty
+    for pid in sorted(back):
+        await db.execute(
+            update(Product)
+            .where(
+                Product.id == pid, Product.tenant_id == tenant_id, Product.manual_stock.is_not(None)
+            )
+            .values(manual_stock=Product.manual_stock + back[pid])
+        )
+
+
 async def count_payables(db: AsyncSession, buyer_id: uuid.UUID) -> int:
     """Open payables: pending single orders plus pending checkouts (a checkout's member
     orders do not count on their own)."""
@@ -163,6 +221,8 @@ async def create_order(
     (never persisted, never logged)."""
     if enforce_cap:
         await enforce_payables_cap(db, settings, buyer)
+    if product_id is not None and delivery_mode == "manual" and kind == "goods":
+        await reserve_manual_stock(db, buyer.tenant_id, product_id, qty)
     if fee_permille is None:
         cfg = entry_cfg(await tenant_settings(db, buyer.tenant_id))
         if not cfg.enabled:
@@ -266,9 +326,11 @@ async def buy_now(
     value = normalize_value(product.buyer_input, buyer_input)
     if product.delivery_mode == "auto_card" and await available_stock(db, product.id) < qty:
         raise OutOfStock("Not enough stock", extra={"product_id": str(product.id)})
-    # lock order everywhere: buyer row (payables cap) BEFORE the promo row (no deadlock between
-    # a buy-now and a checkout of the same buyer)
+    # lock order everywhere: buyer row (payables cap) -> product rows (sorted) -> promo row
+    # (no deadlock between a buy-now and a checkout touching the same buyer/product/promo)
     await enforce_payables_cap(db, settings, buyer)
+    if product.delivery_mode == "manual":
+        await lock_manual_products(db, buyer.tenant_id, [product.id])
     ev = None
     if promo_code and promo_code.strip():
         ts = await tenant_settings(db, buyer.tenant_id)
@@ -688,6 +750,7 @@ async def expire_pending(
                 )
                 msgs[order.id] = await _expire_order(db, tid, order)
                 rows.append(order)
+            await release_manual_stock(db, tid, rows)
             expired_quotes = (
                 await db.execute(
                     update(Quote)

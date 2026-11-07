@@ -3,6 +3,9 @@
  * vue-i18n syntax: {name} interpolation, `|` plurals; write a literal @ as {'@'}.
  */
 export default {
+  paste: {
+    tip: 'Tip: paste a screenshot with Ctrl+V',
+  },
   common: {
     ok: 'OK',
     cancel: 'Cancel',

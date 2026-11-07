@@ -7,7 +7,7 @@ import { moneyParts, formatNumber, type ProductSummary } from '@24goods/shared'
 const props = defineProps<{ product: ProductSummary }>()
 const { t, locale } = useI18n()
 const price = computed(() => moneyParts(props.product.price, props.product.currency, locale.value))
-const soldOut = computed(() => props.product.delivery_mode === 'auto_card' && props.product.stock === 0)
+const soldOut = computed(() => props.product.stock === 0)
 </script>
 
 <template>

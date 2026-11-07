@@ -68,7 +68,7 @@ type User = { id: string; email: string; display_name: string; role: Role; local
 
 type ProductSummary = {
   id: string; title: string; cover: string | null; price: string; currency: string;
-  delivery_mode: "auto_card" | "manual"; stock: number | null; // stock only for auto_card; expired cards excluded
+  delivery_mode: "auto_card" | "manual"; stock: number | null; // auto_card: available non-expired cards; manual: `manual_stock` (null = unlimited / n.a.)
   category: string; sold: number;
   after_sales_hours: number;    // resolved: product override, else the site default (672); 0 = none
 };
@@ -188,7 +188,7 @@ type AgentStatus = { status: "online" | "away" | "on_hold" | "offline"; message:
 | GET `/files/{id}` | — | bytes | Auth: owner, conversation participant or staff. `nosniff`, `CSP: sandbox`. Images are `inline`; voice and text files are `attachment` (text: `text/plain; charset=utf-8`, `filename*=UTF-8''<name>`). Product images are public |
 | GET `/stream` | — | `text/event-stream` | Events: `message` (Message), `conversation` (Conversation), `order` (Order), `agent_status` (AgentStatus), `after_sales` (AfterSales, own tickets). Heartbeat comment every 15 s. Clients fall back to polling `messages?after_id` every 4 s. `order` events are also emitted when an order auto-completes |
 | POST `/quotes/{id}/accept` | — | `Order` + `access_code` | Buyer of that conversation only; status `offered` and not expired; creates a `pending_payment` order with `amount = quote.amount`; posts an `order_card`; quote becomes `accepted` |
-| POST `/orders` | `{product_id, qty, src?}` | `Order` + `access_code` | Buy-now at list price; `qty` 1–10; for `auto_card`, checks available (non-expired) stock. `src` is a traffic tag stored as `orders.source`; it is lowercased and **silently dropped** unless it matches `[a-z0-9_-]{1,32}`. `access_code` (10 Crockford base32 chars) is returned **only here** (and on quote accept / rotation) |
+| POST `/orders` | `{product_id, qty, src?}` | `Order` + `access_code` | Buy-now at list price; `qty` 1–10; for `auto_card`, checks available (non-expired) stock. For `manual` products with a finite `manual_stock` the quantity is reserved (decremented under a product row lock) and `409 out_of_stock` is returned when insufficient; cancel/expiry give it back once, paid orders keep it (also applies to `/checkout` and quote accept). `src` is a traffic tag stored as `orders.source`; it is lowercased and **silently dropped** unless it matches `[a-z0-9_-]{1,32}`. `access_code` (10 Crockford base32 chars) is returned **only here** (and on quote accept / rotation) |
 | GET `/orders` | `page, page_size` | Paginated `Order` | Own orders only |
 | GET `/orders/{id}` | — | `Order` | Owner only |
 | POST `/orders/{id}/pay` | `{channel: "zpay_alipay"\|"usdt_arbitrum"\|"usdt_xlayer"\|"usdt_trc20"}` | `{pay_url}` | Only `pending_payment`; `zpay_alipay` builds a signed `submit.php` URL; a `usdt_*` channel opens a BEpusdt transaction and returns our own page `/pay/usdt/{order_no}` (same-origin). Disabled channel (USDT is off by default) or BEpusdt not configured -> 503 `unavailable` |
@@ -481,3 +481,6 @@ Admin endpoints:
 
 Config is mirrored to Redis `cfg:blockedips:<tenant_id>` (TTL 600 s, rebuilt from the DB on a miss or after a
 Security settings save).
+
+**v5.2 manual stock.** `products.manual_stock` int, NULL = unlimited (existing rows migrate to NULL). Admin `POST /admin/products` for `delivery_mode=manual`: omitted `manual_stock` = 1, explicit `null` = unlimited; `PATCH /admin/products/{id}` accepts `manual_stock` (>= 0 or null), audited in `product.updated` before/after. Admin product views expose `manual_stock`.
+Manual-stock caveats: lock order for order creation is buyer row -> product rows (sorted by id) -> promo row; releases are aggregated per product and applied in product-id order. Setting a number while earlier orders reserved against NULL (unlimited) is outstanding lets later releases inflate the count (releases just add back). Switching a product to `manual` via PATCH without `manual_stock` sets it to 1 (it is NULL otherwise = unlimited). An order that expired (stock released) and is paid late is refund-only.

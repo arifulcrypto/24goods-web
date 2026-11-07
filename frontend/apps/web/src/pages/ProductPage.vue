@@ -79,7 +79,7 @@ const images = computed(() => {
 })
 const price = computed(() => (product.value ? moneyParts(product.value.price, product.value.currency, locale.value) : null))
 const isAuto = computed(() => product.value?.delivery_mode === 'auto_card')
-const soldOut = computed(() => isAuto.value && (product.value?.stock ?? 0) <= 0)
+const soldOut = computed(() => (isAuto.value ? (product.value?.stock ?? 0) <= 0 : product.value?.stock === 0))
 const as = computed(() => afterSalesBadge(product.value?.after_sales_hours))
 const labels = computed(() => formatLabels(product.value?.delivery_format, product.value?.delivery_separator))
 const redeem = computed(() => safeLinkUrl(product.value?.redeem_url))
@@ -179,8 +179,8 @@ function back() {
         <div class="facts">
           <span v-if="isAuto" class="badge-instant">{{ t(`deliveryMode.${product.delivery_mode}`) }}</span>
           <ManualPromise v-else :eta="product.delivery_eta_hours" compact />
-          <span v-if="isAuto && product.stock !== null" class="muted">
-            {{ soldOut ? t('product.outOfStock') : t('product.stock', { n: product.stock }) }}
+          <span v-if="product.stock !== null && product.stock !== undefined" class="muted">
+            {{ soldOut ? t('product.outOfStock') : isAuto || product.stock >= 10 ? t('product.stock', { n: product.stock }) : t('product.onlyLeft', { n: product.stock }) }}
           </span>
         </div>
         <div v-if="as" class="facts"><span class="badge-as">{{ t(as.unit === 'h' ? 'product.afterSalesH' : 'product.afterSalesD', { n: as.n }) }}</span></div>

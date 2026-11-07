@@ -22,7 +22,7 @@ from app.core.resources import Resources
 from app.models import Checkout, Message, Order, User
 from app.modules.chat.messages import post_system
 from app.modules.orders.events import add_event, snapshot
-from app.modules.orders.service import broadcast_order
+from app.modules.orders.service import broadcast_order, release_manual_stock
 from app.modules.payments import usdt as usdt_svc
 from app.modules.payments.channels import is_usdt
 from app.modules.payments.settle import (
@@ -258,6 +258,7 @@ async def cancel_group(
                 by=by,
             )
         )
+    await release_manual_stock(db, tid, orders)
     # promo: reserved -> released (-used_count), buyer and staff cancel alike
     has_promo = (co.promo_code_id is not None) if co is not None else bool(orders[0].promo_code_id)
     if co is not None:

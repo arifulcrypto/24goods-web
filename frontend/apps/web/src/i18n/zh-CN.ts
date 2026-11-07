@@ -57,6 +57,7 @@ const zhCN: WebMessages = {
     title: '商品',
     stock: '库存 {n}',
     outOfStock: '已售罄',
+    onlyLeft: '仅剩 {n} 件',
     delivery: '发货方式',
     category: '分类',
     description: '商品详情',

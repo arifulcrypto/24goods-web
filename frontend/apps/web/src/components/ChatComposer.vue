@@ -12,6 +12,7 @@ import {
   isAcceptedImage,
   isVoiceSupported,
   voiceExtension,
+  usePasteImage,
 } from '@24goods/shared'
 import { showConfirmDialog, showToast } from '../ui'
 
@@ -78,11 +79,14 @@ function onKeydown(e: KeyboardEvent) {
 function pickImage() {
   fileInput.value?.click()
 }
+usePasteImage(textarea, (files) => void sendPicked(files[0]))
 async function onFile(e: Event) {
   const input = e.target as HTMLInputElement
   const file = input.files?.[0]
   input.value = ''
-  if (!file) return
+  if (file) await sendPicked(file)
+}
+async function sendPicked(file: File) {
   if (!isAcceptedImage(file)) {
     showToast(t('chat.image.unsupported'))
     return

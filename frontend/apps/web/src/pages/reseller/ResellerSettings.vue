@@ -98,6 +98,10 @@ onMounted(async () => {
 
 async function onLogo(ev: Event) {
   const f = (ev.target as HTMLInputElement).files?.[0]
+  await uploadLogo(f)
+  ;(ev.target as HTMLInputElement).value = ''
+}
+async function uploadLogo(f: File | undefined) {
   if (!f || uploading.value) return
   uploading.value = true
   try {
@@ -107,7 +111,6 @@ async function onLogo(ev: Event) {
     toastError(e)
   } finally {
     uploading.value = false
-    ;(ev.target as HTMLInputElement).value = ''
   }
 }
 async function save() {
@@ -188,11 +191,11 @@ async function save() {
           </p>
         </template>
         <div class="dom-actions">
-          <van-button v-if="d.status !== 'active'" size="small" :loading="domBusy" @click="checkDomain(d.id)">{{ t('reseller.domainCheck') }}</van-button>
-          <van-button size="small" type="danger" plain :disabled="domBusy" @click="removeDomain(d.id)">{{ t('reseller.domainRemove') }}</van-button>
+          <van-button v-if="d.status !== 'active'" class="dom-btn" :loading="domBusy" @click="checkDomain(d.id)">{{ t('reseller.domainCheck') }}</van-button>
+          <van-button class="dom-btn" type="danger" plain :disabled="domBusy" @click="removeDomain(d.id)">{{ t('reseller.domainRemove') }}</van-button>
         </div>
       </div>
-      <van-field v-if="dom.items.length < dom.max_domains" v-model="newHost" maxlength="253" :placeholder="t('reseller.domainPh')" />
+      <van-field v-if="dom.items.length < dom.max_domains" v-model="newHost" maxlength="253" :placeholder="t('reseller.domainPh')" :aria-label="t('reseller.domainPh')" inputmode="url" autocapitalize="none" autocomplete="off" :spellcheck="false" />
       <div v-if="dom.items.length < dom.max_domains" class="submit">
         <van-button round block type="primary" :loading="domBusy" @click="addDomain">{{ t('reseller.domainAdd') }}</van-button>
       </div>
@@ -234,6 +237,9 @@ async function save() {
   margin: 6px 0;
   font-size: 12px;
   overflow-wrap: anywhere;
+}
+.dom-btn {
+  min-height: 44px;
 }
 .dom-actions {
   display: flex;
