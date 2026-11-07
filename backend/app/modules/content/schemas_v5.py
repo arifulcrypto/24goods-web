@@ -185,6 +185,7 @@ class ImportIn(BaseModel):
 
 class ResellersIn(BaseModel):
     base_domain: str | None = Field(None, max_length=253)
+    link_mode: Literal["subdomain", "query"] | None = None
     signup_fee_minor: int | None = Field(None, ge=0, le=100_000_000)
     default_markup_kind: Literal["percent", "fixed"] | None = None
     default_markup_value: int | None = Field(None, ge=0, le=100_000_000)

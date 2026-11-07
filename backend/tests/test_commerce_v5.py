@@ -547,7 +547,7 @@ async def test_signup_pay_activates_store_and_books_ledger(env):
     assert r2.json()["signup_order"]["order_no"] == so["order_no"]
     await pay_order(env, buyer, so)
     me = (await buyer.get(f"{API}/reseller/me")).json()
-    assert me["status"] == "active" and me["store_url"] == "https://my-shop.kesiv.com/"
+    assert me["status"] == "active" and me["store_url"].endswith("/?store=my-shop")
     v = (await buyer.get(f"{API}/orders/{so['id']}")).json()
     assert v["status"] == "completed"
     assert await env.scalar("SELECT count(*) FROM outbox WHERE topic='order.paid'") == 0

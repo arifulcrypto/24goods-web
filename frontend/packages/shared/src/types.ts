@@ -383,7 +383,7 @@ export interface SiteInfo {
   delivery?: { manual_eta_hours?: number; manual_note?: string | null } | null
   storefront?: Storefront | null
   /** Optional: reseller program public info (base domain for the slug preview). */
-  resellers?: { base_domain?: string; signup_fee_minor?: number } | null
+  resellers?: { base_domain?: string; link_mode?: 'subdomain' | 'query'; signup_fee_minor?: number } | null
   /** Optional (security.email_verify_on_register); the 422 `email_code_required` is the fallback. */
   email_verify_on_register?: boolean
 }

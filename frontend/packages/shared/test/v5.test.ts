@@ -4,6 +4,8 @@ import {
   captureStore,
   cleanPromoCode,
   cleanStoreSlug,
+  recalledStore,
+  STORE_TTL_MS,
   feeBreakdown,
   isWhiteLabel,
   manualNote,
@@ -19,7 +21,7 @@ import {
 
 const mem = () => {
   const m = new Map<string, string>()
-  return { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => void m.set(k, v) }
+  return { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => void m.set(k, v), removeItem: (k: string) => void m.delete(k) }
 }
 const site = (o: Partial<SiteInfo>): SiteInfo => ({ brand: 'x', announcement: null, after_sales_default_hours: 0, support_hours: null, pages: [], ...o })
 
@@ -57,6 +59,18 @@ describe('storefront', () => {
     expect(storefrontHeaders(st)).toEqual({ 'X-Storefront': 'my-shop' })
     expect(cleanStoreSlug('bad slug!')).toBeNull()
     expect(storefrontHeaders(mem())).toEqual({})
+  })
+  it('expires after 30 days; ?store=off clears; bad JSON ignored', () => {
+    const st = mem()
+    const t0 = 1_000_000
+    captureStore('?store=shop1', st, t0)
+    expect(recalledStore(st, t0 + STORE_TTL_MS - 1)).toBe('shop1')
+    expect(recalledStore(st, t0 + STORE_TTL_MS + 1)).toBeNull()
+    captureStore('?store=shop1', st, t0)
+    expect(captureStore('?store=off', st, t0)).toBeNull()
+    expect(recalledStore(st, t0)).toBeNull()
+    st.setItem('kesiv.store', 'not-json')
+    expect(recalledStore(st, t0)).toBeNull()
   })
   it('client attaches getHeaders to every request', async () => {
     let seen: Headers | Record<string, string> = {}

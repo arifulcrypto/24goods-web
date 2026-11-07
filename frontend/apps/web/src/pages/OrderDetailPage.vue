@@ -60,6 +60,7 @@ async function fetchOrder(silent = false) {
   if (!silent) loading.value = true
   try {
     order.value = await api.orders.get(id.value)
+    site.orderStoreName = order.value.reseller?.store_name ?? null
     notFound.value = false
   } catch (e) {
     if (isApiError(e) && (e.code === 'not_found' || e.code === 'forbidden')) notFound.value = true
@@ -91,6 +92,7 @@ void site.loadChannels()
 onBeforeUnmount(() => {
   offs.forEach((off) => off())
   clearInterval(timer)
+  site.orderStoreName = null
   secrets.value = []
 })
 

@@ -409,7 +409,7 @@ category_slugs, enabled, note?}`.
 (only when `features.resellers`; non-active slug = main store). Catalog list/detail/ids/
 recommended, cart quote, `POST /orders`, `POST /checkout` use storefront prices (base + markup;
 hidden products 404). `GET /site` adds `storefront: null | {slug, store_name, logo_url, welcome,
-white_label: true}`, overrides `brand` with the store name, and `resellers: {base_domain}` when the
+white_label: true}`, overrides `brand` with the store name, and `resellers: {base_domain, link_mode}` when the
 feature is on. New conversations record `reseller_id`.
 
 **Reseller center** (`features.resellers`, else 403): `GET /reseller/me` (`null` if none),
@@ -434,3 +434,8 @@ admin order views gain `reseller_markup_minor`, `kind`, `discount_minor`, `promo
 `reseller_payable:{id} -markup`, `promo_discount +discount`, `surcharge_revenue -fee`; sign-up:
 `reseller_signup_revenue -subtotal`; refund = exact mirror; payout paid: `reseller_payable:{id}
 +amount`, `cash:payouts -amount`.
+
+**Store link (v5.1).** `settings.resellers.link_mode` = `query` (default) | `subdomain`.
+`store_url` (reseller `/me` and admin reseller views) is `{PUBLIC_BASE_URL}/?store=<slug>` in query
+mode, `https://<slug>.<base_domain>/` in subdomain mode. The web app remembers the storefront in
+localStorage for 30 days (`?store=off` clears it).

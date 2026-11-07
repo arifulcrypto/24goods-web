@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import storefront
 from app.core.audit import audit
+from app.core.config import get_settings
 from app.core.deps import Page
 from app.core.errors import (
     AlreadyPaid,
@@ -157,6 +158,14 @@ async def stats(db: AsyncSession, r: Reseller, rcfg: dict[str, Any]) -> dict[str
 
 
 # ------------------------------------------------------------------ views
+def store_url(slug: str, rcfg: dict[str, Any]) -> str:
+    """THE single store-link builder: ``query`` (default) -> ``{public base}/?store=slug``;
+    ``subdomain`` -> ``https://slug.{base_domain}/``."""
+    if rcfg.get("link_mode") == "subdomain":
+        return f"https://{slug}.{rcfg['base_domain']}/"
+    return f"{get_settings().public_base_url.rstrip('/')}/?store={slug}"
+
+
 async def signup_order_no(db: AsyncSession, r: Reseller) -> str | None:
     if r.signup_order_id is None:
         return None
@@ -170,7 +179,7 @@ async def me_view(db: AsyncSession, r: Reseller, rcfg: dict[str, Any]) -> dict[s
         "slug": r.slug,
         "store_name": r.store_name,
         "status": r.status,
-        "store_url": f"https://{r.slug}.{rcfg['base_domain']}/",
+        "store_url": store_url(r.slug, rcfg),
         "markup_kind": r.markup_kind,
         "markup_value": int(r.markup_value),
         "logo_url": r.logo_url,
@@ -685,6 +694,7 @@ async def admin_view(
         "id": str(r.id),
         "slug": r.slug,
         "store_name": r.store_name,
+        "store_url": store_url(r.slug, rcfg),
         "status": r.status,
         "user": {"id": str(r.user_id), "email": u.email if u else ""},
         "markup_kind": r.markup_kind,
