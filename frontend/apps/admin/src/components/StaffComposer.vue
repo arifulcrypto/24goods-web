@@ -193,7 +193,7 @@ onBeforeUnmount(() => recorder?.cancel())
 .paste-tip {
   margin-top: 4px;
   font-size: 12px;
-  color: var(--a-muted, #909399);
+  color: #606266;
 }
 .input-row {
   display: flex;

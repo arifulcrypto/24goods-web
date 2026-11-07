@@ -180,7 +180,7 @@ function back() {
           <span v-if="isAuto" class="badge-instant">{{ t(`deliveryMode.${product.delivery_mode}`) }}</span>
           <ManualPromise v-else :eta="product.delivery_eta_hours" compact />
           <span v-if="product.stock !== null && product.stock !== undefined" class="muted">
-            {{ soldOut ? t('product.outOfStock') : isAuto ? t('product.stock', { n: product.stock }) : t('product.onlyLeft', { n: product.stock }) }}
+            {{ soldOut ? t('product.outOfStock') : isAuto || product.stock >= 10 ? t('product.stock', { n: product.stock }) : t('product.onlyLeft', { n: product.stock }) }}
           </span>
         </div>
         <div v-if="as" class="facts"><span class="badge-as">{{ t(as.unit === 'h' ? 'product.afterSalesH' : 'product.afterSalesD', { n: as.n }) }}</span></div>
