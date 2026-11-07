@@ -52,7 +52,7 @@ def _host(url: str) -> str:
     return (urlsplit(url).hostname or "")[:253]
 
 
-@router.post("/products/import/fetch", dependencies=[Depends(require_scope("products"))])
+@router.post("/products/import/fetch", dependencies=[Depends(require_scope("products:write"))])
 async def import_fetch(
     body: FetchIn,
     request: Request,
@@ -75,7 +75,7 @@ async def import_fetch(
     return await importer.import_from_url(body.url, cfg, resolver=_resolver, transport=_transport)
 
 
-@router.post("/products/import/parse", dependencies=[Depends(require_scope("products"))])
+@router.post("/products/import/parse", dependencies=[Depends(require_scope("products:write"))])
 async def import_parse(
     body: ParseIn,
     admin: User = Depends(require_admin),
@@ -93,7 +93,7 @@ async def import_parse(
     )
 
 
-@router.post("/content/images/fetch", dependencies=[Depends(require_scope("products"))])
+@router.post("/content/images/fetch", dependencies=[Depends(require_scope("products:write"))])
 async def import_image_fetch(
     body: FetchIn,
     request: Request,

@@ -14,6 +14,7 @@ Reference: `docs/agent-api.md` (auth, scopes, all endpoints). This skill is for 
 - **Never print, echo, log or write the token** to a file, commit or message. Do not run `env`,
   `set -x` or `curl -v`. Pass it only via `-H "Authorization: Bearer $KESIV_API_TOKEN"` (curl) or
   `os.environ` (Python).
+- Needs scopes `products:read` and `products:write` (write can change prices and buyer-visible links).
 - The token only works with the scopes it was given. A `403 token_scope` means the scope is missing:
   tell the user which scope to add, do not look for workarounds.
 - Create products as `"status": "draft"` first, show the user a summary, publish only after they

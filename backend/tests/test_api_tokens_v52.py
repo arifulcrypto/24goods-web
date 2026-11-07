@@ -32,7 +32,7 @@ def bearer(env, token: str, host: str = "testserver", **headers) -> httpx.AsyncC
     return c
 
 
-async def mint(admin, scopes=("products",), name="bot", days=30) -> dict:
+async def mint(admin, scopes=("products:read", "products:write"), name="bot", days=30) -> dict:
     r = await admin.post(
         f"{ADMIN}/api-tokens", json={"name": name, "scopes": list(scopes), "expires_in_days": days}
     )
@@ -57,10 +57,10 @@ async def _audit(env, action: str) -> list:
 
 async def test_create_shows_token_once_and_stores_only_hash(env):
     admin, u = await env.login("admin")
-    t = await mint(admin, ("products", "stats"))
+    t = await mint(admin, ("products:read", "products:write", "stats"))
     token = t["token"]
     assert token.startswith("kst_") and t["prefix"] == token[:8] and len(token) >= 40
-    assert t["scopes"] == ["products", "stats"] and t["status"] == "active"
+    assert t["scopes"] == ["products:read", "products:write", "stats"] and t["status"] == "active"
     listing = (await admin.get(f"{ADMIN}/api-tokens")).json()
     assert token not in str(listing) and "token_hash" not in str(listing)
     assert listing["items"][0]["prefix"] == token[:8]
@@ -86,7 +86,7 @@ async def test_create_shows_token_once_and_stores_only_hash(env):
 
 async def test_bearer_scope_enforced_and_csrf_free(env, caplog):
     admin, _ = await env.login("admin")
-    t = await mint(admin, ("products",))
+    t = await mint(admin, ("products:read", "products:write"))
     caplog.set_level(logging.DEBUG)
     c = bearer(env, t["token"])
     r = await c.post(f"{ADMIN}/products", json=PRODUCT)  # no CSRF header, no cookie
@@ -113,7 +113,18 @@ async def test_bearer_scope_enforced_and_csrf_free(env, caplog):
 
 async def test_refused_on_settings_tokens_payouts_and_others(env):
     admin, _ = await env.login("admin")
-    t = await mint(admin, ("products", "cards:import", "orders:read", "chat", "uploads", "stats"))
+    t = await mint(
+        admin,
+        (
+            "products:read",
+            "products:write",
+            "cards:import",
+            "orders:read",
+            "chat",
+            "uploads",
+            "stats",
+        ),
+    )
     c = bearer(env, t["token"])
     for method, path in (
         ("GET", f"{ADMIN}/api-tokens"),
@@ -230,7 +241,7 @@ async def test_csrf_required_when_cookie_present(env):
 async def test_card_import_ok_and_reveal_unreachable(env):
     admin, _ = await env.login("admin")
     p = await env.product(mode="auto_card")
-    t = await mint(admin, ("cards:import", "products"))
+    t = await mint(admin, ("cards:import", "products:read"))
     c = bearer(env, t["token"])
     r = await c.post(f"{ADMIN}/products/{p.id}/cards/import", json={"lines": "AAA-111\nBBB-222"})
     assert r.status_code == 200 and r.json()["imported"] == 2
@@ -246,7 +257,7 @@ async def test_card_import_ok_and_reveal_unreachable(env):
         r = await c.request(method, path)
         assert r.status_code in (401, 403), (path, r.status_code)
     # products-only token cannot import cards
-    t2 = await mint(admin, ("products",), name="p")
+    t2 = await mint(admin, ("products:read",), name="p")
     r = await bearer(env, t2["token"]).post(
         f"{ADMIN}/products/{p.id}/cards/import", json={"lines": "CCC-333"}
     )
@@ -290,3 +301,69 @@ async def test_token_rate_limited(env, monkeypatch):
     c = bearer(env, t["token"])
     codes = [(await c.get(f"{ADMIN}/stats")).status_code for _ in range(5)]
     assert codes[:3] == [200] * 3 and codes[3] == 429
+
+
+async def test_read_scope_cannot_write_and_write_is_audited_with_token(env):
+    admin, _ = await env.login("admin")
+    rw = await mint(admin, ("products:read", "products:write"), name="rw")
+    ro = await mint(admin, ("products:read",), name="ro")
+    r = await bearer(env, rw["token"]).post(f"{ADMIN}/products", json=PRODUCT)
+    pid = r.json()["id"]
+    c_ro = bearer(env, ro["token"])
+    assert (await c_ro.get(f"{ADMIN}/products/{pid}")).status_code == 200
+    for body in ({"price": "1.00"}, {"redeem_url": "https://evil.example/x"}, {"status": "draft"}):
+        r = await c_ro.patch(f"{ADMIN}/products/{pid}", json=body)
+        assert r.status_code == 403 and r.json()["error"]["code"] == "token_scope"
+    r = await bearer(env, rw["token"]).patch(
+        f"{ADMIN}/products/{pid}", json={"price": "4.00", "redeem_url": "https://ok.example/r"}
+    )
+    assert r.status_code == 200, r.text
+    async with env.owner_session() as db:
+        row = (
+            await db.execute(
+                text(
+                    "SELECT before, after, detail FROM audit_log "
+                    "WHERE action = 'product.updated' ORDER BY created_at DESC LIMIT 1"
+                )
+            )
+        ).one()
+    assert row.before["price_minor"] != row.after["price_minor"] == 400
+    assert row.after["redeem_url"] == "https://ok.example/r" and row.before["redeem_url"] is None
+    assert row.detail["api_token"] == {"id": rw["id"], "prefix": rw["prefix"]}
+    # a cookie session write carries no api_token marker
+    await admin.patch(f"{ADMIN}/products/{pid}", json={"price": "5.00"})
+    async with env.owner_session() as db:
+        d = await db.scalar(
+            text(
+                "SELECT detail FROM audit_log WHERE action = 'product.updated' "
+                "ORDER BY created_at DESC LIMIT 1"
+            )
+        )
+    assert "api_token" not in d
+
+
+async def test_failed_bearer_attempts_limited_per_ip(env, monkeypatch):
+    from app.core import apitoken
+
+    monkeypatch.setattr(apitoken, "FAIL_PER_MIN_IP", 3)
+    c = bearer(env, "kst_" + "B" * 43)
+    codes = [(await c.get(f"{ADMIN}/products")).status_code for _ in range(5)]
+    assert codes[:3] == [401] * 3 and codes[3] == 429
+
+
+async def test_suspending_owner_revokes_tokens(env):
+    admin, _ = await env.login("admin")
+    agent, a = await env.login("agent")
+    t = await mint(admin, ("stats",))
+    # token owned by the agent: create directly (agents cannot mint)
+    async with env.owner_session() as db:
+        await db.execute(
+            text("UPDATE api_tokens SET user_id = :u WHERE id = :i"), {"u": a.id, "i": t["id"]}
+        )
+        await db.commit()
+    assert (await bearer(env, t["token"]).get(f"{ADMIN}/stats")).status_code == 200
+    r = await admin.post(f"{ADMIN}/users/{a.id}/suspend", json={"reason": "x"})
+    assert r.status_code == 200, r.text
+    assert await env.scalar("SELECT revoked_at FROM api_tokens") is not None
+    await admin.post(f"{ADMIN}/users/{a.id}/unsuspend")
+    assert (await bearer(env, t["token"]).get(f"{ADMIN}/stats")).status_code == 401  # stays revoked

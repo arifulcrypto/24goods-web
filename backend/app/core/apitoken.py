@@ -18,18 +18,28 @@ from fastapi import Request
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.audit import api_token_ctx
 from app.core.errors import Forbidden, Unauthorized
-from app.core.ratelimit import enforce
+from app.core.ratelimit import blocked, enforce, hit
 from app.core.resources import Resources
 from app.core.security import STAFF_ROLES
 from app.core.suspend import is_suspended
 from app.models import ApiToken, User
 
 TOKEN_PREFIX = "kst_"  # noqa: S105 (public format marker, not a secret)
-SCOPES = ("products", "cards:import", "orders:read", "chat", "uploads", "stats")
+SCOPES = (
+    "products:read",
+    "products:write",
+    "cards:import",
+    "orders:read",
+    "chat",
+    "uploads",
+    "stats",
+)
 DEFAULT_TTL_DAYS = 90
 MAX_TTL_DAYS = 365
 RATE_PER_MIN = 600
+FAIL_PER_MIN_IP = 30
 LAST_USED_THROTTLE_S = 60
 ALLOWED_PATHS = ("/api/v1/admin/", "/api/v1/uploads")
 
@@ -63,6 +73,23 @@ async def authenticate(
     request: Request, db: AsyncSession, res: Resources, tenant_id: uuid.UUID, token: str
 ) -> tuple[User, ApiToken]:
     """Resolve a bearer token to its owner; every failure is the same generic 401."""
+    ip = getattr(request.state, "client_ip", None) or "-"
+    await blocked(res.redis, "apitoken:fail", ip, FAIL_PER_MIN_IP, 60)  # cheap, before the DB
+    try:
+        return await _authenticate(request, db, res, tenant_id, token, ip)
+    except Unauthorized:
+        await hit(res.redis, "apitoken:fail", ip, FAIL_PER_MIN_IP, 60)
+        raise
+
+
+async def _authenticate(
+    request: Request,
+    db: AsyncSession,
+    res: Resources,
+    tenant_id: uuid.UUID,
+    token: str,
+    ip: str,
+) -> tuple[User, ApiToken]:
     if len(token) > 128 or not path_allows_token(request.url.path):
         raise Unauthorized("Authentication required")
     digest = hash_token(token)
@@ -87,14 +114,15 @@ async def authenticate(
         raise Unauthorized("Authentication required")
     await enforce(res.redis, "apitoken", str(row.id), RATE_PER_MIN, 60)
     if row.last_used_at is None or (now - row.last_used_at).total_seconds() > LAST_USED_THROTTLE_S:
-        ip = getattr(request.state, "client_ip", None)
         await db.execute(
             update(ApiToken)
             .where(ApiToken.id == row.id, ApiToken.tenant_id == tenant_id)
-            .values(last_used_at=now, last_used_ip=ip[:64] if ip else None)
+            .values(last_used_at=now, last_used_ip=ip[:64] if ip != "-" else None)
         )
+        # expire_on_commit=False (db.py): `row`/`owner` stay readable after this commit.
         await db.commit()
     request.state.api_token = row
+    api_token_ctx.set({"id": str(row.id), "prefix": row.prefix})
     return owner, row
 
 
@@ -121,3 +149,17 @@ def check_scope(request: Request, row: ApiToken) -> None:
 def clamp_expiry(days: int | None) -> datetime:
     d = DEFAULT_TTL_DAYS if days is None else days
     return datetime.now(timezone.utc) + timedelta(days=d)
+
+
+async def revoke_user_tokens(db: AsyncSession, tenant_id: uuid.UUID, user_id: uuid.UUID) -> int:
+    """Revoke every live token of a user (suspension, password change, account deletion)."""
+    res = await db.execute(
+        update(ApiToken)
+        .where(
+            ApiToken.tenant_id == tenant_id,
+            ApiToken.user_id == user_id,
+            ApiToken.revoked_at.is_(None),
+        )
+        .values(revoked_at=datetime.now(timezone.utc))
+    )
+    return res.rowcount or 0  # type: ignore[attr-defined]

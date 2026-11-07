@@ -70,7 +70,7 @@ async def stats(
 
 
 # ---------------------------------------------------------------- products
-@router.get("/products", dependencies=[Depends(require_scope("products"))])
+@router.get("/products", dependencies=[Depends(require_scope("products:read"))])
 async def list_products(
     q: str | None = Query(None, max_length=100),
     status: Literal["active", "draft", "archived"] | None = None,
@@ -81,14 +81,14 @@ async def list_products(
     return await product_svc.list_products(db, page, q, status)
 
 
-@router.get("/products/{product_id}", dependencies=[Depends(require_scope("products"))])
+@router.get("/products/{product_id}", dependencies=[Depends(require_scope("products:read"))])
 async def get_product(
     product_id: uuid.UUID, _: User = Depends(require_staff), db: AsyncSession = Depends(get_db)
 ) -> dict:
     return await product_svc.view(db, await product_svc.get(db, product_id))
 
 
-@router.post("/products", dependencies=[Depends(require_scope("products"))])
+@router.post("/products", dependencies=[Depends(require_scope("products:write"))])
 async def create_product(
     body: ProductIn,
     request: Request,
@@ -99,7 +99,7 @@ async def create_product(
     return await product_svc.view(db, p)
 
 
-@router.patch("/products/{product_id}", dependencies=[Depends(require_scope("products"))])
+@router.patch("/products/{product_id}", dependencies=[Depends(require_scope("products:write"))])
 async def patch_product(
     product_id: uuid.UUID,
     body: ProductPatch,
@@ -111,7 +111,7 @@ async def patch_product(
     return await product_svc.view(db, p)
 
 
-@router.post("/products/bulk", dependencies=[Depends(require_scope("products"))])
+@router.post("/products/bulk", dependencies=[Depends(require_scope("products:write"))])
 async def bulk_products(
     body: BulkProductsIn,
     request: Request,
@@ -122,7 +122,9 @@ async def bulk_products(
 
 
 @router.delete(
-    "/products/{product_id}", status_code=204, dependencies=[Depends(require_scope("products"))]
+    "/products/{product_id}",
+    status_code=204,
+    dependencies=[Depends(require_scope("products:write"))],
 )
 async def delete_product(
     product_id: uuid.UUID,
@@ -135,7 +137,9 @@ async def delete_product(
     return Response(status_code=204)
 
 
-@router.post("/products/{product_id}/restore", dependencies=[Depends(require_scope("products"))])
+@router.post(
+    "/products/{product_id}/restore", dependencies=[Depends(require_scope("products:write"))]
+)
 async def restore_product(
     product_id: uuid.UUID,
     request: Request,
@@ -146,7 +150,9 @@ async def restore_product(
     return await product_svc.view(db, p)
 
 
-@router.post("/products/{product_id}/images", dependencies=[Depends(require_scope("products"))])
+@router.post(
+    "/products/{product_id}/images", dependencies=[Depends(require_scope("products:write"))]
+)
 async def upload_product_image(
     product_id: uuid.UUID,
     request: Request,

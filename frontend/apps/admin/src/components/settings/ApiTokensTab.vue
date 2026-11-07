@@ -76,6 +76,7 @@ onMounted(load)
             <el-checkbox v-for="s in API_TOKEN_SCOPES" :key="s" :value="s">{{ t(`v5.tokens.scope.${s}`) }}</el-checkbox>
           </el-checkbox-group>
         </el-form-item>
+        <el-alert v-if="form.scopes.includes('products:write')" type="warning" :closable="false" show-icon :title="t('v5.tokens.writeWarn')" class="once" />
         <el-form-item :label="t('v5.tokens.expires')">
           <el-input-number v-model="form.days" :min="1" :max="365" />
         </el-form-item>

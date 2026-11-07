@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import uuid
+from contextvars import ContextVar
 from typing import Any
 
 from sqlalchemy import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import AuditLog
+
+# Set by apitoken.authenticate for the request task: {"id", "prefix"} of the API token in use.
+api_token_ctx: ContextVar[dict[str, str] | None] = ContextVar("api_token_ctx", default=None)
 
 
 async def audit(
@@ -25,6 +29,9 @@ async def audit(
     detail: dict[str, Any] | None = None,
     severity: str = "info",
 ) -> None:
+    tok = api_token_ctx.get()
+    if tok is not None:
+        detail = {**(detail or {}), "api_token": dict(tok)}
     await db.execute(
         insert(AuditLog).values(
             tenant_id=tenant_id,

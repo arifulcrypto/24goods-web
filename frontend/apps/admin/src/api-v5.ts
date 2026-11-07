@@ -412,7 +412,7 @@ export interface BlockedIp {
   created_by: string | null
 }
 
-export const API_TOKEN_SCOPES = ['products', 'cards:import', 'orders:read', 'chat', 'uploads', 'stats'] as const
+export const API_TOKEN_SCOPES = ['products:read', 'products:write', 'cards:import', 'orders:read', 'chat', 'uploads', 'stats'] as const
 export type ApiTokenScope = (typeof API_TOKEN_SCOPES)[number]
 export interface ApiTokenRow {
   id: string

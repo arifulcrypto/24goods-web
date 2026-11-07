@@ -12,7 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core import ipblock
+from app.core import apitoken, ipblock
 from app.core.audit import audit
 from app.core.deps import Page, client_ip, get_db, get_page, get_res, require_admin, require_staff
 from app.core.errors import Conflict, Forbidden, NotFound, Validation
@@ -154,6 +154,7 @@ async def suspend(
         detail={"reason": user.suspend_reason},
         severity="warning",
     )
+    await apitoken.revoke_user_tokens(db, user.tenant_id, user.id)
     await db.commit()
     await res.sessions.revoke_user_sessions(user.id)
     return user_row(user)

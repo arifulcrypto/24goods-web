@@ -15,7 +15,8 @@ with a **staff API token**. Spec: `docs/review-v5.2.md` section 5.
   normal CSRF rules apply and the cookie session is used.
 - Rate limit: 600 requests/minute per token (429 with `Retry-After`). Existing per-route limits (card
   import, uploads, URL import) still apply.
-- Create/revoke and every write made through a token are audited (actor = token owner).
+- Create/revoke and every write made through a token are audited. The actor is the token owner and the audit `detail.api_token` records the token `{id, prefix}`. Product updates store before/after price, status and redeem link.
+- Tokens are revoked automatically when the owner is suspended or changes their password. Repeated failed bearer attempts from one IP are limited (30/min, then 429).
 - Never put a token in a URL, a log, chat or git. Use an environment variable.
 
 ```bash
@@ -28,7 +29,8 @@ H=(-H "Authorization: Bearer $KESIV_API_TOKEN")
 
 | Scope | Allows |
 |---|---|
-| `products` | list/get/create/update/bulk/archive/restore products, product images, import from URL / pasted text, list categories |
+| `products:read` | list/get products, list categories |
+| `products:write` | create/update/bulk/archive/restore products (price, floor price, status, redeem link, stock), product images, import from URL / pasted text. Can change buyer-visible prices and links: grant with care |
 | `cards:import` | `POST /admin/products/{id}/cards/import` only. Card secrets are never returned (counts only); listing, finding, voiding or replacing cards is not available to tokens |
 | `orders:read` | `GET /admin/orders`, `GET /admin/orders/{id}` |
 | `chat` | list conversations, read messages, send text/image as staff |

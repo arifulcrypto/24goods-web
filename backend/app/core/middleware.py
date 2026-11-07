@@ -101,6 +101,9 @@ class CoreMiddleware:
             rid = secrets.token_hex(8)
         peer = scope.get("client")[0] if scope.get("client") else None
         ip = client_ip_from(peer, _header(scope, b"x-forwarded-for"), self.trusted)
+        from app.core.audit import api_token_ctx
+
+        api_token_ctx.set(None)  # never inherit a previous request's token attribution
         state = scope.setdefault("state", {})
         state["request_id"] = rid
         state["client_ip"] = ip

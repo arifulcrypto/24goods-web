@@ -126,7 +126,7 @@ async def _get(db: AsyncSession, category_id: uuid.UUID, tenant_id: uuid.UUID) -
     return c
 
 
-@router.get("", dependencies=[Depends(require_scope("products"))])
+@router.get("", dependencies=[Depends(require_scope("products:read"))])
 async def list_categories(
     admin: User = Depends(require_staff), db: AsyncSession = Depends(get_db)
 ) -> list[dict]:

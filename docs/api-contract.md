@@ -497,7 +497,7 @@ tenant: `401 unauthorized`. The request acts as the owner (role never exceeds th
 without a declared scope, or a scope the token lacks, returns `403` code **`token_scope`**.
 Rate limit 600/min per token (`429`).
 
-Scopes: `products`, `cards:import`, `orders:read`, `chat`, `uploads`, `stats` (route mapping in
+Scopes: `products:read`, `products:write`, `cards:import`, `orders:read`, `chat`, `uploads`, `stats` (route mapping in
 agent-api.md). Tokens cannot reach settings, secrets, tokens, users, blocked IPs, payouts, refunds,
 ledger, audit, resellers, order mutations or card listing/reveal.
 
