@@ -149,10 +149,14 @@ def notify_bg(
 
 
 async def send_test(res: Resources, tenant_id: uuid.UUID) -> tuple[bool, str | None]:
-    """Admin test: ignores the enable/event toggles, reports a short error code."""
-    async with tenant_session(res.maker, tenant_id) as db:
-        cfg = section(await tenant_settings(db, tenant_id), "notifications")
-        token = await secretbox.get_secret(db, res.settings, tenant_id, "telegram_bot_token")
+    """Admin test: ignores the enable/event toggles, reports a short error code. Never raises."""
+    try:
+        async with tenant_session(res.maker, tenant_id) as db:
+            cfg = section(await tenant_settings(db, tenant_id), "notifications")
+            token = await secretbox.get_secret(db, res.settings, tenant_id, "telegram_bot_token")
+    except Exception as exc:  # e.g. unseal failure after key rotation
+        log.warning("telegram test: config unavailable (%s)", type(exc).__name__)
+        return False, "config_error"
     if not token:
         return False, "no_token"
     if not cfg["telegram_chat_ids"]:
@@ -184,7 +188,15 @@ def order_event(res: Resources, order: Any, event: str, extra: list[str] | None 
 
 
 def outcome_events(res: Resources, orders: list[Any]) -> None:
-    """After a settled payment: paid -> order_paid (+ low stock); manual_review -> review."""
+    """After a settled payment: paid -> order_paid (+ low stock); manual_review -> review.
+    Never raises: runs inline on the payment-notify path after commit."""
+    try:
+        _outcome_events(res, orders)
+    except Exception as exc:  # a notification bug must not fail a notify reply
+        log.warning("telegram outcome events skipped (%s)", type(exc).__name__)
+
+
+def _outcome_events(res: Resources, orders: list[Any]) -> None:
     for o in orders:
         if o.status == "paid":
             mode = "manual delivery" if o.delivery_mode == "manual" else "auto delivery"
