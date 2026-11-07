@@ -1,0 +1,2 @@
+# Character set for generated passwords (not a secret), flagged after a ruff reformat
+cc21b6ce6e5e93b93dc62389ea97de55f1b3a9c0:backend/app/modules/auth/service.py:generic-api-key:38
