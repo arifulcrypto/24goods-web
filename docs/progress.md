@@ -31,6 +31,8 @@ _Last updated 2026-11-07 (v5.1 items 1, 2, 6; USDT on `feat/v52-usdt`)._
      middleware, admin Users page, full-page "Access denied"/"suspended" screens). Cloudflare IP-list sync
      still open (needs the CF token permission); security-reviewer pass pending.
   4. Telegram staff notifications: implemented on `feat/v52-telegram` (review-v5.2 §10); owner sets the token in Settings -> Notifications.
+  4b. SEO (review-v5.2 §6): implemented on `feat/v52-seo` (ADR-024). Orchestrator: set Settings -> SEO
+     indexing OFF on the demo; ON in prod, then submit `/sitemap.xml` in Search Console (production.md).
   5. Older follow-ups: admin order `cost_minor` snapshot, promo redemptions `order_no`, dev DB probe-data
      cleanup, prod `APP_SETTINGS_KEY` before the v5 prod deploy.
 - **Working rules:** AGENTS.md §7 (2 GB box: full suite in CI only, ≤ 2 agents, dev stack down when
