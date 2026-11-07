@@ -26,7 +26,7 @@ class BuyNowIn(BaseModel):
 
 
 class PayIn(BaseModel):
-    channel: Literal["zpay_alipay"]
+    channel: Literal["zpay_alipay", "usdt_arbitrum", "usdt_xlayer", "usdt_trc20"]
 
 
 class PriceIn(BaseModel):

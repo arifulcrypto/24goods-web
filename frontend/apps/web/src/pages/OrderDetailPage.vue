@@ -27,6 +27,7 @@ import AfterSalesStatus from '../components/AfterSalesStatus.vue'
 import BuyerInputSheet from '../components/BuyerInputSheet.vue'
 import FeeLines from '../components/FeeLines.vue'
 import ManualPromise from '../components/ManualPromise.vue'
+import PayChannelPicker from '../components/PayChannelPicker.vue'
 import { cancelPending, payCheckout, payOrder } from '../lib/orderActions'
 import { dropAccessCode, readAccessCode } from '../lib/attribution'
 import { useRealtimeStore } from '../stores/realtime'
@@ -342,6 +343,7 @@ function gotCode() {
           <span v-if="order.reseller" class="muted small">{{ t('order.viaStore', { name: order.reseller.store_name }) }}</span>
           <span v-if="order.quote_id" class="muted small">{{ t('order.fromQuote') }}</span>
         </div>
+        <PayChannelPicker v-if="order.status === 'pending_payment'" />
         <FeeLines
           v-if="order.subtotal && order.fee"
           class="o-fees"

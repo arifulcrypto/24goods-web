@@ -117,10 +117,21 @@ class Settings(BaseSettings):
     zpay_fee_permille: int = 16  # 1.6 %
     notify_rate_per_min: int = 120  # per source IP on /pay/notify/*
 
+    # --- payments (self-hosted BEpusdt, USDT) -- INTERNAL docker network only ---
+    bepusdt_url: str = ""  # e.g. http://bepusdt:8080 (empty = USDT channels unavailable)
+    bepusdt_api_token: str = ""  # secret: signs create-transaction + verifies notifies
+    bepusdt_notify_url: str = "http://api:8000/api/v1/pay/notify/bepusdt"
+    bepusdt_timeout_s: int = 1200  # order validity requested from BEpusdt (>= 120)
+    # demo/dev only: browser path of the BEpusdt simulator's pay page (e.g. /mockusdt/pay);
+    # ignored when APP_ENV=prod
+    bepusdt_sim_url: str = ""
+
     # --- dev mock gateway ---
     mockpay_host: str = "127.0.0.1"
     mockpay_port: int = 8002
     mockpay_notify_base: str = ""
+    mockusdt_host: str = "127.0.0.1"
+    mockusdt_port: int = 8003
 
     # --- tls ask endpoint ---
     tls_ask_rate_per_min: int = 30
@@ -163,6 +174,10 @@ class Settings(BaseSettings):
     @property
     def notify_url(self) -> str:
         return self.public_base_url.rstrip("/") + "/api/v1/pay/notify/zpay"
+
+    @property
+    def bepusdt_enabled(self) -> bool:
+        return bool(self.bepusdt_url and self.bepusdt_api_token)
 
     @property
     def return_url(self) -> str:

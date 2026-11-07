@@ -19,6 +19,7 @@ import ChatComposer from '../components/ChatComposer.vue'
 import ChatDelivery from '../components/ChatDelivery.vue'
 import CredentialsSheet from '../components/CredentialsSheet.vue'
 import PowStatus from '../components/PowStatus.vue'
+import { channelId } from '../lib/orderActions'
 import { useEnsureAccount } from '../composables/useEnsureAccount'
 import { isPowAbort } from '../composables/usePow'
 import { useAuthStore } from '../stores/auth'
@@ -257,7 +258,7 @@ async function acceptQuote(q: QuoteCardPayload) {
     orderId = order.id
     stashAccessCode(order.id, order.access_code)
     chat.patchQuote({ quote_id: q.quote_id, status: 'accepted', order_id: order.id })
-    const { pay_url } = await api.orders.pay(order.id)
+    const { pay_url } = await api.orders.pay(order.id, await channelId())
     const safe = safePayUrl(pay_url)
     if (!safe) throw new Error('unsafe pay_url')
     showLoadingToast({ message: t('chat.redirecting'), forbidClick: true, duration: 0 })

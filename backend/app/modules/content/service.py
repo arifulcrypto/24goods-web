@@ -186,6 +186,7 @@ async def admin_site(
         **{k: v for k, v in v5.items() if k != "defaults"},
         "secrets": await secretbox.status(db, tenant_id),
         "zpay": {"configured": bool(zpay_pid), "pid_last4": zpay_pid[-4:] if zpay_pid else None},
+        "bepusdt": {"configured": settings.bepusdt_enabled if settings is not None else False},
         "announcement": _announcement_admin(ts.get("announcement")),
         "after_sales_default_hours": after_sales_default_hours(ts),
         "auto_confirm_hours": {

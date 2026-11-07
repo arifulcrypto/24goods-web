@@ -76,6 +76,7 @@ PG_SUPERUSER_PASSWORD=$(rnd); APP_OWNER_PASSWORD=$(rnd)
 DB_API_PW=$(rnd); DB_DELIVERY_PW=$(rnd)
 R_API=$(rnd); R_DELIVERY=$(rnd); R_MOCK=$(rnd); R_HEALTH=$(rnd)
 ZPAY_KEY=$(rnd 16)
+BEPUSDT_TOKEN=$(rnd 16)   # demo: shared with the simulator; prod: copy the real token from the BEpusdt console
 # proof-of-work signing key + order access-code HMAC key (base64, 32 random bytes each)
 APP_POW_KEY=$(head -c 32 /dev/urandom | base64 | tr -d '\n')
 APP_LOOKUP_KEY=$(head -c 32 /dev/urandom | base64 | tr -d '\n')
@@ -169,7 +170,19 @@ APP_ZPAY_PID=1001
 APP_ZPAY_KEY=$ZPAY_KEY
 APP_ZPAY_GATEWAY=/mockpay
 APP_ZPAY_API_BASE=http://mockpay:8002
+APP_BEPUSDT_URL=http://mockusdt:8003
+APP_BEPUSDT_API_TOKEN=$BEPUSDT_TOKEN
+APP_BEPUSDT_SIM_URL=/mockusdt/pay
 EOF2
+fi
+# Real BEpusdt (profile "usdt", see docs/production.md): its own, initially empty env file.
+: > env/bepusdt.env
+if [[ "$MODE" == "prod" ]]; then
+  # set after the first start: open the BEpusdt console over an SSH tunnel, copy the API token
+  cat >> env/api.env <<'EOF3'
+APP_BEPUSDT_URL=http://bepusdt:8080
+APP_BEPUSDT_API_TOKEN=
+EOF3
 fi
 
 cat > env/delivery.env <<EOF
@@ -199,6 +212,15 @@ APP_MOCKPAY_HOST=0.0.0.0
 APP_MOCKPAY_PORT=8002
 APP_MOCKPAY_NOTIFY_BASE=http://api:8000
 APP_HEALTH_PORT=8002
+EOF
+cat > env/mockusdt.env <<EOF
+APP_ENV=$APP_ENV_NAME
+APP_REDIS_URL=$(redis_url mockpay "$R_MOCK")
+APP_BEPUSDT_API_TOKEN=$BEPUSDT_TOKEN
+APP_MOCKUSDT_HOST=0.0.0.0
+APP_MOCKUSDT_PORT=8003
+APP_MOCKPAY_NOTIFY_BASE=http://api:8000
+APP_HEALTH_PORT=8003
 EOF
 fi
 

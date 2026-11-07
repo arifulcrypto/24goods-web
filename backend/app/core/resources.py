@@ -16,6 +16,7 @@ from app.core.security import SessionStore
 from app.core.tenancy import TenantResolver
 from app.core.vaultkeys import build_sealer
 from app.modules.realtime.hub import RealtimeHub
+from app.payments.bepusdt import BepusdtClient, BepusdtConfig
 from app.payments.zpay import ZPayClient, ZPayConfig
 
 
@@ -29,6 +30,7 @@ class Resources:
     sessions: SessionStore
     sealer: CardSealer
     zpay: ZPayClient
+    bepusdt: BepusdtClient
     delivery: httpx.AsyncClient
     http: httpx.AsyncClient
     hub: RealtimeHub
@@ -49,6 +51,15 @@ def zpay_config(settings: Settings) -> ZPayConfig:
         api_base=settings.zpay_query_base,
         notify_url=settings.notify_url,
         return_url=settings.return_url,
+    )
+
+
+def bepusdt_config(settings: Settings) -> BepusdtConfig:
+    return BepusdtConfig(
+        base_url=settings.bepusdt_url,
+        token=settings.bepusdt_api_token,
+        notify_url=settings.bepusdt_notify_url,
+        timeout_s=max(120, settings.bepusdt_timeout_s),
     )
 
 
@@ -81,6 +92,7 @@ def build_resources(
         sessions=SessionStore(redis, settings),
         sealer=build_sealer(settings),
         zpay=ZPayClient(zpay_config(settings), http),
+        bepusdt=BepusdtClient(bepusdt_config(settings), http),
         delivery=delivery,
         http=http,
         hub=RealtimeHub(redis),
