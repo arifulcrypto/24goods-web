@@ -40,6 +40,7 @@ async def site(
         rcfg = section(ts, "resellers")
         out["resellers"] = {  # slug preview + sign-up fee in the apply form
             "base_domain": rcfg["base_domain"],
+            "link_mode": rcfg["link_mode"],
             "signup_fee_minor": rcfg["signup_fee_minor"],
         }
     if sf is not None:

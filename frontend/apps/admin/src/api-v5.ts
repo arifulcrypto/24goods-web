@@ -87,6 +87,7 @@ export interface MarkupCfg {
 }
 export interface ResellersCfg {
   base_domain: string
+  link_mode: 'subdomain' | 'query'
   signup_fee_minor: number
   default_markup_kind: 'percent' | 'fixed'
   default_markup_value: number

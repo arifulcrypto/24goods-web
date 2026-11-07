@@ -61,33 +61,55 @@ export function promoAvailable(site: SiteInfo | null): boolean {
 
 export const STORE_KEY = 'kesiv.store'
 export const STOREFRONT_HEADER = 'X-Storefront'
-type KV = Pick<Storage, 'getItem' | 'setItem'>
+type KV = Pick<Storage, 'getItem' | 'setItem'> & Partial<Pick<Storage, 'removeItem'>>
+export const STORE_TTL_MS = 30 * 24 * 3600 * 1000
 
 export function cleanStoreSlug(raw: unknown): string | null {
   if (typeof raw !== 'string') return null
   const v = raw.trim().toLowerCase()
   return /^[a-z0-9](?:[a-z0-9-]{1,30}[a-z0-9])$/.test(v) ? v : null
 }
-export function rememberStore(slug: string | null, storage?: KV): void {
+function store(storage?: KV): KV {
+  return storage ?? globalThis.localStorage
+}
+export function rememberStore(slug: string | null, storage?: KV, now = Date.now()): void {
   try {
-    const st = storage ?? globalThis.sessionStorage
-    if (slug) st.setItem(STORE_KEY, slug)
+    if (slug) store(storage).setItem(STORE_KEY, JSON.stringify({ slug, exp: now + STORE_TTL_MS }))
   } catch {
     /* ignore */
   }
 }
-export function recalledStore(storage?: KV): string | null {
+export function forgetStore(storage?: KV): void {
   try {
-    return cleanStoreSlug((storage ?? globalThis.sessionStorage).getItem(STORE_KEY))
+    store(storage).removeItem?.(STORE_KEY)
+  } catch {
+    /* ignore */
+  }
+}
+export function recalledStore(storage?: KV, now = Date.now()): string | null {
+  try {
+    const raw = store(storage).getItem(STORE_KEY)
+    if (!raw) return null
+    const v = JSON.parse(raw) as { slug?: unknown; exp?: unknown }
+    if (typeof v.exp !== 'number' || v.exp < now) {
+      forgetStore(storage)
+      return null
+    }
+    return cleanStoreSlug(v.slug)
   } catch {
     return null
   }
 }
-/** Capture `?store=slug` from a location search string (persisting it) and return the active slug. */
-export function captureStore(search: string, storage?: KV): string | null {
-  const fromUrl = cleanStoreSlug(new URLSearchParams(search).get('store'))
-  if (fromUrl) rememberStore(fromUrl, storage)
-  return fromUrl ?? recalledStore(storage)
+/** `?store=slug` remembers (30 days), `?store=off` forgets; returns the active slug. */
+export function captureStore(search: string, storage?: KV, now = Date.now()): string | null {
+  const raw = new URLSearchParams(search).get('store')
+  if (raw?.trim().toLowerCase() === 'off') {
+    forgetStore(storage)
+    return null
+  }
+  const fromUrl = cleanStoreSlug(raw)
+  if (fromUrl) rememberStore(fromUrl, storage, now)
+  return fromUrl ?? recalledStore(storage, now)
 }
 /** Headers added to every API request. */
 export function storefrontHeaders(storage?: KV): Record<string, string> {

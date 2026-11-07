@@ -66,7 +66,11 @@ export const useSiteStore = defineStore('site', () => {
   })
   const whiteLabel = computed(() => isWhiteLabel(site.value))
   /** Name shown wherever the brand would appear: the store name on a white-label storefront. */
-  const headerName = computed(() => (whiteLabel.value ? storefront.value!.store_name : siteName.value))
+  /** Set by the order page: a storefront order always shows its own store's name. */
+  const orderStoreName = ref<string | null>(null)
+  const headerName = computed(
+    () => orderStoreName.value ?? (whiteLabel.value ? storefront.value!.store_name : siteName.value),
+  )
   const legal = computed(() => (site.value?.legal?.enabled ? site.value.legal : null))
   const manualNoteRaw = computed(() => site.value?.delivery?.manual_note ?? null)
   const manualDefaultHours = computed(() => site.value?.delivery?.manual_eta_hours ?? 24)
@@ -83,6 +87,7 @@ export const useSiteStore = defineStore('site', () => {
     googleLogin,
     siteName,
     headerName,
+    orderStoreName,
     whiteLabel,
     legal,
     manualNoteRaw,

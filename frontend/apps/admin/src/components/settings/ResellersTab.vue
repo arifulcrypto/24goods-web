@@ -13,7 +13,7 @@ const { t } = useI18n()
 const { saving, run } = useSave()
 const errors = ref<Record<string, string>>({})
 const f = reactive({
-  base_domain: 'kesiv.com', fee: '99.00', kind: 'percent' as 'percent' | 'fixed', value: 100, max_pct: 200,
+  base_domain: 'kesiv.com', link_mode: 'query' as 'query' | 'subdomain', fee: '99.00', kind: 'percent' as 'percent' | 'fixed', value: 100, max_pct: 200,
   max_fixed: '10000.00', min_payout: '10.00', settle: 72, reserved: [] as string[],
 })
 watch(
@@ -21,6 +21,7 @@ watch(
   (r) => {
     if (!r) return
     f.base_domain = r.base_domain
+    f.link_mode = r.link_mode ?? 'query'
     f.fee = minorToYuan(r.signup_fee_minor)
     f.kind = r.default_markup_kind
     f.value = r.default_markup_value
@@ -47,6 +48,7 @@ async function save() {
     apiV5.site.put({
       resellers: {
         base_domain: f.base_domain.trim().toLowerCase(),
+        link_mode: f.link_mode,
         signup_fee_minor: fee!,
         default_markup_kind: f.kind,
         default_markup_value: f.value,
@@ -71,6 +73,13 @@ async function save() {
       <el-form-item :label="t('v5.resellers.baseDomain')" :error="errors.domain">
         <el-input v-model="f.base_domain" maxlength="253" spellcheck="false" />
         <div class="muted small">{{ t('v5.resellers.baseDomainHint', { d: f.base_domain || 'kesiv.com' }) }}</div>
+      </el-form-item>
+      <el-form-item :label="t('v5.resellers.linkMode')">
+        <el-select v-model="f.link_mode" style="width: 260px">
+          <el-option value="query" :label="t('v5.resellers.linkQuery')" />
+          <el-option value="subdomain" :label="t('v5.resellers.linkSub')" />
+        </el-select>
+        <div class="muted small">{{ t('v5.resellers.linkModeHint') }}</div>
       </el-form-item>
       <el-form-item :label="t('v5.resellers.signupFee')" :error="errors.fee">
         <el-input v-model="f.fee" inputmode="decimal" style="width: 160px"><template #prefix>¥</template></el-input>

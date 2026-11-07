@@ -97,6 +97,7 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     # Reseller program
     "resellers": {
         "base_domain": "kesiv.com",
+        "link_mode": "query",  # query: {site}/?store=slug | subdomain: https://slug.{base_domain}/
         "signup_fee_minor": 9900,
         "default_markup_kind": "percent",
         "default_markup_value": 100,  # 10%
