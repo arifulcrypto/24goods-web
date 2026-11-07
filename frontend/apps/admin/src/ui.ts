@@ -5,6 +5,7 @@ import { i18n } from './i18n'
 export function toastError(e: unknown): void {
   if (e instanceof DOMException && e.name === 'AbortError') return
   if (isApiError(e) && e.code === 'unauthorized') return
+  if (isApiError(e) && (e.code === 'ip_blocked' || e.code === 'account_suspended')) return // full-page screen
   ElMessage.error({ message: i18n.global.t(errorI18nKey(e)), grouping: true })
 }
 export function toastOk(msg: string): void {

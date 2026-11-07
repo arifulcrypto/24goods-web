@@ -4,7 +4,8 @@ import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import TabBar from './components/TabBar.vue'
 import CsBubble from './components/CsBubble.vue'
-import { safeAssetUrl } from '@24goods/shared'
+import { accessBlock, safeAssetUrl } from '@24goods/shared'
+import { AccessBlockedView } from '@24goods/shared/ui'
 import { useAuthStore } from './stores/auth'
 import { useRealtimeStore } from './stores/realtime'
 import { useConversationsStore } from './stores/conversations'
@@ -98,6 +99,7 @@ watch(
     </RouterView>
     <TabBar v-if="showTabbar" />
     <CsBubble />
+    <AccessBlockedView v-if="accessBlock" :block="accessBlock" />
   </div>
 </template>
 

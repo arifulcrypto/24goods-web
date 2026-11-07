@@ -376,8 +376,43 @@ function clean(q: object): Record<string, string | number | boolean | undefined>
   return out
 }
 
+// ---------------- v5.2: user suspension + blocked IPs ----------------
+export interface AdminUserRow {
+  id: string
+  email: string
+  handle: string | null
+  display_name: string
+  role: 'buyer' | 'agent' | 'admin'
+  status: 'active' | 'suspended'
+  suspended_until: string | null
+  suspend_reason: string | null
+  created_at: string
+  last_login_at: string | null
+}
+export interface BlockedIp {
+  id: string
+  cidr: string
+  note: string | null
+  expires_at: string | null
+  created_at: string
+  created_by: string | null
+}
+
 export function createAdminV5Api(c: ApiClient) {
   return {
+    users: {
+      list: (q: { q?: string; role?: string; status?: string; page?: number; page_size?: number }) =>
+        c.get<Paginated<AdminUserRow>>('/admin/users', clean(q)),
+      suspend: (id: string, b: { reason: string; until?: string | null }) =>
+        c.post<AdminUserRow>(`/admin/users/${seg(id)}/suspend`, b.until ? b : { reason: b.reason }),
+      unsuspend: (id: string) => c.post<AdminUserRow>(`/admin/users/${seg(id)}/unsuspend`),
+    },
+    blockedIps: {
+      list: (q: { page?: number; page_size?: number }) => c.get<Paginated<BlockedIp>>('/admin/blocked-ips', clean(q)),
+      add: (b: { cidr: string; note?: string; expires_at?: string | null }) =>
+        c.post<BlockedIp>('/admin/blocked-ips', { cidr: b.cidr, note: b.note || undefined, expires_at: b.expires_at || undefined }),
+      remove: (id: string) => c.delete<void>(`/admin/blocked-ips/${seg(id)}`),
+    },
     site: {
       get: () => c.get<AdminSiteV5>('/admin/site'),
       put: (b: SiteSectionPatch) => c.put<AdminSiteV5>('/admin/site', b),

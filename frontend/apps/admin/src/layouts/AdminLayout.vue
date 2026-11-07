@@ -18,6 +18,7 @@ import {
   Setting,
   Shop,
   Tickets,
+  User,
   Wallet,
 } from '@element-plus/icons-vue'
 import { LogoMark } from '@24goods/shared/ui'
@@ -55,6 +56,7 @@ const groups = computed(() => {
         { path: '/inbox', key: 'nav.inbox', icon: ChatDotRound },
         { path: '/orders', key: 'nav.orders', icon: List },
         { path: '/after-sales', key: 'nav.afterSales', icon: Service },
+        { path: '/users', key: 'v5.nav.users', icon: User },
       ],
     },
     {

@@ -58,6 +58,9 @@ export const API_ERROR_CODES = [
   'fetch_failed',
   'unsafe_url',
   'unavailable',
+  // v5.2
+  'account_suspended',
+  'ip_blocked',
 ] as const
 export const CLIENT_ERROR_CODES = ['network', 'server_error', 'timeout', 'unknown'] as const
 export type ContractErrorCode = (typeof API_ERROR_CODES)[number]

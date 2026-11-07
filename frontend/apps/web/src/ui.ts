@@ -17,6 +17,7 @@ export function toastError(e: unknown): void {
   const t = i18n.global.t
   if (isApiError(e) && e.code === 'unauthorized') return // global 401 handler redirects
   if (isApiError(e) && e.code === 'too_frequent') return // global 429 toast already shown
+  if (isApiError(e) && (e.code === 'ip_blocked' || e.code === 'account_suspended')) return // full-page screen
   showFailToast({ message: t(errorI18nKey(e)), wordBreak: 'break-word' })
 }
 

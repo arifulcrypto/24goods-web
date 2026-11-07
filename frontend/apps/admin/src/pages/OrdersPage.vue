@@ -109,6 +109,7 @@ function open(row: AdminOrder) {
           <template #default="{ row }">
             <div>{{ row.buyer.display_name }}</div>
             <div class="muted small">{{ visibleEmail(row.buyer.email) }}</div>
+            <router-link v-if="row.buyer.email" class="small" :to="{ name: 'users', query: { q: row.buyer.email } }" @click.stop>{{ t('v5.users.manage') }}</router-link>
           </template>
         </el-table-column>
         <el-table-column :label="t('orders.col.amount')" width="130">

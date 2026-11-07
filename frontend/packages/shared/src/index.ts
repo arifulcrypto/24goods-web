@@ -1,6 +1,7 @@
 export * from './types'
 export * from './api/errors'
 export * from './api/client'
+export * from './api/accessBlock'
 export * from './api/endpoints'
 export * from './format'
 export * from './realtime/sse'
