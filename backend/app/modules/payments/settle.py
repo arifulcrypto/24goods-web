@@ -635,6 +635,8 @@ async def apply_checkout_payment(
                     await post_payment_ledger(db, settings, o, channel)
             co.paid_at = co.paid_at or datetime.now(timezone.utc)
             co.channel = channel
+            for o in orders:  # refunds mirror the clearing account of the member order
+                o.channel = channel
             if co.promo_code_id is not None:
                 await promo_svc.mark_used(
                     db, checkout_id=co.id, tenant_id=co.tenant_id, expect=True
@@ -706,6 +708,8 @@ async def apply_checkout_payment(
         co.status = "manual_review"
         co.paid_at = datetime.now(timezone.utc)
         co.channel = channel
+        for o in orders:  # refunds mirror the clearing account of the member order
+            o.channel = channel
         if co.promo_code_id is not None:  # Payment recorded above
             await promo_svc.mark_used(db, checkout_id=co.id, tenant_id=co.tenant_id, expect=True)
         for o in orders:

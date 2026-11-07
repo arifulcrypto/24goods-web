@@ -74,7 +74,7 @@ Migrations are forward-only; roll back only to an image whose schema is compatib
 
 ## USDT (self-hosted BEpusdt)
 
-BEpusdt (`v03413/bepusdt:v1.24.3`, compose profile `usdt`) receives USDT on Arbitrum One, X Layer and
+BEpusdt v1.24.3 (`v03413/bepusdt:0716485@sha256:0a7d85…`, pinned by digest; compose profile `usdt`) receives USDT on Arbitrum One, X Layer and
 TRON. It is INTERNAL: docker network `usdt` only (shared with `api`), no published port, no Caddy route.
 Wallet addresses and the API token live in its console/volume, never in git.
 

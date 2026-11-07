@@ -210,6 +210,8 @@ class BepusdtClient:
                 or d.get("order_id") != order_id
                 or not d.get("trade_id")
                 or not d.get("token")
+                # an existing trade of another network would show the wrong chain's address
+                or d.get("trade_type", params["trade_type"]) != params["trade_type"]
             ):
                 raise BepusdtError("unexpected create-transaction response")
             return Attempt(
