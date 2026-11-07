@@ -31,7 +31,7 @@ CFG_TTL_S = 5.0
 MIRROR_TTL_S = 600
 DEFAULTS = {"enabled": False, "limit": 120, "window_s": 60}
 BODY = b'{"code":429,"msg":"Access is too frequent. Please try again later."}'
-EXEMPT_EXACT = frozenset({"/api/v1/pay/notify/zpay"})
+EXEMPT_EXACT = frozenset({"/api/v1/pay/notify/zpay", "/api/v1/pay/notify/bepusdt"})
 EXEMPT_PREFIX = ("/api/v1/realtime/", "/api/v1/admin/")
 
 

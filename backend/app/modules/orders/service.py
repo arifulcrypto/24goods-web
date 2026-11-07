@@ -59,7 +59,8 @@ from app.modules.common.orderviews import latest_tickets, one_view, order_views 
 from app.modules.common.views import REVEALABLE, order_card_payload
 from app.modules.content.site import tenant_settings
 from app.modules.orders.events import add_event, snapshot
-from app.modules.payments.channels import channel_cfg, split_amount
+from app.modules.payments import usdt as usdt_svc
+from app.modules.payments.channels import channel_cfg, entry_cfg, is_usdt, split_amount
 from app.modules.promo import service as promo_svc
 from app.modules.promo.service import PromoError, PromoLine
 from app.modules.realtime.publish import publish_order
@@ -163,7 +164,7 @@ async def create_order(
     if enforce_cap:
         await enforce_payables_cap(db, settings, buyer)
     if fee_permille is None:
-        cfg = channel_cfg(await tenant_settings(db, buyer.tenant_id))
+        cfg = entry_cfg(await tenant_settings(db, buyer.tenant_id))
         if not cfg.enabled:
             raise Unavailable("Payment channel is not available")
         fee_permille = cfg.permille
@@ -393,7 +394,10 @@ async def pay_url(db: AsyncSession, res: Resources, ref: str, user: User, channe
         raise InvalidState("Order is not awaiting payment")
     if order.expires_at is not None and order.expires_at <= utcnow():
         raise InvalidState("Order has expired")
-    if not (res.settings.zpay_pid and res.settings.zpay_key):
+    usdt = is_usdt(channel)
+    if usdt and not res.bepusdt.configured:
+        raise Unavailable("Payment channel not configured")
+    if not usdt and not (res.settings.zpay_pid and res.settings.zpay_key):
         raise Unavailable("Payment channel not configured")
     permille = await check_channel(db, order.tenant_id, channel)
     if permille != order.fee_permille:
@@ -416,6 +420,13 @@ async def pay_url(db: AsyncSession, res: Resources, ref: str, user: User, channe
             detail={"fee_permille": permille},
         )
     order.channel = channel
+    if usdt:
+        no, title, minor, cur = order.order_no, order.title, order.amount_minor, order.currency
+        await db.commit()  # release the row lock before the gateway call
+        await usdt_svc.start_attempt(
+            res, no=no, title=title, amount_minor=minor, currency=cur, channel=channel
+        )
+        return f"/pay/usdt/{no}"
     url = res.zpay.build_pay_url(order.order_no, order.title, to_decimal(order.amount_minor))
     await db.commit()
     return url

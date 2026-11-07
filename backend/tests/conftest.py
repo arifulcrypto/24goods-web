@@ -47,6 +47,7 @@ SETTINGS_KEY = base64.b64encode(secrets.token_bytes(32)).decode()
 INTERNAL_TOKEN = secrets.token_urlsafe(32)
 ZPAY_PID = "1001"
 ZPAY_KEY = "test-merchant-key-0123456789"
+BEPUSDT_TOKEN = "test-bepusdt-token-0123456789"
 PASSWORD = "correct horse battery"
 OWNER_PW = "owner-test-password"
 API_PW = "api-test-password"
@@ -177,6 +178,8 @@ def make_settings(s: Services, **over):
         delivery_url="http://delivery",
         zpay_pid=ZPAY_PID,
         zpay_key=ZPAY_KEY,
+        bepusdt_url="http://bepusdt.test",
+        bepusdt_api_token=BEPUSDT_TOKEN,
         zpay_gateway="https://zpay.example/mockpay",
         zpay_api_base="http://mockpay",
         public_base_url="http://testserver",

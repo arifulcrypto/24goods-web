@@ -26,6 +26,7 @@ dependencies = [
   "httpx>=0.28.1",
   "markdown-it-py>=3.0",  # article / usage markdown (HTML disabled) ...
   "nh3>=0.3.0",  # ... then sanitized with an allowlist
+  "segno>=1.6",  # pure-Python QR (SVG) for the USDT pay page
 ]
 
 [project.optional-dependencies]
