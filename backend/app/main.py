@@ -47,6 +47,7 @@ from app.modules.payments.router import router as payments_router
 from app.modules.promo.router import admin as promo_admin_router
 from app.modules.promo.router import router as promo_router
 from app.modules.realtime.router import router as realtime_router
+from app.modules.reseller import domains
 from app.modules.reseller.router import admin as reseller_admin_router
 from app.modules.reseller.router import router as reseller_router
 from app.modules.uploads.router import router as uploads_router
@@ -82,6 +83,7 @@ async def run_jobs_once(res: Resources, *, hourly: bool) -> None:
         await _job("instant purge", jobs.purge_instant_accounts(res.maker, res.settings))
         await _job("buyer input purge", jobs.purge_buyer_input(res.maker))
         await _job("audit purge", jobs.purge_audit(res.maker))
+        await _job("reseller domains recheck", domains.recheck_active(res))
 
 
 async def _expiry_loop(res: Resources) -> None:

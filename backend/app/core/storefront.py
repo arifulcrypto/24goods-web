@@ -213,3 +213,10 @@ async def get_storefront(
         request.headers.get("x-storefront"),
         ttl=_ttl(res),
     )
+
+
+async def is_custom_host(db: AsyncSession, tenant_id: uuid.UUID, host: str | None) -> bool:
+    """True when ``host`` is an active reseller custom domain (never an admin-capable origin)."""
+    ts = dict(await db.scalar(select(Tenant.settings).where(Tenant.id == tenant_id)) or {})
+    base = str(section(ts, "resellers")["base_domain"]).lower()
+    return await _custom_domain_slug(db, tenant_id, host, base, _TTL_S) is not None

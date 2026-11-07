@@ -21,6 +21,10 @@ _ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 class CFError(Exception):
     """Cloudflare call failed. The message is safe to show (no token, no raw body)."""
 
+    def __init__(self, message: str, status: int | None = None) -> None:
+        super().__init__(message)
+        self.status = status  # HTTP status when Cloudflare answered, else None
+
 
 @dataclass(frozen=True)
 class CustomHostname:
@@ -96,7 +100,7 @@ class CFSaaS:
             errs = data.get("errors") if isinstance(data, dict) else None
             if errs and isinstance(errs[0], dict):
                 msg = str(errs[0].get("message", ""))[:200]
-            raise CFError(f"Cloudflare error {r.status_code}: {msg}".strip())
+            raise CFError(f"Cloudflare error {r.status_code}: {msg}".strip(), r.status_code)
         res = data.get("result")
         return res if isinstance(res, dict) else {}
 

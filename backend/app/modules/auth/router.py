@@ -6,11 +6,20 @@ from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import client_ip, current_user, get_db, get_lang, get_res, get_tenant_id
+from app.core.deps import (
+    client_ip,
+    current_user,
+    forbid_custom_host,
+    get_db,
+    get_lang,
+    get_res,
+    get_tenant_id,
+)
 from app.core.errors import ApiError
 from app.core.features import require_feature
 from app.core.ratelimit import enforce
 from app.core.resources import Resources
+from app.core.security import STAFF_ROLES
 from app.core.settings_v5 import section
 from app.core.turnstile import require_turnstile
 from app.models import User
@@ -111,6 +120,8 @@ async def login(
         request, await tenant_settings(db, tenant_id), "login", body.turnstile_token
     )
     user = await service.login(db, res.redis, res.settings, tenant_id, body, client_ip(request))
+    if user.role in STAFF_ROLES:
+        await forbid_custom_host(request, db, tenant_id)
     return await _start_session(request, res, user)
 
 

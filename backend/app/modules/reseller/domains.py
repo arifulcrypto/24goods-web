@@ -17,11 +17,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core import secretbox, storefront
 from app.core.audit import audit
 from app.core.cf_saas import CFError, CFSaaS
+from app.core.db import tenant_session
 from app.core.errors import ApiError, Conflict, NotFound, Validation
 from app.core.resources import Resources
 from app.core.settings_v5 import section
 from app.internal import normalize_hostname
-from app.models import Reseller, ResellerDomain, User
+from app.models import CustomDomain, Reseller, ResellerDomain, Tenant, User
 from app.modules.content.site import tenant_settings
 
 
@@ -116,6 +117,8 @@ async def add(
     from urllib.parse import urlsplit
 
     host = check_hostname(raw, rcfg, urlsplit(res.settings.public_base_url).hostname or "")
+    # serialize per reseller: count-then-insert cannot exceed max_domains under concurrency
+    await db.scalar(select(Reseller.id).where(Reseller.id == r.id).with_for_update())
     n = await db.scalar(
         select(func.count())
         .select_from(ResellerDomain)
@@ -123,27 +126,36 @@ async def add(
     )
     if int(n or 0) >= int(rcfg["max_domains"]):
         raise Conflict("Domain limit reached", code="domain_limit")
-    if await db.scalar(select(ResellerDomain.id).where(ResellerDomain.hostname == host)):
-        raise Conflict("This domain is already in use", code="domain_taken")
-    try:
-        ch = await cf.create(host)
-    except CFError as exc:
-        raise CloudflareFailed(str(exc)) from None
-    d = ResellerDomain(
-        tenant_id=tid,
-        reseller_id=r.id,
-        hostname=host,
-        cf_id=ch.cf_id,
-        status=ch.app_status,
-        ssl_status=ch.ssl_status,
-        verification=ch.verification,
-    )
+    # hostname already used as a platform custom domain by ANY tenant (unpinned read, as tenancy)
+    async with tenant_session(res.maker, None) as other:
+        if await other.scalar(select(CustomDomain.id).where(CustomDomain.hostname == host)):
+            raise Conflict("This domain is already in use", code="domain_taken")
+    # Reserve the hostname first: UNIQUE(hostname) spans tenants and is enforced without RLS,
+    # so a hostname owned by any tenant is refused BEFORE Cloudflare is called.
+    d = ResellerDomain(tenant_id=tid, reseller_id=r.id, hostname=host, status="pending")
     db.add(d)
     try:
         await db.flush()
     except IntegrityError:
         await db.rollback()
         raise Conflict("This domain is already in use", code="domain_taken") from None
+    try:
+        ch = await cf.create(host)
+    except CFError as exc:
+        await db.rollback()
+        raise CloudflareFailed(str(exc)) from None
+    d.cf_id, d.status, d.ssl_status, d.verification = (
+        ch.cf_id,
+        ch.app_status,
+        ch.ssl_status,
+        ch.verification,
+    )
+    try:
+        await db.flush()
+    except Exception:
+        await db.rollback()
+        await _cf_cleanup(cf, ch.cf_id)
+        raise
     await audit(
         db,
         tenant_id=tid,
@@ -154,9 +166,21 @@ async def add(
         after={"hostname": host, "cf_id": ch.cf_id, "status": d.status},
         ip=ip,
     )
-    await db.commit()
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        await _cf_cleanup(cf, ch.cf_id)
+        raise
     storefront.invalidate()
     return d
+
+
+async def _cf_cleanup(cf: CFSaaS, cf_id: str) -> None:
+    try:
+        await cf.delete(cf_id)
+    except CFError:
+        pass  # best effort; the orphan is visible in the Cloudflare dashboard
 
 
 async def refresh(
@@ -167,14 +191,17 @@ async def refresh(
     cf = await client_for(db, res, user.tenant_id, rcfg)
     if not d.cf_id:
         raise Conflict("Domain has no provider id", code="domain_no_cf_id")
+    before = {"status": d.status, "ssl_status": d.ssl_status}
     try:
         ch = await cf.get(d.cf_id)
     except CFError as exc:
-        raise CloudflareFailed(str(exc)) from None
-    before = {"status": d.status, "ssl_status": d.ssl_status}
-    d.status, d.ssl_status, d.verification = ch.app_status, ch.ssl_status, ch.verification
-    if d.status == "active" and d.verified_at is None:
-        d.verified_at = datetime.now(timezone.utc)
+        if exc.status != 404:
+            raise CloudflareFailed(str(exc)) from None
+        d.status, d.ssl_status = "failed", "deleted"  # gone at Cloudflare: stop serving it
+    else:
+        d.status, d.ssl_status, d.verification = ch.app_status, ch.ssl_status, ch.verification
+        if d.status == "active" and d.verified_at is None:
+            d.verified_at = datetime.now(timezone.utc)
     await audit(
         db,
         tenant_id=user.tenant_id,
@@ -207,7 +234,8 @@ async def remove(
             cf = await client_for(db, res, user.tenant_id, rcfg)
             await cf.delete(d.cf_id)
         except (CFError, Unavailable) as exc:
-            if not force and not (isinstance(exc, CFError) and "404" in str(exc)):
+            gone = isinstance(exc, CFError) and exc.status == 404
+            if not force and not gone:
                 raise CloudflareFailed(str(exc)) from None
     await db.execute(
         delete(ResellerDomain).where(
@@ -251,3 +279,55 @@ async def admin_get(db: AsyncSession, staff: User, did: uuid.UUID) -> ResellerDo
     if d is None:
         raise NotFound("Domain not found")
     return d
+
+
+async def recheck_active(res: Resources) -> int:
+    """Hourly job: demote active domains that Cloudflare no longer reports as active (or 404).
+    Transient errors leave the row alone. Returns the number of demoted rows."""
+    async with tenant_session(res.maker, None) as s:
+        tenant_ids = list((await s.scalars(select(Tenant.id))).all())
+    demoted = 0
+    for tid in tenant_ids:
+        async with tenant_session(res.maker, tid) as db:
+            rows = (
+                await db.scalars(
+                    select(ResellerDomain)
+                    .where(ResellerDomain.tenant_id == tid, ResellerDomain.status == "active")
+                    .limit(200)
+                )
+            ).all()
+            if not rows:
+                continue
+            rcfg = section(await tenant_settings(db, tid), "resellers")
+            try:
+                cf = await client_for(db, res, tid, rcfg)
+            except Unavailable:
+                continue
+            for d in rows:
+                if not d.cf_id:
+                    continue
+                try:
+                    ch = await cf.get(d.cf_id)
+                    new, ssl = ch.app_status, ch.ssl_status
+                except CFError as exc:
+                    if exc.status != 404:
+                        continue
+                    new, ssl = "failed", "deleted"
+                if new == "active":
+                    continue
+                before = {"status": d.status, "ssl_status": d.ssl_status}
+                d.status, d.ssl_status = "failed" if new != "pending" else "pending", ssl
+                await audit(
+                    db,
+                    tenant_id=tid,
+                    action="reseller.domain_demoted",
+                    target=f"reseller_domain:{d.id}",
+                    before=before,
+                    after={"status": d.status, "ssl_status": ssl},
+                    severity="warning",
+                )
+                demoted += 1
+            await db.commit()
+    if demoted:
+        storefront.invalidate()
+    return demoted

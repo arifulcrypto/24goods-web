@@ -327,6 +327,7 @@ async def admin_remove_domain(
     db: AsyncSession = Depends(get_db),
     res: Resources = Depends(get_res),
 ) -> Response:
+    await enforce(res.redis, "admin:domain_del", str(staff.id), 30, 3600)
     d = await domains.admin_get(db, staff, did)
     await domains.remove(db, res, staff, d, client_ip(request), force=True)
     return Response(status_code=204)
