@@ -61,6 +61,13 @@ export const API_ERROR_CODES = [
   // v5.2
   'account_suspended',
   'ip_blocked',
+  'custom_domains_unavailable',
+  'domain_limit',
+  'domain_taken',
+  'bad_hostname',
+  'hostname_reserved',
+  'domain_provider_error',
+  'domain_no_cf_id',
 ] as const
 export const CLIENT_ERROR_CODES = ['network', 'server_error', 'timeout', 'unknown'] as const
 export type ContractErrorCode = (typeof API_ERROR_CODES)[number]

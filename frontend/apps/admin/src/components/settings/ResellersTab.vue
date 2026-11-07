@@ -6,6 +6,8 @@ import type { AdminSiteV5 } from '../../api-v5'
 import { minorToYuan, permilleToPct, pctToPermille, yuanToMinor } from '../../lib/money'
 import { useSave } from '../../composables/useSave'
 import MarkupInput from '../MarkupInput.vue'
+import SecretInput from '../SecretInput.vue'
+import { secretChange, secretFromServer, type SecretField } from '../../lib/secret'
 
 const props = defineProps<{ site: AdminSiteV5 }>()
 const emit = defineEmits<{ saved: [s: AdminSiteV5] }>()
@@ -15,7 +17,9 @@ const errors = ref<Record<string, string>>({})
 const f = reactive({
   base_domain: 'kesiv.com', link_mode: 'query' as 'query' | 'subdomain', fee: '99.00', kind: 'percent' as 'percent' | 'fixed', value: 100, max_pct: 200,
   max_fixed: '10000.00', min_payout: '10.00', settle: 72, reserved: [] as string[],
+  cd_enabled: false, zone: '', origin: 'stores.kesiv.com', max_domains: 1,
 })
+const cfToken = ref<SecretField>(secretFromServer())
 watch(
   () => props.site.resellers,
   (r) => {
@@ -30,6 +34,11 @@ watch(
     f.min_payout = minorToYuan(r.min_payout_minor)
     f.settle = r.settle_after_hours
     f.reserved = [...r.reserved_slugs]
+    f.cd_enabled = r.custom_domains_enabled
+    f.zone = r.cf_zone_id
+    f.origin = r.fallback_origin
+    f.max_domains = r.max_domains
+    cfToken.value = secretFromServer(props.site.secrets?.cloudflare_saas_token)
   },
   { immediate: true },
 )
@@ -44,8 +53,10 @@ async function save() {
   if (mp === null) e.mp = t('v5.amountInvalid')
   errors.value = e
   if (Object.keys(e).length) return
-  const r = await run(() =>
-    apiV5.site.put({
+  const r = await run(async () => {
+    const ch = secretChange(cfToken.value)
+    if (ch) await apiV5.site.setSecret('cloudflare_saas_token', ch.value)
+    return apiV5.site.put({
       resellers: {
         base_domain: f.base_domain.trim().toLowerCase(),
         link_mode: f.link_mode,
@@ -57,9 +68,13 @@ async function save() {
         min_payout_minor: mp!,
         settle_after_hours: f.settle,
         reserved_slugs: f.reserved.map((s) => s.trim().toLowerCase()).filter(Boolean),
+        custom_domains_enabled: f.cd_enabled,
+        cf_zone_id: f.zone.trim(),
+        fallback_origin: f.origin.trim().toLowerCase(),
+        max_domains: f.max_domains,
       },
-    }),
-  )
+    })
+  })
   if (r) emit('saved', r)
 }
 </script>
@@ -95,6 +110,15 @@ async function save() {
       <el-form-item :label="t('v5.resellers.reserved')">
         <el-select v-model="f.reserved" multiple filterable allow-create default-first-option style="width: 100%" />
       </el-form-item>
+    </section>
+    <section class="panel block">
+      <h2 class="h2">{{ t('v5.resellers.cdTitle') }}</h2>
+      <p class="muted small">{{ t('v5.resellers.cdNote') }}</p>
+      <el-form-item :label="t('v5.resellers.cdEnabled')"><el-switch v-model="f.cd_enabled" /></el-form-item>
+      <el-form-item :label="t('v5.resellers.cdZone')"><el-input v-model="f.zone" maxlength="64" spellcheck="false" /></el-form-item>
+      <el-form-item :label="t('v5.resellers.cdOrigin')"><el-input v-model="f.origin" maxlength="253" spellcheck="false" /></el-form-item>
+      <el-form-item :label="t('v5.resellers.cdMax')"><el-input-number v-model="f.max_domains" :min="0" :max="10" /></el-form-item>
+      <SecretInput v-model="cfToken" :label="t('v5.resellers.cdToken')" />
     </section>
     <el-button type="primary" native-type="submit" :loading="saving">{{ t('common.save') }}</el-button>
   </el-form>

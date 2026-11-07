@@ -5,7 +5,8 @@ import { useI18n } from 'vue-i18n'
 import { amountToMinor, fromMinor, goBack, percentToPermille, permilleToPercent, safeAssetUrl, type MarkupKind } from '@24goods/shared'
 import { api } from '../../api'
 import { useResellerStore } from '../../stores/reseller'
-import { showSuccessToast, toastError } from '../../ui'
+import { showConfirmDialog, showSuccessToast, toastError } from '../../ui'
+import type { ResellerDomains } from '@24goods/shared'
 
 const { t } = useI18n()
 const router = useRouter()
@@ -20,11 +21,64 @@ const val = ref('')
 const payName = ref('')
 const payAccount = ref('')
 const busy = ref(false)
+const dom = ref<ResellerDomains | null>(null)
+const newHost = ref('')
+const domBusy = ref(false)
+async function loadDomains() {
+  try {
+    dom.value = await api.reseller.domains()
+  } catch {
+    dom.value = null // feature hidden when unavailable
+  }
+}
+async function addDomain() {
+  if (domBusy.value || !newHost.value.trim()) return
+  domBusy.value = true
+  try {
+    await api.reseller.addDomain(newHost.value.trim())
+    newHost.value = ''
+    await loadDomains()
+  } catch (e) {
+    toastError(e)
+  } finally {
+    domBusy.value = false
+  }
+}
+async function checkDomain(id: string) {
+  if (domBusy.value) return
+  domBusy.value = true
+  try {
+    await api.reseller.refreshDomain(id)
+    await loadDomains()
+  } catch (e) {
+    toastError(e)
+  } finally {
+    domBusy.value = false
+  }
+}
+async function removeDomain(id: string) {
+  if (domBusy.value) return
+  try {
+    await showConfirmDialog({ message: t('reseller.domainConfirm') })
+  } catch {
+    return // cancelled
+  }
+  domBusy.value = true
+  try {
+    await api.reseller.removeDomain(id)
+    await loadDomains()
+  } catch (e) {
+    toastError(e)
+  } finally {
+    domBusy.value = false
+  }
+}
 const uploading = ref(false)
 const parsed = computed(() => (kind.value === 'percent' ? percentToPermille(val.value) : amountToMinor(val.value)))
 const logoSrc = computed(() => safeAssetUrl(logo.value))
 
 onMounted(async () => {
+  void loadDomains()
   try {
     const m = await store.load(true)
     if (!m) return void router.replace('/reseller/apply')
@@ -114,6 +168,35 @@ async function save() {
       <van-field v-model="payAccount" maxlength="100" :label="t('reseller.accountNo')" :placeholder="t('reseller.alipay')" />
       <div class="submit"><van-button round block type="primary" native-type="submit" :loading="busy">{{ t('common.save') }}</van-button></div>
     </van-form>
+    <div v-if="dom && dom.enabled" class="section card dom">
+      <h3 class="h">{{ t('reseller.domainCard') }}</h3>
+      <p class="hint">{{ t('reseller.domainIntro') }}</p>
+      <div v-for="d in dom.items" :key="d.id" class="dom-item">
+        <div class="dom-head">
+          <b>{{ d.hostname }}</b>
+          <van-tag :type="d.status === 'active' ? 'success' : d.status === 'failed' ? 'danger' : 'warning'">
+            {{ t(d.status === 'active' ? 'reseller.domainActive' : d.status === 'failed' ? 'reseller.domainFailed' : 'reseller.domainPending') }}
+          </van-tag>
+        </div>
+        <template v-if="d.status !== 'active'">
+          <p class="rec">{{ t('reseller.domainCname') }}: <code>{{ d.hostname }} → {{ dom.fallback_origin }}</code></p>
+          <p v-if="d.verification.ownership?.name" class="rec">
+            {{ t('reseller.domainTxt') }}: <code>{{ d.verification.ownership.name }}</code> = <code>{{ d.verification.ownership.value }}</code>
+          </p>
+          <p v-for="(r, i) in d.verification.ssl_records ?? []" :key="i" class="rec">
+            <template v-if="r.txt_name">{{ t('reseller.domainTxt') }}: <code>{{ r.txt_name }}</code> = <code>{{ r.txt_value }}</code></template>
+          </p>
+        </template>
+        <div class="dom-actions">
+          <van-button v-if="d.status !== 'active'" size="small" :loading="domBusy" @click="checkDomain(d.id)">{{ t('reseller.domainCheck') }}</van-button>
+          <van-button size="small" type="danger" plain :disabled="domBusy" @click="removeDomain(d.id)">{{ t('reseller.domainRemove') }}</van-button>
+        </div>
+      </div>
+      <van-field v-if="dom.items.length < dom.max_domains" v-model="newHost" maxlength="253" :placeholder="t('reseller.domainPh')" />
+      <div v-if="dom.items.length < dom.max_domains" class="submit">
+        <van-button round block type="primary" :loading="domBusy" @click="addDomain">{{ t('reseller.domainAdd') }}</van-button>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -132,6 +215,31 @@ async function save() {
 .logo-pick img {
   border-radius: 8px;
   object-fit: cover;
+}
+.hint {
+  margin: 4px 16px;
+  font-size: 13px;
+  color: var(--van-text-color-2);
+}
+.dom-item {
+  padding: 8px 16px;
+}
+.dom-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.rec {
+  margin: 6px 0;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.dom-actions {
+  display: flex;
+  gap: 8px;
+  min-height: 44px;
+  align-items: center;
 }
 .submit {
   padding: 16px;

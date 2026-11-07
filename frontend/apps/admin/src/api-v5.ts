@@ -97,6 +97,19 @@ export interface ResellersCfg {
   min_payout_minor: number
   settle_after_hours: number
   reserved_slugs: string[]
+  custom_domains_enabled: boolean
+  cf_zone_id: string
+  fallback_origin: string
+  max_domains: number
+}
+export interface AdminResellerDomain {
+  id: string
+  hostname: string
+  reseller_slug: string
+  status: 'pending' | 'active' | 'failed' | 'deleted'
+  ssl_status: string | null
+  created_at: string
+  verified_at: string | null
 }
 export interface NotificationsCfg {
   telegram_enabled: boolean
@@ -117,7 +130,7 @@ export interface EmailTemplate {
   body_i18n: Partial<I18nText>
 }
 export type EmailTemplates = Record<'verify_code' | 'password_reset' | 'order_paid' | 'order_delivered', EmailTemplate>
-export type SecretName = 'turnstile_secret' | 'google_client_secret' | 'smtp_password' | 'telegram_bot_token' | 'telegram_bot_token'
+export type SecretName = 'turnstile_secret' | 'google_client_secret' | 'smtp_password' | 'telegram_bot_token' | 'cloudflare_saas_token'
 export interface SecretState {
   configured: boolean
   last4?: string | null
@@ -456,6 +469,10 @@ export function createAdminV5Api(c: ApiClient) {
       get: (id: string) => c.get<RawReseller>(`/admin/resellers/${seg(id)}`).then(resellerOf),
       update: (id: string, b: { status?: ResellerStatus; markup_kind?: 'percent' | 'fixed'; markup_value?: number }) =>
         c.patch<RawReseller>(`/admin/resellers/${seg(id)}`, b).then(resellerOf),
+    },
+    resellerDomains: {
+      list: () => c.get<AdminResellerDomain[]>('/admin/reseller-domains'),
+      remove: (id: string) => c.delete<void>(`/admin/reseller-domains/${seg(id)}`),
     },
     payouts: {
       list: (q: { status?: string; page?: number; page_size?: number }) =>

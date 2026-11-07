@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { Search } from '@element-plus/icons-vue'
 import { copyText, formatDateTime } from '@24goods/shared'
 import { apiV5 } from '../api'
-import type { AdminReseller, ResellerStatus } from '../api-v5'
+import type { AdminReseller, AdminResellerDomain, ResellerStatus } from '../api-v5'
 import MarkupInput from '../components/MarkupInput.vue'
 import { usePaged } from '../composables/usePaged'
 import { minorToYuan } from '../lib/money'
@@ -20,7 +20,27 @@ watch(q, () => {
   debounce = setTimeout(() => void table.reload(), 300)
 })
 watch(status, () => void table.reload())
-onMounted(() => void table.load())
+const domains = ref<AdminResellerDomain[]>([])
+async function loadDomains() {
+  try {
+    domains.value = await apiV5.resellerDomains.list()
+  } catch (e) {
+    toastError(e)
+  }
+}
+async function removeDomain(d: AdminResellerDomain) {
+  if (!(await confirmBox(t('v5.resellers.domainRemoveConfirm', { host: d.hostname })))) return
+  try {
+    await apiV5.resellerDomains.remove(d.id)
+    await loadDomains()
+  } catch (e) {
+    toastError(e)
+  }
+}
+onMounted(() => {
+  void table.load()
+  void loadDomains()
+})
 
 const open = ref(false)
 const cur = ref<AdminReseller | null>(null)
@@ -92,6 +112,21 @@ const storeUrl = (r: AdminReseller) => r.store_url ?? ''
       <div class="pager"><el-pagination layout="total, prev, pager, next" :total="table.total.value" :page-size="table.pageSize" :current-page="table.page.value" @current-change="table.load" /></div>
     </div>
 
+    <div v-if="domains.length" class="panel">
+      <h3 class="sec pad">{{ t('v5.resellers.domains') }}</h3>
+      <el-table :data="domains" row-key="id">
+        <el-table-column :label="t('v5.resellers.domainHost')" prop="hostname" min-width="220" show-overflow-tooltip />
+        <el-table-column :label="t('v5.resellers.store')" prop="reseller_slug" width="160" />
+        <el-table-column :label="t('products.col.status')" width="130">
+          <template #default="{ row }"><el-tag size="small" :type="row.status === 'active' ? 'success' : row.status === 'failed' ? 'danger' : 'warning'">{{ t(`v5.resellers.domainStatus.${row.status}`) }}</el-tag></template>
+        </el-table-column>
+        <el-table-column :label="t('v5.resellers.domainSsl')" prop="ssl_status" width="170" />
+        <el-table-column width="110">
+          <template #default="{ row }"><el-button link type="danger" @click="removeDomain(row as AdminResellerDomain)">{{ t('v5.resellers.domainRemove') }}</el-button></template>
+        </el-table-column>
+      </el-table>
+    </div>
+
     <el-drawer v-model="open" :title="cur?.store_name ?? ''" size="min(520px, 96vw)">
       <template v-if="cur">
         <el-descriptions :column="1" border size="small">
@@ -131,6 +166,9 @@ const storeUrl = (r: AdminReseller) => r.store_url ?? ''
 <style scoped>
 .small {
   font-size: 12px;
+}
+.pad {
+  padding: 0 12px;
 }
 .sec {
   font-size: 14px;
