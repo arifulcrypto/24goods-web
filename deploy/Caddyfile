@@ -75,7 +75,7 @@
 	# SEO documents rendered by the API (review-v5.2 §6, ADR-024): crawler HTML + first paint.
 	# The SPA still boots from the same shell; the API serves it with per-route metadata. If the
 	# API cannot answer (down / 503 shell unavailable) the static shell is served instead.
-	@seo path / /p/* /a/* /help /search /sitemap.xml /robots.txt
+	@seo path / /p/* /a/* /help /search /sitemap.xml /robots.txt /ai.txt
 	handle @seo {
 		reverse_proxy api:8000 {
 			header_up X-Forwarded-For {client_ip}

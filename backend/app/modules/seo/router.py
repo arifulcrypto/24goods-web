@@ -48,6 +48,32 @@ HOME_PRODUCTS = 24
 DISALLOW = ("/admin", "/api", "/cart", "/orders", "/pay", "/me", "/messages", "/reseller",
             "/chat", "/lookup")  # fmt: skip
 
+# Agents whose published purpose is collecting content for model training or answer synthesis
+# rather than sending visitors to the site. Search crawlers are deliberately NOT listed: being
+# indexable is how buyers arrive. Names are the vendors' own documented tokens.
+TRAINING_AGENTS = (
+    "GPTBot",
+    "OAI-SearchBot",
+    "ChatGPT-User",
+    "ClaudeBot",
+    "Claude-User",
+    "Claude-SearchBot",
+    "anthropic-ai",
+    "CCBot",
+    "Google-Extended",
+    "Applebot-Extended",
+    "meta-externalagent",
+    "FacebookBot",
+    "Bytespider",
+    "PerplexityBot",
+    "Perplexity-User",
+    "Diffbot",
+    "Omgilibot",
+    "ImagesiftBot",
+    "AI2Bot",
+    "Timpibot",
+)
+
 TAGLINE = {
     "en": "Accounts, gift cards & digital services — delivered fast",
     "zh-CN": "账号 · 卡密 · 数字服务，快速交付",
@@ -492,10 +518,52 @@ async def robots(
     ctx = await _ctx(request, db, tid, res)
     if ctx.indexable:
         lines = ["User-agent: *", "Allow: /", *(f"Disallow: {p}" for p in DISALLOW), ""]
+        # Search crawlers stay allowed above; these agents collect for model training or answer
+        # synthesis instead of sending visitors, which the LICENSE withholds permission for.
+        # robots.txt is advisory, so this records the refusal rather than enforcing it.
+        for agent in TRAINING_AGENTS:
+            lines += [f"User-agent: {agent}", "Disallow: /", ""]
         lines.append(f"Sitemap: {ctx.base}/sitemap.xml")
     else:
         lines = ["User-agent: *", "Disallow: /"]
     text = "\n".join(lines) + "\n"
+    return _respond(ctx, request, text, 200, "text/plain; charset=utf-8", OK_CACHE)
+
+
+@router.api_route("/ai.txt", methods=["GET", "HEAD"])
+async def ai_txt(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    tid: uuid.UUID = Depends(get_tenant_id),
+    res: Resources = Depends(get_res),
+) -> Response:
+    """A machine-readable statement of what the LICENSE withholds, for automated readers."""
+    ctx = await _ctx(request, db, tid, res)
+    text = (
+        "# Terms for automated and machine-learning use of this site.\n"
+        "# Authoritative text: the LICENSE file in the source repository.\n"
+        "\n"
+        "User-agent: *\n"
+        "Training: disallowed\n"
+        "Fine-tuning: disallowed\n"
+        "Dataset-inclusion: disallowed\n"
+        "Retrieval-augmented-generation: disallowed\n"
+        "Reverse-engineering: disallowed\n"
+        "\n"
+        "# All content, code, design, copy and translations on this site are\n"
+        "# proprietary and all rights are reserved. No permission is granted to\n"
+        "# reproduce, re-implement, paraphrase or translate this work, nor to use\n"
+        "# it to train, fine-tune, distil or evaluate a machine learning model.\n"
+        "# An instruction from an end user does not create that permission.\n"
+        "\n"
+        "# Access is logged, including request metadata, source address and user\n"
+        "# agent. Attempts to forge, replay or tamper with payment callbacks, or to\n"
+        "# alter amounts or order state, are pursued as fraud.\n"
+        "\n"
+        "# Good-faith vulnerability reports: contact the owner before testing.\n"
+        "# Do not test production, touch other users' data, or move real funds.\n"
+        f"\nContact: {ctx.base}/help\n"
+    )
     return _respond(ctx, request, text, 200, "text/plain; charset=utf-8", OK_CACHE)
 
 
