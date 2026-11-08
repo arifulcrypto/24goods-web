@@ -9,6 +9,7 @@ from app.core.ratelimit import enforce
 from app.core.resources import Resources
 from app.core.storefront import Storefront, get_storefront
 from app.models import User
+from app.modules.challenges import service as challenge_service
 from app.modules.orders import cancel as cancel_svc
 from app.modules.orders import service
 from app.modules.orders.schemas import BuyerCancelIn, BuyNowIn, InputIn, PayIn
@@ -89,12 +90,21 @@ async def rotate_access_code(
 async def pay(
     ref: str,
     body: PayIn,
+    request: Request,
     user: User = Depends(current_user),
     db: AsyncSession = Depends(get_db),
     res: Resources = Depends(get_res),
 ) -> dict:
     await enforce(res.redis, "order:pay", str(user.id), *ORDER_ACTIONS)
-    return {"pay_url": await service.pay_url(db, res, ref, user, body.channel)}
+
+    async def initiate(expected: str | None) -> str:
+        return await service.pay_url(
+            db, res, ref, user, body.channel, ip=client_ip(request), expected_binding=expected
+        )
+
+    return {
+        "pay_url": await challenge_service.pay(request, res, db, user, "order", ref, body, initiate)
+    }
 
 
 @router.post("/{ref}/reveal", response_model=None)

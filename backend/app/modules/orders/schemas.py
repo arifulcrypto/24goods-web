@@ -6,6 +6,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.core.pow import PowIn
+
 _SOURCE = re.compile(r"^[a-z0-9_-]{1,32}$")
 
 
@@ -26,6 +28,10 @@ class BuyNowIn(BaseModel):
 
 
 class PayIn(BaseModel):
+    challenge_id: str | None = Field(None, max_length=64)
+    pow: PowIn | None = None
+    turnstile_token: str | None = Field(None, max_length=2048)
+    idempotency_key: str | None = Field(None, max_length=64)
     channel: Literal["zpay_alipay", "usdt_arbitrum", "usdt_xlayer", "usdt_trc20"]
 
 
@@ -49,7 +55,7 @@ class BuyerCancelIn(BaseModel):
 
 
 class InputIn(BaseModel):
-    buyer_input: str = Field(max_length=4000)
+    buyer_input: str | None = Field(max_length=4000)
 
 
 class CartItemIn(BaseModel):

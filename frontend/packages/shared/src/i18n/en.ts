@@ -3,6 +3,8 @@
  * vue-i18n syntax: {name} interpolation, `|` plurals; write a literal @ as {'@'}.
  */
 export default {
+  mediaPrefs: {quality:'Image quality',auto:'Auto (network)',low:'Low data',high:'High quality',compress:'Compress images before upload'},
+  chatActions: {"menu": "Message actions", "copy": "Copy text", "reply": "Quote in draft", "pin": "Pin", "unpin": "Unpin", "recall": "Recall", "recalled": "Message recalled by sender", "media": "Pinned media"},
   paste: {
     tip: 'Tip: paste a screenshot with Ctrl+V',
   },
@@ -42,7 +44,8 @@ export default {
     details: 'Details',
     offlineBanner: 'Live updates paused — refreshing every few seconds',
   },
-  errors: {
+  errors: {challenge_required:"Complete a fresh payment verification and try again.",challenge_invalid:"Verification expired or the order changed. Refresh and verify again.",payment_attempt_unknown:"Payment outcome is uncertain. Do not pay again. Check payment status or contact support.",site_visit_required:"Store access verification expired. Please verify again.",
+    buyer_input_disabled: 'This order does not accept additional information.',
     unauthorized: 'Please sign in again',
     forbidden: 'You do not have permission to do that',
     csrf: 'Security check failed, please refresh the page',
@@ -147,7 +150,7 @@ export default {
   agentStatus: {
     online: 'Online',
     away: 'Away',
-    on_hold: 'On hold',
+    on_hold: 'Busy',
     offline: 'Offline',
   },
   deliveryMode: {

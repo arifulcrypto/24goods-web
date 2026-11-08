@@ -44,6 +44,8 @@ import type {
   ProductSummary,
   QuoteCardPayload,
   QuoteInput,
+  ReplyTemplate,
+  ReplyTemplateInput,
   SendMessageBody,
   User,
   LedgerRow,
@@ -116,6 +118,10 @@ export function createBuyerApi(c: ApiClient) {
         c.post<InstantResult>('/auth/instant', b, { skipAuthHandler: true }),
     },
     /** v3: brand, announcement, defaults, fixed pages. */
+    chatActions: {
+      recall: (id: number) => c.post<Message>(`/chat/messages/${id}/recall`, {}),
+      pin: (id: number, pinned: boolean) => c.post<Message>(`/chat/messages/${id}/pin`, { pinned }),
+    },
     site: () => c.get<SiteInfo>('/site'),
     pow: {
       challenge: (scope: PowScope) => c.get<PowChallenge>('/pow/challenge', { scope }),
@@ -183,7 +189,7 @@ export function createBuyerApi(c: ApiClient) {
           qty,
           ...(promo_code ? { promo_code } : {}),
           ...(src ? { src } : {}),
-          ...(buyer_input ? { buyer_input } : {}),
+          ...(buyer_input !== undefined ? { buyer_input } : {}),
         }),
       /** v4 §3: buyer cancel (whole checkout for member orders). 409 already_paid / 503 retry. */
       cancel: (id: string, reason?: string) =>
@@ -200,6 +206,7 @@ export function createBuyerApi(c: ApiClient) {
       afterSales: (id: string, b: AfterSalesInput) => c.post<AfterSales>(`/orders/${seg(id)}/after-sales`, b),
     },
     /** v5.2 §7: data of the USDT pay page (owner only; 404 when no attempt exists). */
+    epayPay: (no: string) => c.get<import('../types').EpayPaymentView>(`/pay/epay/${seg(no)}`),
     usdtPay: (no: string) => c.get<UsdtPayView>(`/pay/usdt/${seg(no)}`),
     /** v4 §1 */
     paymentChannels: () => c.get<PaymentChannel[]>('/site/payment-channels'),
@@ -264,6 +271,7 @@ export function createAdminApi(c: ApiClient) {
   const buyer = createBuyerApi(c)
   return {
     auth: buyer.auth,
+    chatActions: buyer.chatActions,
     categories: buyer.categories,
     upload: buyer.upload,
     stats: () => c.get<AdminStats>('/admin/stats'),
@@ -322,6 +330,13 @@ export function createAdminApi(c: ApiClient) {
       setStatus: (status: AgentStatusValue, message?: string | null) =>
         c.put<AgentStatus>('/admin/agent/status', message ? { status, message } : { status }),
       list: () => c.get<AgentInfo[]>('/admin/agents'),
+    },
+    replyTemplates: {
+      list: () => c.get<ReplyTemplate[]>('/admin/reply-templates'),
+      create: (b: ReplyTemplateInput) => c.post<ReplyTemplate>('/admin/reply-templates', b),
+      update: (id: string, b: ReplyTemplateInput) =>
+        c.put<ReplyTemplate>(`/admin/reply-templates/${seg(id)}`, b),
+      remove: (id: string) => c.delete<void>(`/admin/reply-templates/${seg(id)}`),
     },
     ledger: (q: { page?: number; page_size?: number }) => c.get<Paginated<LedgerRow>>('/admin/ledger', q),
     audit: (q: { page?: number; page_size?: number }) => c.get<Paginated<AuditRow>>('/admin/audit', q),

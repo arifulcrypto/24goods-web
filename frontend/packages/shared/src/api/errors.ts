@@ -1,5 +1,6 @@
 /** Error codes from docs/api-contract.md plus client-side codes (network, server_error, unknown). */
 export const API_ERROR_CODES = [
+  'buyer_input_disabled', 'challenge_required', 'challenge_invalid', 'payment_attempt_unknown', 'site_visit_required',
   'unauthorized',
   'forbidden',
   'csrf',

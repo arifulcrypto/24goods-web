@@ -65,7 +65,14 @@ async def order_views(
     pids = {o.product_id for o in orders if o.product_id}
     products: dict[uuid.UUID, Product] = {}
     if pids:
-        products = {p.id: p for p in await db.scalars(select(Product).where(Product.id.in_(pids)))}
+        products = {
+            p.id: p
+            for p in await db.scalars(
+                select(Product).where(
+                    Product.id.in_(pids), Product.tenant_id.in_({o.tenant_id for o in orders})
+                )
+            )
+        }
     eta_default = 24
     if any(o.delivery_mode == "manual" for o in orders):
         eta_default = section(await tenant_settings(db, orders[0].tenant_id), "delivery")[

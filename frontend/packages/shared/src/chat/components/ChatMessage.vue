@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
+import { previewImageUrl } from '../../media/preferences'
+import { copyText } from '../../util'
 import { nowTick } from './tick'
 import { useI18n } from 'vue-i18n'
 import type { FilePayload, OrderCardPayload, ProductCardPayload, QuoteCardPayload, SystemPayload } from '../../types'
@@ -12,7 +14,7 @@ import OrderCardView from './OrderCardView.vue'
 import ProductCardView from './ProductCardView.vue'
 import SmartText from './SmartText.vue'
 
-const props = defineProps<{ item: ChatItem; mode: 'buyer' | 'staff'; busyQuoteId?: string | null; viewOrder?: boolean }>()
+const props = defineProps<{ item: ChatItem; mode: 'buyer' | 'staff'; busyQuoteId?: string | null; viewOrder?: boolean; selfId?: string }>()
 const emit = defineEmits<{
   preview: [url: string]
   openFile: [f: { url: string; name: string }]
@@ -23,6 +25,7 @@ const emit = defineEmits<{
   acceptQuote: [q: QuoteCardPayload]
   withdrawQuote: [q: QuoteCardPayload]
   retry: [clientMsgId: string]
+  action: [action: 'recall' | 'pin' | 'reply', id: number]
   discard: [clientMsgId: string]
 }>()
 const { t, te, locale } = useI18n()
@@ -92,6 +95,17 @@ const imgBox = computed(() => {
   return { width: `${Math.max(60, Math.round(w * r))}px`, height: `${Math.max(60, Math.round(h * r))}px` }
 })
 
+const menu = ref(false)
+let press: ReturnType<typeof setTimeout> | null = null
+function cancelPress() { if (press) clearTimeout(press); press = null }
+function openMenu() { cancelPress(); if (props.item.kind === 'server' && !redacted.value && ['text', 'image', 'voice', 'file'].includes(view.value.type)) menu.value = true }
+function startPress(e: PointerEvent) { if (e.button !== 0) return; cancelPress(); press = setTimeout(openMenu, 550) }
+function action(a: 'recall' | 'pin' | 'reply') { menu.value = false; if (props.item.kind === 'server') emit('action', a, props.item.message.id) }
+async function copy() { await copyText(view.value.text ?? ''); menu.value = false }
+const pinned = computed(() => !!(view.value.payload as {pinned?: boolean} | null)?.pinned)
+const canRecall = computed(() => props.item.kind === 'server' && props.item.message.sender.id === props.selfId && nowTick.value - Date.parse(view.value.createdAt) <= 180000)
+onBeforeUnmount(cancelPress)
+
 const systemText = computed(() => {
   const p = view.value.payload as SystemPayload | null
   const event = p?.event
@@ -122,7 +136,15 @@ const systemText = computed(() => {
 
 <template>
   <div v-if="centered" class="gc-system" role="note">{{ systemText }}</div>
-  <div v-else class="gc-row" :class="{ self, 'is-card': isCard }">
+  <div v-else class="gc-row" :class="{ self, 'is-card': isCard }" @contextmenu.prevent="openMenu" @pointerdown="startPress" @pointerup="cancelPress" @pointercancel="cancelPress" @pointermove="cancelPress" @pointerleave="cancelPress">
+    <button v-if="item.kind === 'server' && !redacted && !isCard" class="gc-action-toggle" type="button" :aria-label="t('chatActions.menu')" @click="openMenu">⋯</button>
+    <div v-if="menu" class="gc-actions" role="group" :aria-label="t('chatActions.menu')" @keydown.esc="menu = false">
+      <button v-if="view.text" type="button" @click="copy">{{ t('chatActions.copy') }}</button>
+      <button v-if="view.text" type="button" @click="action('reply')">{{ t('chatActions.reply') }}</button>
+      <button type="button" @click="action('pin')">{{ t(pinned ? 'chatActions.unpin' : 'chatActions.pin') }}</button>
+      <button v-if="canRecall" type="button" @click="action('recall')">{{ t('chatActions.recall') }}</button>
+      <button type="button" @click="menu = false">{{ t('common.cancel') }}</button>
+    </div>
     <span v-if="!self" class="gc-avatar" aria-hidden="true">{{ initial }}</span>
     <div class="gc-col">
       <span v-if="!self && mode === 'staff' && view.senderName" class="gc-name">{{ view.senderName }}</span>
@@ -140,7 +162,7 @@ const systemText = computed(() => {
           <button type="button" class="gc-discard" @click="emit('discard', view.clientMsgId!)">{{ t('chat.discard') }}</button>
         </span>
 
-        <div v-if="redacted" class="gc-bubble gc-redacted" :class="{ self }">{{ t('chat.redacted') }}</div>
+        <div v-if="redacted" class="gc-bubble gc-redacted" :class="{ self }">{{ t((view.payload as {recalled?: boolean} | null)?.recalled ? 'chatActions.recalled' : 'chat.redacted') }}</div>
 
         <div v-else-if="view.type === 'text'" class="gc-bubble" :class="{ self }">
           <SmartText :text="view.text" :view-order="viewOrder" @open-order-no="emit('openOrderNo', $event)" />
@@ -154,7 +176,7 @@ const systemText = computed(() => {
           :aria-label="t('chat.imageAlt')"
           @click="view.imageUrl && emit('preview', view.imageUrl)"
         >
-          <img v-if="view.imageUrl" :src="view.imageUrl" :alt="t('chat.imageAlt')" loading="lazy" decoding="async" />
+          <img v-if="view.imageUrl" :src="previewImageUrl(view.imageUrl) ?? undefined" :alt="t('chat.imageAlt')" loading="lazy" decoding="async" />
         </button>
 
         <VoiceBubble
@@ -200,3 +222,10 @@ const systemText = computed(() => {
     </div>
   </div>
 </template>
+
+<style scoped>
+.gc-row { position: relative }
+.gc-action-toggle { align-self: center; border: 0; background: transparent; cursor: pointer; min-width: 44px; min-height: 44px; color: inherit }
+.gc-actions { position: absolute; z-index: 5; top: 100%; inset-inline-start: 0; display: flex; flex-wrap: wrap; max-width: 100%; padding: 6px; background: var(--gc-panel, white); border: 1px solid #999; border-radius: 8px; box-shadow: 0 4px 12px #0002 }
+.gc-actions button { min-height: 44px; padding: 8px; background: transparent; border: 0; cursor: pointer; color: inherit }
+</style>

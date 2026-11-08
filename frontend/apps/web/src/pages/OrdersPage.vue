@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { canRequestAfterSales, formatDateTime, formatMoney, type AfterSales, type CheckoutView, type Order } from '@24goods/shared'
 import AfterSalesSheet from '../components/AfterSalesSheet.vue'
@@ -12,10 +12,18 @@ import { useSiteStore } from '../stores/site'
 
 const { t, locale } = useI18n()
 const router = useRouter()
+const route = useRoute()
 const site = useSiteStore()
 type Tab = 'all' | 'unpaid' | 'toDeliver' | 'delivered' | 'afterSales'
 const TABS: Tab[] = ['all', 'unpaid', 'toDeliver', 'delivered', 'afterSales']
-const tab = ref<Tab>('all')
+const askedTab = (v: unknown): Tab => (TABS.includes(String(v ?? '') as Tab) ? (String(v) as Tab) : 'all')
+const tab = ref<Tab>(askedTab(route.query.tab))
+// Orders is reached from My Account's shortcut row, so a second deep link must still switch tabs.
+watch(() => route.query.tab, (v) => (tab.value = askedTab(v)))
+/** Orders is a sub-page of My Account: replace, so Back does not bounce between the two. */
+function backToAccount() {
+  void router.replace('/me')
+}
 const matchTab = (o: Order, k: Tab): boolean => {
   switch (k) {
     case 'unpaid':
@@ -126,7 +134,9 @@ const tone = (s: Order['status']) =>
 
 <template>
   <div class="page with-tabbar">
-    <van-nav-bar :title="t('orders.title')" class="dock-top" fixed placeholder safe-area-inset-top :right-text="site.features.lookup ? t('lookup.title') : ''" @click-right="site.features.lookup && router.push('/lookup')" />
+    <van-nav-bar :title="t('orders.title')" class="dock-top" fixed placeholder safe-area-inset-top left-arrow :right-text="site.features.lookup ? t('lookup.title') : ''" @click-left="backToAccount" @click-right="site.features.lookup && router.push('/lookup')">
+      <template #left><van-icon name="arrow-left" size="18" :aria-label="t('tabs.me')" /></template>
+    </van-nav-bar>
     <van-tabs v-model:active="tab" class="otabs" sticky :offset-top="46" shrink>
       <van-tab v-for="k in TABS" :key="k" :name="k" :title="t(`ordersTab.${k}`)" />
     </van-tabs>

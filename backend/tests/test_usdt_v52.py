@@ -142,11 +142,13 @@ async def test_bad_signature_rejected(env, mock):
     body = await mock.body(trade_id)
     body["signature"] = "0" * 32
     r = await _post(env, body)
-    assert r.text == "fail" and await _status(buyer, order) == "pending_payment"
+    assert r.status_code == 403 and r.text == "fail"
+    assert await _status(buyer, order) == "pending_payment"
     body = await mock.body(trade_id)
     body["amount"] = "0.01"  # tampered after signing
     r = await _post(env, body)
-    assert r.text == "fail" and await _status(buyer, order) == "pending_payment"
+    assert r.status_code == 403 and r.text == "fail"
+    assert await _status(buyer, order) == "pending_payment"
     body.pop("signature")
     assert (await _post(env, body)).text == "fail"
     assert await env.scalar("SELECT count(*) FROM payments") == 0
@@ -195,10 +197,15 @@ async def test_requery_transport_failure_is_retryable(env, mock):
     good = env.res.bepusdt._http
     env.res.bepusdt._http = httpx.AsyncClient(transport=httpx.MockTransport(boom))
     r = await _post(env, body)
-    assert r.text == "fail" and await _status(buyer, order) == "pending_payment"
+    assert r.status_code == 503 and r.text == "fail"
+    assert await _status(buyer, order) == "pending_payment"
     env.res.bepusdt._http = good  # the gateway retries -> now processed (no stale replay lock)
-    assert (await _post(env, body)).text == "ok"
+    retried = await _post(env, body)
+    assert retried.status_code == 200 and retried.text == "ok"
     assert await _status(buyer, order) == "paid"
+    assert (await _post(env, body)).status_code == 200
+    assert await env.scalar("SELECT count(*) FROM payments") == 1
+    assert await env.scalar("SELECT count(*) FROM outbox") == 1
 
 
 @pytest.mark.parametrize("status", [1, 3])
@@ -311,3 +318,49 @@ def test_signature_scheme_and_float_decimals():
     parsed = bepusdt.parse_json(b'{"amount": 100.00, "status": 2}')
     assert str(parsed["amount"]) == "100.00" and parsed["status"] == 2
     assert bepusdt.amount_literal(bepusdt.decimal_of("28.80")) == "28.8"
+
+
+async def test_durable_attempt_recovers_after_redis_loss(env, mock):
+    buyer, order, page, trade_id = await _paid_order(env, mock)
+    await env.s.redis.delete(f"usdt:attempt:{order['order_no']}")
+    view = await buyer.get(f"/api/v1/pay/usdt/{order['order_no']}")
+    assert view.status_code == 200 and view.json()["address"] == page["address"]
+    await mock.patch_trade(trade_id, status=2)
+    r = await buyer.post(f"/api/v1/orders/{order['id']}/cancel", json={})
+    assert r.status_code == 409 and r.json()["error"]["code"] == "already_paid", r.text
+    assert await _status(buyer, order) == "paid"
+
+
+async def test_unknown_usdt_create_is_durable_and_never_blindly_retried(env, mock, monkeypatch):
+    async def unknown(**kw):
+        raise bepusdt.BepusdtError("uncertain fixture")
+
+    monkeypatch.setattr(env.res.bepusdt, "create_transaction", unknown)
+    buyer, order, response = await _order(env)
+    assert response.status_code == 503
+    assert await env.scalar("SELECT count(*) FROM payment_attempts WHERE status='unknown'") == 1
+    response = await buyer.post(f"/api/v1/orders/{order['id']}/pay", json={"channel": "usdt_trc20"})
+    assert response.status_code == 503
+    assert await env.scalar("SELECT count(*) FROM payment_attempts") == 1
+    assert (await buyer.post(f"/api/v1/orders/{order['id']}/cancel", json={})).status_code == 503
+
+
+async def test_original_usdt_credential_and_receiver_binding(env, mock):
+    from dataclasses import replace
+
+    buyer, order, _page, trade_id = await _paid_order(env, mock)
+    await mock.patch_trade(trade_id, status=2)
+    # Rotation does not reinterpret existing attempts under the new environment key.
+    env.res.bepusdt.config = replace(env.res.bepusdt.config, token="new-test-token-only")
+    result = await _post(env, await mock.body(trade_id))
+    assert result.status_code == 200, result.text
+    assert await _status(buyer, order) == "paid"
+
+
+async def test_changed_upstream_receiver_is_held_for_manual_review(env, mock):
+    buyer, order, _page, trade_id = await _paid_order(env, mock)
+    await mock.patch_trade(trade_id, status=2, address="TChangedReceiverFixtureOnly000000")
+    result = await _post(env, await mock.body(trade_id))
+    assert result.status_code == 200, result.text
+    assert await _status(buyer, order) == "manual_review"
+    assert await env.scalar("SELECT count(*) FROM outbox WHERE topic='order.paid'") == 0

@@ -1,11 +1,16 @@
 import v5 from './v5.en'
 /** Admin console EN messages (source). zh-CN.ts must have every key (test/i18n.test.ts). */
 export default {
+  challengeSettings: {"title": "Optional access and payment checks", "note": "Self-hosted proof of work protects selected initiation actions; it is not volumetric DDoS protection. Optional Turnstile can be added below. Callback verification and payment status recovery never require a challenge. Choose Low for older mobile devices; verify usability before enabling.", "payment": "Verify before initiating payment", "visit": "Verify storefront visits", "difficulty": "Self-hosted proof-of-work preset", "low": "Low", "standard": "Standard", "high": "High"},
+  ops: {yes:"Yes",no:"No",states:{"ready": "Ready", "unknown": "Unknown", "unavailable": "Unavailable", "success": "Success", "denied": "Denied", "failed": "Failed", "pending": "Pending activation", "active": "Active", "cancelled": "Cancelled", "reported": "Reported", "restricted": "Restricted"},uncertain: 'Uncertain payment attempts',"title": "Operations", "refresh": "Refresh", "scope": "Read-only API/container telemetry. Host-wide visibility and recovery evidence are unknown unless separately collected. Samples refresh every 60 seconds while visible.", "stale": "Telemetry is missing or stale.", "unknown": "Unknown", "memory": "Container memory", "process": "API RSS", "disk": "Upload filesystem free space", "inodes": "Free inodes", "dependencies": "Dependencies", "load": "Host-visible load", "queue": "Queues and payments", "pending": "Pending outbox", "failed": "Failed outbox", "paymentReview": "Payments requiring review", "recovery": "Recovery evidence", "lastBackup": "Last complete backup", "offsite": "Offsite receipt verified", "lastRestore": "Last isolated restore test", "maintenance": "Maintenance review", "maintenanceNote": "Review key ownership, expiry and rotation regularly. Track OS/container/runtime advisories against the actual installed versions. A green health check is not a security audit.", "reviewKeys": "Review payment credentials", "events": "Operational events", "family": "Event family", "operation": "Operation", "login": "Login", "security": "Security", "system": "System", "task": "Task", "payment": "Payment", "date": "Date (UTC)", "action": "Action", "status": "Status", "reason": "Reason", "resource": "Resource", "actor": "Actor", "agent": "Browser / user agent", "hints": "IP and browser headers are untrusted hints. Unknown location is not inferred from the IP. Do not classify ordinary crawlers or shared addresses as confirmed attackers."},
+  services: {"title": "Service renewals", "note": "Staff-managed entitlements and reminders. No recurring debit. Use a separate server-priced order for each renewal; extend only after verified payment and explicit staff service confirmation.", "add": "Track a service", "filter": "Due filter", "upcoming": "Due within 7 days", "overdue": "Overdue", "mine": "Assigned to me", "label": "Service label", "owner": "Staff owner ID", "end": "Expiry (UTC)", "timezone": "Business timezone (IANA)", "activate": "Confirm activation now", "manage": "Manage", "buyer": "Buyer ID", "order": "Original verified paid order ID", "policy": "Period policy", "month": "Calendar month", "days": "Fixed days", "email": "Email assigned staff", "telegram": "Telegram staff reminders", "activationNote": "The period starts only when staff confirms actual service activation. Payment or order creation does not start it automatically.", "reason": "Audit reason (no customer secrets)", "endIso": "Adjusted expiry (ISO 8601 with timezone)", "cancel": "Cancel entitlement", "renewalNote": "Create and collect a separate renewal order first. Confirm service completion before linking its verified payment. Duplicate linking never extends twice.", "renewalOrder": "Verified paid renewal order ID", "renew": "Confirm service and extend once"},
+  gateways: {created:'Configured at',review:'Some provider credentials are over 90 days old. Review ownership, permissions, settlement and rotation; retain old keys while attempts drain.',"title": "EPay Alipay providers", "note": "Encrypted, write-only credentials. Accept an HTTPS base URL or a full submit.php endpoint. Only the approved Alipay method is enabled. Configuration is not proof of upstream ownership or settlement.", "privacy": "QR links and payment receipts can reveal the upstream/payee. Local QR does not provide anonymity.", "label": "Provider label", "url": "Gateway URL", "pid": "Merchant ID (PID)", "status": "Status", "active": "Active for new attempts", "retained": "Retained / draining", "actions": "Actions", "activate": "Activate", "add": "Add provider version", "key": "Merchant MD5 secret (write-only)", "mode": "Presentation", "qr": "Local QR (mapi.php)", "redirect": "Redirect (submit.php)", "password": "Your current admin password", "rotation": "Rotation creates a new version. Existing attempts continue using their original provider and key; retain the settings encryption key for recovery.", "confirmNote": "Independently confirm the canonical gateway, merchant account ownership, Alipay permissions and settlement destination in the provider console. No live charge is performed here.", "ownership": "I verified merchant ownership, payment permission and the receiving account."},
   app: {
     title: 'Kesiv Console',
     short: 'Console',
   },
   lang: {
+    auto: 'Auto (browser)',
     en: 'English',
     zh: '中文',
   },
@@ -241,6 +246,36 @@ export default {
     copy: 'Copy',
     reasonRequired: 'Please enter a reason',
     textRequired: 'Please enter the delivery content',
+  },
+  replies: {
+    button: 'Quick replies',
+    title: 'Quick replies',
+    hint: 'Click a reply to put it in the box. Starters are built in; your own are saved to your account.',
+    starters: 'Starters',
+    shared: 'Shared with the team',
+    mine: 'My replies',
+    add: 'New reply',
+    edit: 'Edit reply',
+    name: 'Short name',
+    namePlaceholder: 'e.g. Delivery time',
+    body: 'Reply text',
+    bodyPlaceholder: 'What you want to send…',
+    shareWithTeam: 'Share with the whole team',
+    shareHint: 'Administrators only. A shared reply is visible to every staff member.',
+    saved: 'Reply saved',
+    deleted: 'Reply deleted',
+    deleteConfirm: 'Delete this quick reply?',
+    none: 'No saved replies yet.',
+    limit: 'Reply limit reached. Delete one first.',
+    starterList: [
+      { title: 'Greeting', body: 'Hello! Thanks for reaching out. How can I help you today?' },
+      { title: 'Checking', body: 'Let me check that for you — one moment please.' },
+      { title: 'Delivery time', body: 'Your order is being processed and will be delivered shortly. Thank you for waiting.' },
+      { title: 'Payment received', body: 'We have received your payment. Your order is being prepared now.' },
+      { title: 'Order information', body: 'Could you please confirm the account details for this order? Never share your password with anyone.' },
+      { title: 'After-sales', body: 'Sorry about the trouble. Please send a screenshot of the problem and we will sort it out.' },
+      { title: 'Closing', body: 'Glad I could help. If anything else comes up, just message us here. Have a great day!' },
+    ],
   },
   inbox: {
     product_btn: 'Product',

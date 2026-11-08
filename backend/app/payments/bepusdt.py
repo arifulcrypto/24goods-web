@@ -25,6 +25,7 @@ from typing import Any
 import httpx
 
 from app.modules.payments.channels import USDT_CHANNELS
+from app.payments.bounded import bounded_decimal, bounded_integer, reject_constant, response_bytes
 
 log = logging.getLogger("app.payments.bepusdt")
 
@@ -47,6 +48,7 @@ def _scalar(v: Any, normalize: bool) -> str | None:
     if isinstance(v, bool):
         return "true" if v else "false"
     if isinstance(v, Decimal):
+        bounded_decimal(v)
         return format(v.normalize(), "f") if normalize else str(v)
     if isinstance(v, (str, int)):
         return str(v)
@@ -77,8 +79,13 @@ def verify_signature(params: Mapping[str, Any], token: str) -> bool:
     if not token or not isinstance(given, str) or not given:
         return False
     given = given.lower()
-    ok_raw = hmac.compare_digest(given, sign(params, token))
-    ok_norm = hmac.compare_digest(given, sign(params, token, normalize=True))
+    if len(given) != 32 or any(c not in "0123456789abcdef" for c in given):
+        return False
+    try:
+        ok_raw = hmac.compare_digest(given, sign(params, token))
+        ok_norm = hmac.compare_digest(given, sign(params, token, normalize=True))
+    except ValueError:
+        return False
     return ok_raw or ok_norm
 
 
@@ -86,7 +93,12 @@ def parse_json(raw: bytes) -> dict[str, Any]:
     """JSON object with floats as ``Decimal`` (never ``float``). Raises ValueError."""
     if len(raw) > MAX_BODY:
         raise ValueError("body too large")
-    data = json.loads(raw, parse_float=Decimal)
+    data = json.loads(
+        raw,
+        parse_float=bounded_decimal,
+        parse_int=bounded_integer,
+        parse_constant=reject_constant,
+    )
     if not isinstance(data, dict):
         raise ValueError("not an object")
     return data
@@ -96,8 +108,8 @@ def decimal_of(v: Any) -> Decimal | None:
     if isinstance(v, bool) or v in (None, ""):
         return None
     try:
-        d = Decimal(str(v))
-    except InvalidOperation:
+        d = bounded_decimal(str(v))
+    except (InvalidOperation, ValueError):
         return None
     return d if d.is_finite() else None
 
@@ -153,17 +165,18 @@ class BepusdtClient:
 
     async def _post(self, path: str, body: str) -> dict[str, Any]:
         try:
-            resp = await asyncio.wait_for(
-                self._http.post(
+
+            async def fetch() -> dict[str, Any]:
+                async with self._http.stream(
+                    "POST",
                     self.config.base_url.rstrip("/") + path,
                     content=body.encode(),
-                    headers={"Content-Type": "application/json"},
+                    headers={"Content-Type": "application/json", "Accept-Encoding": "identity"},
                     timeout=httpx.Timeout(TIMEOUT_S, connect=1.5),
-                ),
-                timeout=TIMEOUT_S + 1,
-            )
-            resp.raise_for_status()
-            data = parse_json(resp.content)
+                ) as response:
+                    return parse_json(await response_bytes(response, MAX_BODY))
+
+            data = await asyncio.wait_for(fetch(), timeout=TIMEOUT_S + 1)
         except (httpx.HTTPError, ValueError, asyncio.TimeoutError) as exc:
             name = type(exc).__name__
             log.warning("bepusdt call failed path=%s error=%s", path, name)

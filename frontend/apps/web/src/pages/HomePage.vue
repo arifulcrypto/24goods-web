@@ -10,6 +10,7 @@ import BuySheet from '../components/BuySheet.vue'
 import MiniStrip from '../components/MiniStrip.vue'
 import ProductList from '../components/ProductList.vue'
 import SupportPill from '../components/SupportPill.vue'
+import { openSupport as support } from '../lib/support'
 import { useProductFeed } from '../composables/useProductFeed'
 import { useSiteStore } from '../stores/site'
 
@@ -103,7 +104,7 @@ function buy(p: ProductSummary) {
   buySheet.value = true
 }
 function openSupport() {
-  void router.push('/chat')
+  void support(router)
 }
 </script>
 

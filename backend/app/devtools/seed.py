@@ -475,7 +475,7 @@ async def run(settings: Settings, database_url: str) -> None:
             )
             buyer = await _user(db, tid, "buyer@demo.local", "buyer", "Demo Buyer", "en", buyer_pw)
             if await db.get(AgentStatus, agent.id) is None:
-                await set_agent_status(db, agent, "online", "Usually replies in 5 minutes")
+                await set_agent_status(db, agent, "on_hold", "Usually replies in 5 minutes")
             await _content(db, tid, admin)
             products = await _products(db, tid, admin, store)
             await backfill_description_html(db)

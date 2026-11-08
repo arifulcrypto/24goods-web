@@ -289,3 +289,20 @@ Rollback: `git revert` → CI → new `:main`; or pin `API_IMAGE`/`WEB_IMAGE` to
 - **Context:** Existing business stats/audit and container log rotation are useful but do not prove host health, completed recoverable backups or recurring-service expiry management. Current backup script lacks encryption/whole-set completion and BEpusdt state coverage.
 - **Proposed decision:** Extend admin with a small role-restricted overview plus structured login/system/task/payment events, key/software maintenance metadata and bounded alerts. Collect host metrics without Docker/LXD sockets or delivery secrets. Back up complete versioned encrypted sets off-host, with isolated restore/reconciliation proof and explicit RPO/RTO. Model service entitlements and staff-only expiry reminders separately from unpaid-order expiry, and use existing notification/outbox infrastructure with idempotency.
 - **Consequences:** No full hosting panel, root terminal or automatic recurring debit is introduced. Geography/UA are untrusted hints; optional static decoys provide detection only. Backup keys have separate recovery controls and restored systems start with outgoing notifications/delivery fenced. Planned runtime privileges, dependencies and schedules need an implementation review. Detailed design: [v6 §§4–10](review-v6-payments-ops.md).
+
+
+### ADR-025: Versioned payment instances and durable private attempts
+
+Context: one process-wide EPay key and Redis-only USDT display state cannot safely represent rotation, uncertain creation or independent upstream retries.
+
+Decision: keep the existing internal `zpay_alipay` channel for stored-data compatibility while separating immutable tenant provider versions and encrypted keys from the payment method. Reserve attempts durably before I/O; bind old callbacks/queries to their original configuration. Generate local QR SVG from validated typed payloads, expose only owner-authorized views, and settle through the existing locked ledger/outbox path. USDT attempts retain encrypted original gateway credentials, exact address and crypto amount; a changed receiver is a review hold.
+
+Consequences: EPay-compatible Alipay is configurable; native RSA/Lantu/official Alipay interfaces need distinct documented adapters and approval. Database/settings-key recovery is required when old versions drain. Local QR reduces redirects but does not hide the storefront/upstream from QR contents, wallets, receipts or payment infrastructure. Valid signatures and same-provider queries cannot independently establish honest settlement.
+
+### ADR-026: Small operational surface and manual service periods
+
+Context: staff needs resource/log/recovery visibility and monthly top-up reminders without giving the API a root hosting panel or recurring debit authority.
+
+Decision: expose bounded read-only process/cgroup/filesystem and tenant summaries to platform administrators, sanitized events, and optional allowlisted recovery marker metadata. No daemon socket/root mount/terminal is introduced. Track tenant service periods from explicit activation; verified payment plus staff completion extends a separate renewal once. Use durable versioned reminder schedules and bounded external retries with stable IDs.
+
+Consequences: missing host/restore evidence stays unknown. SMTP/TG has uncertain-send duplication risk; scheduling uniqueness is not exactly-once external delivery. Backups fence writers, encrypt whole sets with age and independently protect vault recovery keys; they cause a maintenance interruption and do not implement PITR. Real restore drills, off-host alerts and production policy remain operational release gates.

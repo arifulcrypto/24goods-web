@@ -136,7 +136,10 @@ async def _public_v5(
         and configured["turnstile_secret"]["configured"]
     )
     by_slug = {slug: title for slug, title in pages}
+    from app.modules.challenges.service import policy
+
     return {
+        "security_challenges": policy(ts),
         "features": section(ts, "features"),
         "general": {
             "site_name": pick(gen["site_name_i18n"], lang) if gen["site_name_i18n"] else "",
@@ -183,9 +186,31 @@ async def admin_site(
     v5: dict[str, Any] = {name: section(ts, name) for name in V5_SECTIONS}
     v5["email_templates"] = email_templates.normalize(ts)
     zpay_pid = settings.zpay_pid if settings is not None else ""
+    sec = v5["security"]
+    health_reason = "disabled"
+    if sec["turnstile_enabled"]:
+        from app.core.turnstile import TEST_SECRET_PREFIXES
+
+        health_reason = "missing_site_key" if not sec["turnstile_site_key"] else "missing_secret"
+        if settings is not None and sec["turnstile_site_key"]:
+            try:
+                secret = await secretbox.get_secret(db, settings, tenant_id, "turnstile_secret")
+            except ValueError:
+                secret = None  # a missing process key is unhealthy, never permission to skip
+            if secret:
+                health_reason = (
+                    "production_test_key"
+                    if settings.env == "prod" and secret.startswith(TEST_SECRET_PREFIXES)
+                    else "ready"
+                )
     return {
         **{k: v for k, v in v5.items() if k != "defaults"},
         "secrets": await secretbox.status(db, tenant_id),
+        "turnstile_health": {
+            "enabled": sec["turnstile_enabled"],
+            "ready": health_reason == "ready",
+            "reason": health_reason,
+        },
         "zpay": {"configured": bool(zpay_pid), "pid_last4": zpay_pid[-4:] if zpay_pid else None},
         "bepusdt": {"configured": settings.bepusdt_enabled if settings is not None else False},
         "announcement": _announcement_admin(ts.get("announcement")),
@@ -293,6 +318,25 @@ async def update_site(
         new[name] = new_sec
         if new_sec != old_sec:
             v5_changed[name] = {"before": old_sec, "after": new_sec}
+    if body.security is not None and section(new, "security")["turnstile_enabled"]:
+        from app.core.turnstile import TEST_SECRET_PREFIXES
+
+        sec = section(new, "security")
+        secret = (
+            await secretbox.get_secret(db, settings, admin.tenant_id, "turnstile_secret")
+            if settings is not None
+            else None
+        )
+        if (
+            not sec["turnstile_site_key"]
+            or not secret
+            or (
+                settings is not None
+                and settings.env == "prod"
+                and secret.startswith(TEST_SECRET_PREFIXES)
+            )
+        ):
+            raise Validation("Configure a valid Turnstile site key and secret before enabling")
     if body.email_templates is not None:
         old_t = email_templates.normalize(cur)
         new["email_templates"] = email_templates.stored_after_patch(

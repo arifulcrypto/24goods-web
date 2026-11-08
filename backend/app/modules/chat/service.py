@@ -278,6 +278,11 @@ async def send_user_message(
     product_id: uuid.UUID | None = None,
 ) -> tuple[Message, bool]:
     payload: dict[str, Any] | None = None
+    await db.scalar(
+        select(Conversation)
+        .where(Conversation.id == conv.id, Conversation.tenant_id == sender.tenant_id)
+        .with_for_update()
+    )
     existing = await db.scalar(
         select(Message).where(
             Message.sender_id == sender.id, Message.client_msg_id == client_msg_id
@@ -310,8 +315,18 @@ async def send_user_message(
     else:
         if attachment_id is None:
             raise Validation("attachment_id is required")
-        att = await db.get(Attachment, attachment_id)
-        if att is None or att.owner_id != sender.id or att.kind != type or att.purpose != "chat":
+        att = await db.scalar(
+            select(Attachment)
+            .where(Attachment.id == attachment_id, Attachment.tenant_id == sender.tenant_id)
+            .with_for_update()
+        )
+        if (
+            att is None
+            or att.deleted_at is not None
+            or att.owner_id != sender.id
+            or att.kind != type
+            or att.purpose != "chat"
+        ):
             raise NotFound("Attachment not found")
         text = None
         if type == "file":

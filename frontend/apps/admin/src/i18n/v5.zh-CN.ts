@@ -106,7 +106,7 @@ export default {
     siteKeyRequired: "启用时必须填写站点密钥",
     secretRequired: "启用时必须配置私钥",
     actions: "受保护的操作",
-    action: {
+    action: {payment_initiation:"发起支付",site_visit:"访问主站",
       login: "登录",
       register: "注册",
       instant_account: "游客账号",

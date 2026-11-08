@@ -8,7 +8,7 @@ from fastapi import UploadFile
 from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import UploadRejected
+from app.core.errors import Unavailable, UploadRejected
 from app.core.security import STAFF_ROLES
 from app.models import Attachment, Conversation, Message, Order, User
 from app.modules.uploads.processing import (
@@ -35,8 +35,12 @@ async def read_limited(file: UploadFile, limit: int) -> bytes:
 
 
 async def image_from_upload(file: UploadFile) -> Processed:
-    data = await read_limited(file, MAX_IMAGE_BYTES)
+    # The locked check and uncontended acquisition have no suspension point between
+    # them on this event loop. Refuse excess work instead of queuing buffered images.
+    if _image_slot.locked():
+        raise Unavailable("Image processing is busy", headers={"Retry-After": "2"})
     async with _image_slot:
+        data = await read_limited(file, MAX_IMAGE_BYTES)
         return await anyio.to_thread.run_sync(process_image, data)
 
 
@@ -120,12 +124,17 @@ async def text_preview(store: FileStore, att: Attachment) -> str:
 
 
 async def can_read(db: AsyncSession, att: Attachment, user: User) -> bool:
+    if att.tenant_id != user.tenant_id:
+        return False
     if att.is_public or att.owner_id == user.id or user.role in STAFF_ROLES:
         return True
     in_conversation = await db.scalar(
         select(
             exists().where(
                 Message.attachment_id == att.id,
+                Message.tenant_id == user.tenant_id,
+                Conversation.tenant_id == user.tenant_id,
+                Message.payload["recalled"].as_boolean().is_not(True),
                 Message.conversation_id == Conversation.id,
                 Conversation.buyer_id == user.id,
             )
@@ -135,7 +144,11 @@ async def can_read(db: AsyncSession, att: Attachment, user: User) -> bool:
         return True
     in_order = await db.scalar(
         select(
-            exists().where(Order.manual_delivery_attachment_id == att.id, Order.buyer_id == user.id)
+            exists().where(
+                Order.tenant_id == user.tenant_id,
+                Order.manual_delivery_attachment_id == att.id,
+                Order.buyer_id == user.id,
+            )
         )
     )
     return bool(in_order)

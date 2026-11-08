@@ -12,13 +12,16 @@ const emit = defineEmits<{ saved: [s: AdminSiteV5] }>()
 const { t } = useI18n()
 const { saving, run } = useSave()
 const errors = ref<Record<string, string>>({})
-const f = reactive({ ts_on: false, site_key: '', actions: [] as string[], verify: false, g_id: '', ips: '' })
+const f = reactive({ ts_on: false, site_key: '', actions: [] as string[], verify: false, g_id: '', ips: '', pay_gate:false, visit_gate:false, challenge_preset:'standard' as 'low'|'standard'|'high' })
 const tsSecret = ref<SecretField>(secretFromServer())
 const gSecret = ref<SecretField>(secretFromServer())
 watch(
   () => props.site,
   (s) => {
     const x = s.security
+    f.pay_gate = x?.payment_challenge_enabled ?? false
+    f.visit_gate = x?.site_visit_enabled ?? false
+    f.challenge_preset = x?.challenge_preset ?? 'standard'
     f.ts_on = x?.turnstile_enabled ?? false
     f.site_key = x?.turnstile_site_key ?? ''
     f.actions = [...(x?.turnstile_actions ?? [])]
@@ -40,12 +43,16 @@ async function save() {
   errors.value = e
   if (Object.keys(e).length) return
   const r = await run(async () => {
+    if (!f.ts_on && props.site.security?.turnstile_enabled) await apiV5.site.put({ security: { turnstile_enabled: false } })
     for (const [name, field] of [['turnstile_secret', tsSecret.value], ['google_client_secret', gSecret.value]] as const) {
       const ch = secretChange(field)
       if (ch) await apiV5.site.setSecret(name, ch.value)
     }
     return apiV5.site.put({
       security: {
+        payment_challenge_enabled:f.pay_gate,
+        site_visit_enabled:f.visit_gate,
+        challenge_preset:f.challenge_preset,
         turnstile_enabled: f.ts_on,
         turnstile_site_key: f.site_key.trim(),
         turnstile_actions: f.actions,
@@ -61,6 +68,12 @@ async function save() {
 
 <template>
   <el-form label-position="top" class="wrap" @submit.prevent="save">
+    <section class="panel block">
+      <h2>{{t('challengeSettings.title')}}</h2><p>{{t('challengeSettings.note')}}</p>
+      <el-form-item :label="t('challengeSettings.payment')"><el-switch v-model="f.pay_gate"/></el-form-item>
+      <el-form-item :label="t('challengeSettings.visit')"><el-switch v-model="f.visit_gate"/></el-form-item>
+      <el-form-item :label="t('challengeSettings.difficulty')"><el-select v-model="f.challenge_preset"><el-option v-for="p in ['low','standard','high']" :key="p" :value="p" :label="t(`challengeSettings.${p}`)"/></el-select></el-form-item>
+    </section>
     <section class="panel block">
       <h2 class="h2">{{ t('v5.security.turnstile') }}</h2>
       <p class="muted small">{{ t('v5.security.turnstileNote') }}</p>

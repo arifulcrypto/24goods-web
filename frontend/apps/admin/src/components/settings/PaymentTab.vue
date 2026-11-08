@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import GatewaySettings from './GatewaySettings.vue'
 import { computed, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { apiV5 } from '../../api'
@@ -68,6 +69,7 @@ async function save() {
 </script>
 
 <template>
+  <GatewaySettings />
   <el-form label-position="top" class="wrap" @submit.prevent="save">
     <section class="panel block">
       <h2 class="h2">{{ t('site.channels') }}</h2>

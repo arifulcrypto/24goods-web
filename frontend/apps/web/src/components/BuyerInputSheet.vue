@@ -73,6 +73,7 @@ function confirm() {
         {{ t('binput.confirm') }}
       </van-button>
     </div>
+    <div v-else class="bi" role="status"><p>{{t('binput.unavailable')}}</p><van-button block @click="emit('update:show',false)">{{t('common.close')}}</van-button></div>
   </van-popup>
 </template>
 

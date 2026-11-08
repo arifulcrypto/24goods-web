@@ -4,13 +4,17 @@ import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useConversationsStore } from '../stores/conversations'
+import { useAuthStore } from '../stores/auth'
+import { openSupport } from '../lib/support'
 
 const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
 const convs = useConversationsStore()
+const auth = useAuthStore()
 
 const visible = computed(() => !route.meta.nobubble)
+const staff = computed(() => auth.isStaff)
 const unread = computed(() => (convs.totalUnread > 99 ? '99+' : convs.totalUnread || ''))
 /** Pages with their own fixed bottom bar push the bubble up. */
 const lift = computed(() => {
@@ -24,16 +28,15 @@ const lift = computed(() => {
 function open() {
   const n = String(route.name ?? '')
   const id = typeof route.params.id === 'string' ? route.params.id : ''
-  if ((n === 'product' || n === 'buy') && id) void router.push({ path: '/chat', query: { product: id } })
-  else void router.push('/chat')
+  void openSupport(router, (n === 'product' || n === 'buy') && id ? id : undefined)
 }
 </script>
 
 <template>
   <div v-if="visible" class="cs-wrap dock" :class="`lift-${lift}`">
-    <button type="button" class="cs-bubble" :aria-label="t('cs.bubble')" @click="open">
-      <van-icon name="service-o" size="24" aria-hidden="true" />
-      <span v-if="unread" class="cs-badge">{{ unread }}</span>
+    <button type="button" class="cs-bubble" :class="{ staff }" :aria-label="staff ? t('cs.staffBubble') : t('cs.bubble')" @click="open">
+      <van-icon :name="staff ? 'manager-o' : 'service-o'" size="24" aria-hidden="true" />
+      <span v-if="unread && !staff" class="cs-badge">{{ unread }}</span>
     </button>
   </div>
 </template>
@@ -60,6 +63,11 @@ function open() {
   place-items: center;
   cursor: pointer;
   pointer-events: auto;
+}
+.cs-bubble.staff {
+  background: var(--c-surface);
+  color: var(--c-text-2);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
 }
 .lift-tab .cs-bubble {
   bottom: calc(var(--tabbar-h) + var(--safe-bottom) + 16px);

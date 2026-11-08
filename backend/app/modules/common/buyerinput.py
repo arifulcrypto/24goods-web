@@ -84,10 +84,3 @@ def admin_config(cfg: dict[str, Any] | None) -> dict[str, Any] | None:
         "prompt_i18n": full("prompt_i18n"),
         "placeholder_i18n": full("placeholder_i18n"),
     }
-
-
-def chat_text(order_no: str, title: str, value: str) -> str:
-    """The buyer-authored chat message posted after payment (messages.text <= 2000)."""
-    head = f"📝 Order {order_no} · {title}"[:200]
-    body = f"{head}\n{value}"
-    return body if len(body) <= 2000 else body[:1999] + "…"

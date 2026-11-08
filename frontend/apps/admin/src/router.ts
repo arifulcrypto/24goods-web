@@ -21,6 +21,8 @@ const routes: RouteRecordRaw[] = [
     component: () => import('./layouts/AdminLayout.vue'),
     meta: { roles: STAFF },
     children: [
+      { path: 'operations', name: 'operations', component: () => import('./pages/OperationsPage.vue'), meta: {roles: ADMIN, titleKey: 'ops.title'} },
+      { path: 'services/:id?', name: 'services', component: () => import('./pages/ServicesPage.vue'), meta: {roles: STAFF, titleKey: 'services.title'} },
       { path: '', name: 'dashboard', component: () => import('./pages/DashboardPage.vue'), meta: { roles: STAFF, titleKey: 'nav.dashboard' } },
       { path: 'inbox', name: 'inbox', component: () => import('./pages/InboxPage.vue'), meta: { roles: STAFF, titleKey: 'nav.inbox' } },
       { path: 'orders', name: 'orders', component: () => import('./pages/OrdersPage.vue'), meta: { roles: STAFF, titleKey: 'nav.orders' } },

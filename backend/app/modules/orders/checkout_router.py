@@ -20,6 +20,7 @@ from app.core.ratelimit import enforce
 from app.core.resources import Resources
 from app.core.storefront import Storefront, get_storefront
 from app.models import User
+from app.modules.challenges import service as challenge_service
 from app.modules.orders import cancel as cancel_svc
 from app.modules.orders import checkout as svc
 from app.modules.orders.schemas import BuyerCancelIn, CartQuoteIn, CheckoutIn, PayIn
@@ -105,12 +106,29 @@ async def get_checkout(
 async def pay(
     checkout_no: str,
     body: PayIn,
+    request: Request,
     user: User = Depends(current_user),
     db: AsyncSession = Depends(get_db),
     res: Resources = Depends(get_res),
 ) -> dict:
     await enforce(res.redis, "order:pay", str(user.id), *ACTIONS)
-    return {"pay_url": await svc.pay_checkout(db, res, checkout_no, user, body.channel)}
+
+    async def initiate(expected: str | None) -> str:
+        return await svc.pay_checkout(
+            db,
+            res,
+            checkout_no,
+            user,
+            body.channel,
+            ip=client_ip(request),
+            expected_binding=expected,
+        )
+
+    return {
+        "pay_url": await challenge_service.pay(
+            request, res, db, user, "checkout", checkout_no, body, initiate
+        )
+    }
 
 
 @router.post("/checkouts/{checkout_no}/cancel")

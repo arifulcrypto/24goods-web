@@ -4,7 +4,49 @@ Update this file in every PR. Phases are defined in [review-v2.md §8](review-v2
 
 ## Current state — hand-off (read this first in a new session)
 
-_Last updated 2026-11-08 UTC (v5.1 + v5.2 implementation; security/operations research added)._
+**v6 blockers closed + owner UX round (2026-11-08 UTC).** Read [HANDOFF-v6.md](HANDOFF-v6.md) for the
+implementation inventory. Since that checkpoint, on `feat/issues-25-30-hardening`:
+
+- Both Medium re-review blockers are fixed with regressions that fail without the fix:
+  USDT-only cancellation no longer falls through to an unconfigured legacy EPay gateway (the legacy
+  key, not the current channel, gates the drain, so an old EPay URL stays drainable after a switch);
+  and a durably committed settlement now travels with unresolved evidence
+  (`UnresolvedEvidence.settled`) so its broadcast and duplicate-payment alert still fire while
+  cancellation keeps failing closed. Admin Operations shows translated event families.
+- Owner UX round: four-tab storefront (Home / Messages / Cart / My Account) with Orders moved under
+  My Account plus `?tab=` deep links; presence defaults to busy for support and offline for admin
+  (never online); CS quick replies (built-in bilingual starters + tenant-scoped, RLS-enforced
+  `cs_reply_templates`, personal vs admin-only shared); staff browsing the shop are told which
+  account is in the way and sent to the console inbox instead of buyer chat (`/chat` is buyer-only).
+
+Read-only security-reviewer and payment-auditor passes were run on those commits; both found the
+first cut of the cancel fix **fail-open** (it cancelled over an unverifiable legacy pay URL) and
+both findings are fixed, with regressions that fail against the fail-open version:
+
+- `cancel.py` now gates on the payable's own channel: with no usable legacy key an EPay payable
+  raises 503 (fail closed) and only a USDT payable cancels. While the key is present the legacy
+  query still runs for USDT, so an EPay URL issued before a switch stays drainable.
+- `reconcile.py` now carries committed outcomes out of **every** post-commit failure (`_carrying`),
+  not only the unresolved/unavailable flags, and no longer re-queries an already-settled original
+  (which replayed the duplicate-payment audit trail and re-broadcast on every tick).
+- `cancel_group`'s emit is best-effort so a failed broadcast cannot turn the 503 into a 500; a
+  teammate's private reply template answers 404 rather than confirming its id.
+
+**Known residual gaps (not introduced here, deliberately not fixed in this PR):**
+
+1. A legacy environment-key pay URL leaves **no durable record**, so "was a legacy URL ever
+   issued?" is inferred from the channel. If a tenant de-configures EPay entirely (env key cleared
+   *and* no `epay_provider_id`), `gateway_ready` is false and cancel proceeds unqueried. The proper
+   fix both reviewers recommend is a durable "legacy URL issued" marker written on the legacy pay
+   path, then gating on that marker instead of the channel.
+2. `asyncio.TimeoutError` in `reconcile.run()` still loses a committed outcome's broadcast/alert,
+   because `wait_for` cancels the coroutine before it can hand the outcome back.
+
+**Not established:** full CI green on the final head, and a re-run of the reviews after these
+fixes. No production deploy, key rotation or real payment. The independent pentest before real
+money (M1 gate) still stands.
+
+_Last updated 2026-11-08 UTC (deployed-state notes below have not been reverified)._
 
 - **Prod** https://shop.kesiv.com (c4, IIJ Japan) runs **v4**; deployed by the owner from another session
   (`scripts/prod.sh`). This box = dev + demo. Prod needs `APP_SETTINGS_KEY` and the new env vars
@@ -40,7 +82,7 @@ _Last updated 2026-11-08 UTC (v5.1 + v5.2 implementation; security/operations re
   payment attempts. This review does not satisfy the independent pentest gate; no business code changed.
 - **Working rules:** AGENTS.md §7 (2 GB box: full suite in CI only, ≤ 2 agents, dev stack down when idle).
 
-### Follow-up requirements — documented, not implemented (2026-11-08 UTC)
+### Original follow-up requirements (see implementation status below; 2026-11-08 UTC)
 
 Tracking: [#27 payments](https://github.com/arifulcrypto/24goods-web/issues/27),
 [#28 operations/recovery](https://github.com/arifulcrypto/24goods-web/issues/28),
@@ -66,6 +108,36 @@ Tracking: [#27 payments](https://github.com/arifulcrypto/24goods-web/issues/27),
   notification overclaim. Implementation and independent security review remain pending.
 
 ## Current phase: **MVP-0: local demo with mock data** (finishing) → next: **M1 production MVP**
+
+### Active owner-authorized implementation: issues #25–#30
+
+- Feature branch `feat/issues-25-30-hardening`; PR must remain unmerged and no production deploy.
+- #30: owner-supplied Xiaodou v1.0.0 reference package reviewed/imported under
+  `docs/vendor/xiaodou`; English index and integrity manifest; live merchant credentials excluded.
+  Supplied credentials select the MD5 EPay compatibility contract, not the separate native RSA API.
+- Core fixes implemented with targeted regressions: BEpusdt retry HTTP statuses, buyer-input chat
+  references/legacy redaction, bounded SSE revocation/subscriptions, atomic OTP consumption, challenge
+  fail-closed/action/host checks, optional input editing and upload admission. Order-field encryption
+  remains separately tracked by #8; current input configuration is explicit, not snapshotted.
+- EPay implementation: immutable encrypted gateway versions, fresh administrator authentication,
+  explicit merchant-ownership acknowledgement, durable reservations, original-provider notify/query
+  routing, bounded DNS-pinned HTTPS, typed local QR and reconciliation. Alipay is the enabled-method
+  scope supplied by the owner; native RSA and unapproved payment methods are not inferred available.
+- USDT: durable encrypted original-provider binding and address/amount/trade history, PostgreSQL
+  recovery after Redis loss, fail-closed unknown creation/cancellation, receiver mismatch holds.
+- Buyer/staff UX: backend-owned input capabilities, no synthetic input fallback, browser Auto locale,
+  bounded sender-only 180-second recall, shared pins/copy/quoted draft, private low-data thumbnails,
+  default upload compression and local quality preferences.
+- Operations/services: platform-admin overview and sanitized events; staff service activation,
+  versioned periods and verified once-only renewal, durable opt-in staff SMTP/TG reminders. No debit.
+- Recovery: encrypted complete-set maintenance backup, separate vault recovery recipient, writer
+  fencing, lock, manifest, atomic completion and verified offsite receipt; simulated failure tests.
+  See [operations-v6.md](operations-v6.md). Operator tools include age (new operational dependency).
+- Entry/payment gates are integrated. First security/payment/mobile review found concrete blockers;
+  follow-up patches and regressions are recorded in [review record](reviews/v6-implementation.md).
+  Final-revision CI and re-review are pending.
+  No deployment, live provider credential use, real payment or production backup/restore was performed.
+  See [implementation matrix](implementation-v6.md) for concrete completion evidence and limits.
 
 ## Done
 

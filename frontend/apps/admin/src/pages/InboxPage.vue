@@ -45,6 +45,16 @@ const me = computed(() => auth.user?.id ?? '')
 const wideSide = computed(() => width.value >= 1280)
 const narrow = computed(() => width.value < 820)
 
+const composer = ref<InstanceType<typeof StaffComposer> | null>(null)
+async function messageAction(action: 'recall' | 'pin' | 'reply', id: number) {
+  const m = chat.messages.value.find(m => m.id === id)
+  if (!m) return
+  if (action === 'reply') { composer.value?.quote(m.text ?? ''); return }
+  try {
+    const updated = action === 'recall' ? await api.chatActions.recall(id) : await api.chatActions.pin(id, !(m.payload as {pinned?: boolean} | null)?.pinned)
+    chat.apply([updated])
+  } catch (e) { ElMessage.error(t('errors.invalid_state')) }
+}
 const chat = useConversation({
   selfRole: 'agent',
   adapter: {
@@ -329,6 +339,8 @@ function openProduct(id: string) {
           <RouterLink v-if="afterSalesCard" :to="{ path: '/after-sales', query: { open: payloadOf(afterSalesCard).after_sales_id } }">{{ t('inbox.openAfterSales') }}</RouterLink>
         </div>
         <ChatMessageList
+      :self-id="auth.user?.id"
+      @action="messageAction"
           ref="msgList"
           :items="chat.items.value"
           mode="staff"
@@ -345,6 +357,7 @@ function openProduct(id: string) {
         />
         <div v-if="active?.status === 'closed'" class="closed muted">{{ t('inbox.closedNotice') }}</div>
         <StaffComposer
+      ref="composer"
           v-else
           :disabled="!chat.conversationId.value"
           @send-text="(v) => (chat.sendText(v), sent())"

@@ -176,14 +176,24 @@ async def close(db: AsyncSession, conv: Conversation, staff: User, ip: str | Non
     return [msg] if msg else []
 
 
-def agent_status_view(row: AgentStatus | None) -> dict[str, Any]:
+def default_agent_status(role: str) -> str:
+    """Presence before anyone sets it: support reads as busy rather than idle-and-waiting, an
+    admin simply as offline. Neither role is ever presented as online by default."""
+    return "on_hold" if role == "agent" else "offline"
+
+
+def agent_status_view(row: AgentStatus | None, role: str = "admin") -> dict[str, Any]:
     if row is None:
-        return {"status": "offline", "message": None, "updated_at": iso(datetime.now(timezone.utc))}
+        return {
+            "status": default_agent_status(role),
+            "message": None,
+            "updated_at": iso(datetime.now(timezone.utc)),
+        }
     return {"status": row.status, "message": row.message, "updated_at": iso(row.updated_at)}
 
 
 async def get_agent_status(db: AsyncSession, staff: User) -> dict[str, Any]:
-    return agent_status_view(await db.get(AgentStatus, staff.id))
+    return agent_status_view(await db.get(AgentStatus, staff.id), staff.role)
 
 
 async def set_agent_status(
@@ -200,7 +210,7 @@ async def set_agent_status(
     )
     await db.commit()
     row = await db.get(AgentStatus, staff.id, populate_existing=True)
-    return agent_status_view(row)
+    return agent_status_view(row, staff.role)
 
 
 async def agents(db: AsyncSession) -> list[dict[str, Any]]:
@@ -213,7 +223,12 @@ async def agents(db: AsyncSession) -> list[dict[str, Any]]:
         )
     ).all()
     return [
-        {"id": str(u.id), "display_name": u.display_name, "status": s or "offline"} for u, s in rows
+        {
+            "id": str(u.id),
+            "display_name": u.display_name,
+            "status": s or default_agent_status(u.role),
+        }
+        for u, s in rows
     ]
 
 

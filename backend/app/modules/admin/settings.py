@@ -7,6 +7,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field, field_validator
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import email_templates, mailer, notify_tg, secretbox
@@ -15,7 +16,9 @@ from app.core.deps import client_ip, get_db, get_res, require_admin
 from app.core.errors import Validation
 from app.core.ratelimit import enforce
 from app.core.resources import Resources
-from app.models import User
+from app.core.settings_v5 import section
+from app.core.turnstile import TEST_SECRET_PREFIXES
+from app.models import Tenant, User
 from app.modules.content.site import tenant_settings
 
 router = APIRouter(prefix="/admin/site", tags=["admin"])
@@ -70,6 +73,16 @@ async def put_secret(
     """Write-only: the response carries ``configured`` + ``last4`` per secret, never a value.
     The audit row names the secret, never its content."""
     await enforce(res.redis, "settings:secret", str(admin.id), 20, 3600)
+    if body.name == "turnstile_secret":
+        # Serialize with update_site's tenant lock: clearing a disabled configuration
+        # must not race enabling it after that operation has validated the secret.
+        await db.scalar(select(Tenant.id).where(Tenant.id == admin.tenant_id).with_for_update())
+        if body.value is not None:
+            body.value = body.value.strip()
+            if res.settings.env == "prod" and body.value.startswith(TEST_SECRET_PREFIXES):
+                raise Validation("Turnstile test secrets are not allowed in production")
+        elif section(await tenant_settings(db, admin.tenant_id), "security")["turnstile_enabled"]:
+            raise Validation("Disable Turnstile before clearing its secret")
     await secretbox.set_secret(db, res.settings, admin.tenant_id, body.name, body.value, admin.id)
     await audit(
         db,

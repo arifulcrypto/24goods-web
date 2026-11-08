@@ -9,13 +9,13 @@ query failure -> 503 so the caller retries.
 
 from __future__ import annotations
 
+import logging
 import uuid
 from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core import notify_tg
 from app.core.audit import audit
 from app.core.errors import AlreadyPaid, InvalidState, NotFound, Unavailable
 from app.core.resources import Resources
@@ -36,6 +36,8 @@ from app.modules.promo import service as promo_svc
 from app.payments import bepusdt
 from app.payments.bepusdt import BepusdtError
 from app.payments.zpay import ZPayQueryError
+
+log = logging.getLogger(__name__)
 
 
 async def _load_group(
@@ -82,10 +84,43 @@ async def _settle_if_paid(
 ) -> NotifyOutcome | None:
     """Re-query the gateway (no row locks held). If it says paid, settle and return the
     outcome; if it says unpaid / not found, ``None``; if the query fails or is malformed, 503."""
-    if is_usdt(channel):
-        return await _settle_usdt_if_paid(
+    from sqlalchemy import exists
+
+    from app.models import PaymentAttempt
+    from app.modules.payments.reconcile import requery_all
+
+    tid = db.info["tenant_id"]
+    managed = await db.scalar(
+        select(
+            exists().where(
+                PaymentAttempt.tenant_id == tid, PaymentAttempt.local_ref == out_trade_no
+            )
+        )
+    )
+    if managed:
+        outcome = await requery_all(db, res, tid, out_trade_no)
+        if outcome is not None:
+            return outcome
+    if not managed and is_usdt(channel):
+        outcome = await _settle_usdt_if_paid(
             db, res, checkout_id, order_id, out_trade_no, amount_minor, channel or ""
         )
+        if outcome is not None:
+            return outcome
+    from app.modules.payments.gateways import legacy_allowed
+
+    # A legacy environment-key pay URL leaves no durable record, so the payable's own channel is
+    # the only evidence of whether one can exist: USDT is served by BEpusdt, never by submit.php.
+    # With no usable key such a URL cannot be verified, so an EPay payable fails closed instead of
+    # cancelling over money that may already have arrived; a USDT-only payable cancels normally.
+    # While the key is present the legacy query still runs for USDT too, so an EPay URL issued
+    # before a switch to USDT stays drainable.
+    if not (res.settings.zpay_pid and res.settings.zpay_key):
+        if not is_usdt(channel):
+            raise Unavailable("Could not verify the payment status; please try again")
+        return None
+    if not await legacy_allowed(db, tid, out_trade_no):
+        return None
     try:
         q = await res.zpay.query_order(out_trade_no)
     except ZPayQueryError:
@@ -121,11 +156,26 @@ async def _settle_usdt_if_paid(
 ) -> NotifyOutcome | None:
     """Same as the ZPay path for a USDT order: re-query the stored trade_id (BEpusdt cannot be
     queried by our order number)."""
-    att = await usdt_svc.load_attempt(res, no)
+    att = await usdt_svc.load_attempt(res, no, db=db, tid=db.info["tenant_id"])
     if not att or att.get("channel") != channel or not att.get("trade_id"):
-        return None  # no transaction was ever opened: nothing can have been paid
+        raise Unavailable(
+            "USDT recovery state is missing; reconcile with the gateway before cancellation"
+        )
     try:
-        info = await res.bepusdt.query_info(str(att["trade_id"]))
+        from app.models import PaymentAttempt
+
+        stored = await db.scalar(
+            select(PaymentAttempt)
+            .where(
+                PaymentAttempt.tenant_id == db.info["tenant_id"],
+                PaymentAttempt.local_ref == no,
+                PaymentAttempt.provider_id.is_(None),
+                PaymentAttempt.data["trade_id"].as_string() == str(att["trade_id"]),
+            )
+            .limit(1)
+        )
+        client = usdt_svc.original_client(res, stored) if stored else res.bepusdt
+        info = await client.query_info(str(att["trade_id"]))
     except BepusdtError:
         raise Unavailable("Could not verify the payment status; please try again") from None
     if not info.found or info.status != bepusdt.STATUS_PAID:
@@ -136,6 +186,8 @@ async def _settle_usdt_if_paid(
         or info.trade_id != att["trade_id"]
         or info.money != expected
         or info.fiat != bepusdt.FIAT
+        or (att.get("address") and att["address"] != info.address)
+        or (att.get("actual_amount") and Decimal(att["actual_amount"]) != info.actual_amount)
         or bepusdt.TRADE_TYPE_TO_CHANNEL.get(info.trade_type) != channel
     ):
         raise Unavailable("Could not verify the payment status; please try again")
@@ -177,10 +229,16 @@ async def cancel_group(
     # Query the gateway whenever it is configured (not only when a pay URL is known to have
     # been issued): "not found / unpaid" means proceed, a paid answer settles instead.
     group_channel = co.channel if co is not None else orders[0].channel
-    gateway_ready = (
-        res.bepusdt.configured
-        if is_usdt(group_channel)
-        else bool(res.settings.zpay_pid and res.settings.zpay_key)
+    from sqlalchemy import exists
+
+    from app.models import PaymentAttempt
+
+    no = co.checkout_no if co is not None else orders[0].order_no
+    has_history = await db.scalar(
+        select(exists().where(PaymentAttempt.tenant_id == tid, PaymentAttempt.local_ref == no))
+    )
+    gateway_ready = has_history or (
+        res.bepusdt.configured if is_usdt(group_channel) else await _epay_configured(db, res, tid)
     )
     if gateway_ready:
         no = co.checkout_no if co is not None else orders[0].order_no
@@ -188,18 +246,24 @@ async def cancel_group(
         oid, cid = order_id, checkout_id
         co_id = co.id if co is not None else None
         single_id = orders[0].id if co is None else None
+        from app.modules.payments.reconcile import UnresolvedEvidence, emit_outcome
+
         await db.rollback()  # never hold row locks across the network call
-        outcome = await _settle_if_paid(db, res, co_id, single_id, no, amount, group_channel)
+        try:
+            outcome = await _settle_if_paid(db, res, co_id, single_id, no, amount, group_channel)
+        except UnresolvedEvidence as exc:
+            # A settlement committed before another original turned out to be unresolved still
+            # owes the buyer its broadcast and staff their duplicate-payment alert; the
+            # cancellation itself stays closed (503) because the rest is still unverified.
+            # Best effort: a failed broadcast must not replace that 503 with a 500.
+            if exc.settled is not None:
+                try:
+                    await emit_outcome(res, db, exc.settled)
+                except Exception:
+                    log.warning("committed settlement broadcast skipped for %s", no)
+            raise
         if outcome is not None:
-            touched = outcome.orders or ([outcome.order] if outcome.order else [])
-            for o in touched:
-                await broadcast_order(
-                    res,
-                    db,
-                    o,
-                    [m for m in outcome.messages if m and m.conversation_id == o.conversation_id],
-                )
-            notify_tg.outcome_events(res, touched)
+            await emit_outcome(res, db, outcome)
             raise AlreadyPaid("This order has already been paid")
         co, orders = await _load_group(db, tid, oid, cid)
         st = _status(co, orders)
@@ -283,3 +347,9 @@ async def cancel_group(
     for o, m in zip(orders, msgs, strict=True):
         await broadcast_order(res, db, o, [m])
     return co, orders
+
+
+async def _epay_configured(db: AsyncSession, res: Resources, tid: uuid.UUID) -> bool:
+    from app.modules.payments.gateways import configured
+
+    return await configured(db, res, tid)

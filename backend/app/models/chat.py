@@ -84,3 +84,19 @@ class Quote(Base):
     order_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("orders.id", use_alter=True))
     created_at: Mapped[datetime] = created_at()
     updated_at: Mapped[datetime] = updated_at()
+
+
+class CsReplyTemplate(Base):
+    """A canned reply. ``owner_id`` None means shared with every staff member of the tenant."""
+
+    __tablename__ = "cs_reply_templates"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id"))
+    owner_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
+    title: Mapped[str] = mapped_column(String(60))
+    body: Mapped[str] = mapped_column(String(2000))
+    sort: Mapped[int] = mapped_column(Integer, default=0)
+    created_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = created_at()
+    updated_at: Mapped[datetime] = updated_at()

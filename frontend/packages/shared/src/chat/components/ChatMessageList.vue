@@ -16,9 +16,11 @@ const props = defineProps<{
   hasMore?: boolean
   busyQuoteId?: string | null
   /** Show a "View order" button next to order-number chips (buyer app). */
+  selfId?: string
   viewOrder?: boolean
 }>()
 const emit = defineEmits<{
+  action: [action: 'recall' | 'pin' | 'reply', id: number]
   reachTop: []
   preview: [url: string]
   openProduct: [id: string]
@@ -94,6 +96,7 @@ defineExpose({ scrollToBottom, isNearBottom, preserveScroll, el: scroller })
 
 <template>
   <div ref="scroller" class="gc-list" role="log" aria-live="polite" @scroll.passive="onScroll">
+    <div v-for="pin in items.filter(i => i.kind === 'server' && (i.message.payload as {pinned?: boolean} | null)?.pinned)" :key="`pin-${pin.key}`" class="gc-pinned" role="note">📌 {{ pin.kind === 'server' ? (pin.message.text?.slice(0, 160) || t('chatActions.media')) : '' }}</div>
     <div class="gc-list-top">
       <span v-if="loadingOlder" class="gc-muted"><span class="gc-spin" /> {{ t('chat.loadingOlder') }}</span>
       <span v-else-if="!hasMore && items.length && !loading" class="gc-muted">{{ t('chat.noOlder') }}</span>
@@ -108,6 +111,8 @@ defineExpose({ scrollToBottom, isNearBottom, preserveScroll, el: scroller })
       <div v-if="showTime(i)" class="gc-time">{{ formatChatTime(createdAt(it), locale) }}</div>
       <ChatMessage
         :item="it"
+        :self-id="selfId"
+        @action="(a, id) => emit('action', a, id)"
         :mode="mode"
         :busy-quote-id="busyQuoteId"
         :view-order="viewOrder"
@@ -141,3 +146,5 @@ defineExpose({ scrollToBottom, isNearBottom, preserveScroll, el: scroller })
     </Teleport>
   </div>
 </template>
+
+<style scoped>.gc-pinned{max-width:100%;overflow-wrap:anywhere;padding:8px 12px;border-bottom:1px solid #8885;box-sizing:border-box}</style>

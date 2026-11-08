@@ -505,8 +505,16 @@ async def recompute_fees(
 
 
 async def pay_checkout(
-    db: AsyncSession, res: Resources, checkout_no: str, user: User, channel: str
+    db: AsyncSession,
+    res: Resources,
+    checkout_no: str,
+    user: User,
+    channel: str,
+    ip: str | None = None,
+    expected_binding: str | None = None,
 ) -> str:
+    from app.modules.payments import gateways
+
     co = await get_owned_checkout(db, checkout_no, user, lock=True)
     orders = list(
         await db.scalars(
@@ -516,6 +524,9 @@ async def pay_checkout(
             .with_for_update()
         )
     )
+    from app.modules.challenges.service import check_marker
+
+    check_marker(co, orders, expected_binding)
     if co.status != "pending_payment" or any(o.status != "pending_payment" for o in orders):
         raise InvalidState("Checkout is not awaiting payment")
     if co.expires_at is not None and co.expires_at <= utcnow():
@@ -523,7 +534,7 @@ async def pay_checkout(
     usdt = is_usdt(channel)
     if usdt and not res.bepusdt.configured:
         raise Unavailable("Payment channel not configured")
-    if not usdt and not (res.settings.zpay_pid and res.settings.zpay_key):
+    if not usdt and not await gateways.configured(db, res, user.tenant_id):
         raise Unavailable("Payment channel not configured")
     permille = await check_channel(db, co.tenant_id, channel)
     if await db.scalar(
@@ -573,11 +584,23 @@ async def pay_checkout(
         no, minor, cur = co.checkout_no, co.amount_minor, co.currency
         await db.commit()  # release the row locks before the gateway call
         await usdt_svc.start_attempt(
-            res, no=no, title=name, amount_minor=minor, currency=cur, channel=channel
+            res,
+            no=no,
+            title=name,
+            amount_minor=minor,
+            currency=cur,
+            channel=channel,
+            db=db,
+            tid=co.tenant_id,
         )
         await _announce(res, db, msgs)
         return f"/pay/usdt/{no}"
-    url = res.zpay.build_pay_url(co.checkout_no, name, to_decimal(co.amount_minor))
+    tid, no, minor, currency = co.tenant_id, co.checkout_no, co.amount_minor, co.currency
+    await db.commit()
+    prepared = await gateways.prepare(
+        db, res, tid=tid, no=no, title=name, amount_minor=minor, currency=currency, ip=ip
+    )
+    url = prepared or res.zpay.build_pay_url(no, name, to_decimal(minor))
     await db.commit()
     await _announce(res, db, msgs)
     return url

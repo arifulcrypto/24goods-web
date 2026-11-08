@@ -24,7 +24,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.money import to_decimal
 from app.core.resources import Resources
-from app.models import Checkout, Order
+from app.models import Checkout, Order, PaymentAttempt
+from app.modules.payments import usdt
 from app.modules.payments.channels import is_usdt
 from app.modules.payments.notify import (
     CHECKOUT_PREFIX,
@@ -180,6 +181,29 @@ async def handle_bepusdt_notify(
             raw = {**_str_params(params), "token": info.address}
             # the channel the money actually arrived on (from the gateway's own trade type)
             actual = bepusdt.TRADE_TYPE_TO_CHANNEL.get(info.trade_type) or ""
+            att = await db.scalar(
+                select(PaymentAttempt)
+                .where(
+                    PaymentAttempt.tenant_id == tenant_id,
+                    PaymentAttempt.local_ref == order_id,
+                    PaymentAttempt.provider_id.is_(None),
+                    PaymentAttempt.data["trade_id"].as_string() == trade_id,
+                )
+                .limit(1)
+            )
+            original = dict(att.data) if att else await usdt._cached_attempt(res, order_id)
+            if (
+                not original
+                or original.get("trade_id") != trade_id
+                or not original.get("address")
+                or not original.get("actual_amount")
+            ):
+                hold = "missing_receiver_evidence"
+            elif (
+                original["address"] != info.address
+                or bepusdt.decimal_of(original["actual_amount"]) != info.actual_amount
+            ):
+                hold = "receiver_mismatch"
             if hold is None and actual != order_channel:
                 hold = "channel_mismatch"
             if is_checkout:

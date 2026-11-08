@@ -106,7 +106,7 @@ export default {
     siteKeyRequired: "Site key is required when enabled",
     secretRequired: "Secret key is required when enabled",
     actions: "Protected actions",
-    action: {
+    action: {payment_initiation:"Initiate payment",site_visit:"Visit storefront",
       login: "Login",
       register: "Register",
       instant_account: "Guest account",

@@ -2,6 +2,8 @@ import type { WebMessages } from './index'
 import { BRAND } from '@24goods/shared'
 
 const zhCN: WebMessages = {
+  challenge: {"title": "安全验证", "accessibility": "验证缓慢或不可用时可取消并联系客服。此验证不会确认支付到账。", "visit": "验证访问商店", "visitNote": "浏览前请完成管理员设置的访问验证。", "verify": "验证并继续"},
+  epay: { title: '安全付款', checkPayee: '确认付款前，请在支付应用中核对收款人和金额。', openCashier: '打开收银台', unknown: '结果尚未确定，请勿重复付款，请刷新或联系客服。', expires: '到期时间：{at}', refresh: '刷新支付状态' },
   app: {
     name: `${BRAND.nameZh} ${BRAND.name}`,
     tagline: '账号 · 卡密 · 数字服务，快速交付',
@@ -10,10 +12,10 @@ const zhCN: WebMessages = {
     home: '首页',
     messages: '消息',
     cart: '购物车',
-    orders: '订单',
-    me: '我的',
+    me: '我的账户',
   },
   lang: {
+    auto: '自动（浏览器）',
     en: 'English',
     zh: '中文',
   },
@@ -184,6 +186,7 @@ const zhCN: WebMessages = {
     loggedOut: '已退出登录',
     language: '语言',
     orders: '我的订单',
+    ordersAll: '查看全部',
     messages: '消息',
     staff: '员工后台',
     staffHint: '你当前使用的是员工账号',
@@ -467,7 +470,7 @@ const zhCN: WebMessages = {
     lineNoLabel: '手续费',
     total: '合计',
   },
-  binput: {
+  binput: {unavailable: '订单信息暂不可用，请关闭后刷新订单。',
     title: '下单信息',
     hint: '也可以点击文字复制',
     paste: '粘贴',
@@ -510,6 +513,9 @@ const zhCN: WebMessages = {
   cs: {
     verify: '请先完成验证再开始对话',
     bubble: '联系客服',
+    staffBubble: '员工账号：打开后台收件箱',
+    staffTitle: '你当前使用的是员工账号',
+    staffText: '当前浏览器登录的是员工账号，无法使用买家聊天。请前往后台收件箱接待客户，或退出登录后以买家身份浏览。',
     connecting: '正在为你连接客服…',
     guestBanner: '你正以游客身份 {id} 咨询',
     saveLogin: '保存登录信息',

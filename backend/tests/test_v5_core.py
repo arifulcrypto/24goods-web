@@ -331,6 +331,7 @@ async def test_public_site_blocks(env):
     assert s["features"]["registration"] is True and s["turnstile"]["enabled"] is False
     assert s["google_login"] is False and s["legal"]["enabled"] is False
     assert s["delivery"]["manual_eta_hours"] == 24 and "{hours}" in s["delivery"]["manual_note"]
+    await set_secret(admin, "turnstile_secret", "ts-secret-1234")
     await put_site(
         env,
         admin,
@@ -339,10 +340,6 @@ async def test_public_site_blocks(env):
             "security": {"turnstile_enabled": True, "turnstile_site_key": "1xKEY"},
         },
     )
-    # enabled without a secret -> reported as disabled (no lock-out)
-    s = (await pub.get(f"{API}/site")).json()
-    assert s["turnstile"] == {"enabled": False, "site_key": "", "actions": []}
-    await set_secret(admin, "turnstile_secret", "ts-secret-1234")
     s = (await pub.get(f"{API}/site")).json()
     assert s["turnstile"]["enabled"] and s["turnstile"]["site_key"] == "1xKEY"
     assert "login" in s["turnstile"]["actions"] and "ts-secret" not in json.dumps(s)
@@ -392,22 +389,25 @@ async def test_defaults_max_pending_and_timeout(env):
 class SiteVerify:
     def __init__(self, ok=True, boom=False):
         self.ok, self.boom, self.calls = ok, boom, []
+        self.action = "login"
 
     async def post(self, url, data=None, timeout=None, **kw):
         self.calls.append((url, dict(data or {})))
         if self.boom:
             raise httpx.ConnectTimeout("t")
-        return httpx.Response(200, json={"success": self.ok})
+        return httpx.Response(
+            200, json={"success": self.ok, "hostname": "testserver", "action": self.action}
+        )
 
 
 async def enable_turnstile(env, admin, secret=True):
+    if secret:
+        await set_secret(admin, "turnstile_secret", "ts-secret-1234")
     await put_site(
         env,
         admin,
         {"security": {"turnstile_enabled": True, "turnstile_site_key": "1xKEY"}},
     )
-    if secret:
-        await set_secret(admin, "turnstile_secret", "ts-secret-1234")
 
 
 async def test_turnstile_pass_fail_reuse_disabled(env, monkeypatch):
@@ -417,12 +417,17 @@ async def test_turnstile_pass_fail_reuse_disabled(env, monkeypatch):
     creds = {"email": "t@example.com", "password": PASSWORD}
     # disabled: no token needed
     assert (await c.post(f"{API}/auth/login", json=creds)).status_code == 200
-    # enabled without a secret: skipped (no lock-out)
-    await enable_turnstile(env, admin, secret=False)
-    assert (await c.post(f"{API}/auth/login", json=creds)).status_code == 200
-    await set_secret(admin, "turnstile_secret", "ts-secret-1234")
+    # Incomplete configuration cannot be enabled.
+    r = await admin.put(
+        f"{API}/admin/site",
+        json={"security": {"turnstile_enabled": True, "turnstile_site_key": "k"}},
+    )
+    assert r.status_code == 422
+    await enable_turnstile(env, admin)
     sv = SiteVerify(ok=True)
     monkeypatch.setattr(env.res.http, "post", sv.post)
+    health = (await admin.get(f"{API}/admin/site")).json()["turnstile_health"]
+    assert health == {"enabled": True, "ready": True, "reason": "ready"}
     # missing token -> 400, verify never called
     r = await c.post(f"{API}/auth/login", json=creds)
     assert r.status_code == 400 and r.json()["error"]["code"] == "turnstile_failed"
@@ -448,6 +453,7 @@ async def test_turnstile_pass_fail_reuse_disabled(env, monkeypatch):
     r = await c.post(f"{API}/lookup", json={"order_no": "GAAAAAAAAAAAA", "access_code": "x"})
     assert r.status_code != 400 or r.json()["error"]["code"] != "turnstile_failed"
     await put_site(env, admin, {"security": {"turnstile_actions": ["lookup"]}})
+    sv.action = "lookup"
     r = await c.post(f"{API}/lookup", json={"order_no": "GAAAAAAAAAAAA", "access_code": "x"})
     assert r.status_code == 400 and r.json()["error"]["code"] == "turnstile_failed"
     r = await c.post(
@@ -929,7 +935,7 @@ async def test_turnstile_hostname_must_match(env, monkeypatch):
     creds = {"email": "h@example.com", "password": PASSWORD}
 
     async def post(url, data=None, timeout=None, **kw):
-        return httpx.Response(200, json={"success": True, "hostname": post.host})
+        return httpx.Response(200, json={"success": True, "hostname": post.host, "action": "login"})
 
     monkeypatch.setattr(env.res.http, "post", post)
     c = env.client()

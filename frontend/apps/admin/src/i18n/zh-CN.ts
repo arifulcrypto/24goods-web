@@ -2,11 +2,16 @@ import v5 from './v5.zh-CN'
 import type { AdminMessages } from './index'
 
 const zhCN: AdminMessages = {
+  challengeSettings: {"title": "可选访问与支付验证", "note": "自托管工作量证明保护指定发起操作，不抵御大流量 DDoS。可在下方叠加 Turnstile。回调核验及支付状态恢复不会要求验证码。老旧手机建议选择低难度，启用前请验证可用性。", "payment": "发起支付前验证", "visit": "访问主站前验证", "difficulty": "自托管工作量证明难度", "low": "低", "standard": "标准", "high": "高"},
+  ops: {yes:"是",no:"否",states:{"ready": "就绪", "unknown": "未知", "unavailable": "不可用", "success": "成功", "denied": "已拒绝", "failed": "失败", "pending": "待开通", "active": "有效", "cancelled": "已取消", "reported": "已报告", "restricted": "受限"},uncertain: '结果未知的支付尝试',"title": "运维概览", "refresh": "刷新", "scope": "只读 API／容器遥测。未单独采集的主机及恢复证据显示未知。页面可见时每 60 秒刷新。", "stale": "遥测缺失或已过期。", "unknown": "未知", "memory": "容器内存", "process": "API 常驻内存", "disk": "上传文件系统可用空间", "inodes": "可用 inode", "dependencies": "依赖服务", "load": "可见主机负载", "queue": "队列与支付", "pending": "待处理事件", "failed": "失败事件", "paymentReview": "待人工核验支付", "recovery": "恢复证据", "lastBackup": "最近完整备份", "offsite": "异地副本已核验", "lastRestore": "最近隔离恢复演练", "maintenance": "维护检查", "maintenanceNote": "定期核验密钥归属、到期及轮换，按实际安装版本检查系统、容器和运行时公告。健康检查正常不等于安全审计通过。", "reviewKeys": "检查支付凭证", "events": "运维事件", "family": "事件类别", "operation": "操作", "login": "登录", "security": "安全", "system": "系统", "task": "任务", "payment": "支付", "date": "时间（UTC）", "action": "动作", "status": "状态", "reason": "原因", "resource": "资源", "actor": "操作者", "agent": "浏览器／用户代理", "hints": "IP 与浏览器请求头均为不可信线索，未查询的位置显示未知。普通爬虫或共享 IP 不能直接判定为攻击者。"},
+  services: {"title": "服务续期", "note": "由客服管理服务有效期和提醒，不自动扣款。每次续期使用独立服务端定价订单，核验到账并确认服务完成后才延长。", "add": "登记服务", "filter": "到期筛选", "upcoming": "7 天内到期", "overdue": "已到期", "mine": "分配给我", "label": "服务名称", "owner": "负责人 ID", "end": "到期时间（UTC）", "timezone": "业务时区（IANA）", "activate": "确认现在开通", "manage": "管理", "buyer": "客户 ID", "order": "原始已核验支付订单 ID", "policy": "周期规则", "month": "自然月", "days": "固定天数", "email": "邮件提醒负责人", "telegram": "Telegram 客服提醒", "activationNote": "仅在客服确认实际开通后开始计算周期，付款或创建订单不会自动开始。", "reason": "审计原因（勿填写客户秘密）", "endIso": "调整到期时间（带时区的 ISO 8601）", "cancel": "取消服务", "renewalNote": "先创建并收取独立续期订单，确认服务完成后关联已核验到账的订单。重复关联不会重复延长。", "renewalOrder": "已核验付款的续期订单 ID", "renew": "确认服务完成并续期一次"},
+  gateways: {created:'配置时间',review:'部分通道凭证已超过 90 天，请复核归属、权限、结算和轮换；旧订单未完成时保留原密钥。',"title": "易支付支付宝通道", "note": "密钥加密保存且只写。支持 HTTPS 基址或完整 submit.php 地址。目前仅启用已获批的支付宝方式。配置成功不代表已验证上游归属或实际结算。", "privacy": "二维码和支付凭证可能显示上游或收款方，站内二维码不提供匿名保证。", "label": "通道名称", "url": "网关地址", "pid": "商家 ID（PID）", "status": "状态", "active": "新支付使用中", "retained": "保留／等待旧订单完成", "actions": "操作", "activate": "启用", "add": "添加通道版本", "key": "商户 MD5 密钥（只写）", "mode": "展示方式", "qr": "站内二维码（mapi.php）", "redirect": "跳转收银台（submit.php）", "password": "当前管理员密码", "rotation": "轮换将创建新版本，旧支付继续使用原通道和密钥。请保留设置加密密钥以便恢复。", "confirmNote": "请在上游控制台独立核对官方地址、商户归属、支付宝权限和结算账户。此处不会发起真实扣款。", "ownership": "我已核验商户归属、支付权限及收款账户。"},
   app: {
     title: '客思维 控制台',
     short: '后台',
   },
   lang: {
+    auto: '自动（浏览器）',
     en: 'English',
     zh: '中文',
   },
@@ -242,6 +247,36 @@ const zhCN: AdminMessages = {
     copy: '复制',
     reasonRequired: '请填写原因',
     textRequired: '请填写发货内容',
+  },
+  replies: {
+    button: '快捷回复',
+    title: '快捷回复',
+    hint: '点击即可填入输入框。预设为内置内容；自定义回复保存在你的账号中。',
+    starters: '预设',
+    shared: '团队共享',
+    mine: '我的回复',
+    add: '新建回复',
+    edit: '编辑回复',
+    name: '简短名称',
+    namePlaceholder: '例如：发货时间',
+    body: '回复内容',
+    bodyPlaceholder: '想要发送的内容……',
+    shareWithTeam: '共享给全部员工',
+    shareHint: '仅管理员可用。共享回复对所有员工可见。',
+    saved: '回复已保存',
+    deleted: '回复已删除',
+    deleteConfirm: '删除这条快捷回复？',
+    none: '暂无已保存的回复。',
+    limit: '已达回复数量上限，请先删除一条。',
+    starterList: [
+      { title: '打招呼', body: '您好！感谢联系我们，请问有什么可以帮您？' },
+      { title: '正在核实', body: '我帮您核实一下，请稍等。' },
+      { title: '发货时间', body: '您的订单正在处理，稍后即会发货，感谢耐心等待。' },
+      { title: '已收到付款', body: '已收到您的付款，正在为您准备订单。' },
+      { title: '订单信息', body: '请您确认一下本订单的账号信息。请不要向任何人透露您的密码。' },
+      { title: '售后', body: '非常抱歉给您带来不便，请发送问题截图，我们会尽快为您处理。' },
+      { title: '结束语', body: '很高兴能帮到您。如还有其他问题，随时在这里联系我们。祝您愉快！' },
+    ],
   },
   inbox: {
     product_btn: '商品',

@@ -35,6 +35,8 @@ def sign(params: Mapping[str, str], key: str) -> str:
 
 def verify_signature(params: Mapping[str, str], key: str) -> bool:
     given = str(params.get("sign", "")).lower()
+    if len(given) != 32 or any(c not in "0123456789abcdef" for c in given):
+        return False
     if not given or not key:
         return False
     # Pin the algorithm: never let the caller choose (no RSA->MD5 downgrade).
@@ -82,3 +84,10 @@ def verify_notify(params: Mapping[str, str], key: str, expected: ExpectedOrder) 
     if not trade_no:
         raise NotifyRejected("missing_trade_no")
     return trade_no
+
+
+def gateway_trade_key(instance_id: str, upstream_trade_no: str) -> str:
+    """Fixed 64-character collision-resistant identity; the raw ID remains audit metadata."""
+    if instance_id or len(upstream_trade_no) > 64:
+        return hashlib.sha256((instance_id + "\0" + upstream_trade_no).encode()).hexdigest()
+    return upstream_trade_no

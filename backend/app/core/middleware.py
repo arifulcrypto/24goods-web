@@ -188,7 +188,10 @@ class CSRFMiddleware:
 
 
 class BodyLimitMiddleware:
-    """Reject oversized bodies early (declared or streamed)."""
+    """Reject oversized bodies and excess uploads before multipart parsing or buffering."""
+
+    MAX_UPLOAD_REQUESTS = 4
+    MAX_UPLOADS_PER_IP = 2
 
     def __init__(
         self, app: ASGIApp, default_limit: int, upload_limit: int, upload_paths: re.Pattern[str]
@@ -197,6 +200,8 @@ class BodyLimitMiddleware:
         self.default = default_limit
         self.upload = upload_limit
         self.upload_paths = upload_paths
+        self._uploads = 0
+        self._uploads_by_ip: dict[str, int] = {}
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http" or scope["method"] not in UNSAFE_METHODS:
@@ -214,6 +219,21 @@ class BodyLimitMiddleware:
             if too_big:
                 await _send_json(send, 413, error_body(code, "Request body too large"))
                 return
+        ip = str(scope.get("state", {}).get("client_ip") or "-")
+        if is_upload:
+            if (
+                self._uploads >= self.MAX_UPLOAD_REQUESTS
+                or self._uploads_by_ip.get(ip, 0) >= self.MAX_UPLOADS_PER_IP
+            ):
+                await _send_json(
+                    send,
+                    503,
+                    error_body("unavailable", "Upload capacity reached"),
+                    [(b"retry-after", b"2")],
+                )
+                return
+            self._uploads += 1
+            self._uploads_by_ip[ip] = self._uploads_by_ip.get(ip, 0) + 1
         received = 0
         started = False
 
@@ -237,3 +257,11 @@ class BodyLimitMiddleware:
         except BodyTooLarge:
             if not started:
                 await _send_json(send, 413, error_body(code, "Request body too large"))
+        finally:
+            if is_upload:
+                self._uploads -= 1
+                n = self._uploads_by_ip[ip] - 1
+                if n:
+                    self._uploads_by_ip[ip] = n
+                else:
+                    self._uploads_by_ip.pop(ip)

@@ -2,6 +2,8 @@
 import { BRAND } from '@24goods/shared'
 
 export default {
+  challenge: {"title": "Security verification", "accessibility": "If verification is slow or unavailable, cancel and contact support. No payment has been confirmed by this check.", "visit": "Verify access to the store", "visitNote": "Complete the configured access check before browsing.", "verify": "Verify and continue"},
+  epay: { title: 'Pay securely', checkPayee: 'Check the payee and amount in your payment app before confirming.', openCashier: 'Open payment cashier', unknown: 'The result is uncertain. Do not pay again; refresh or contact support.', expires: 'Expires: {at}', refresh: 'Refresh payment status' },
   app: {
     name: BRAND.name,
     tagline: 'Accounts, gift cards & digital services — delivered fast',
@@ -10,10 +12,10 @@ export default {
     home: 'Home',
     messages: 'Messages',
     cart: 'Cart',
-    orders: 'Orders',
-    me: 'Me',
+    me: 'My Account',
   },
   lang: {
+    auto: 'Auto (browser)',
     en: 'English',
     zh: '中文',
   },
@@ -184,6 +186,7 @@ export default {
     loggedOut: 'Signed out',
     language: 'Language',
     orders: 'My orders',
+    ordersAll: 'View all',
     messages: 'Messages',
     staff: 'Staff console',
     staffHint: 'You are signed in with a staff account',
@@ -467,7 +470,7 @@ export default {
     lineNoLabel: 'Payment fee',
     total: 'Total',
   },
-  binput: {
+  binput: {unavailable: 'Order information is unavailable. Close this panel and refresh the order.',
     title: 'Order information',
     hint: 'You can also tap the text to copy it.',
     paste: 'Paste',
@@ -510,6 +513,10 @@ export default {
   cs: {
     verify: 'Complete the verification to start chatting',
     bubble: 'Customer service',
+    staffBubble: 'Staff account: open the console inbox',
+    staffTitle: 'You are signed in as staff',
+    staffText:
+      'This browser is signed in to a staff account, so buyer chat is not available. Open the console inbox to answer customers, or sign out to browse as a buyer.',
     connecting: 'Connecting you to support…',
     guestBanner: "You're chatting as guest {id}",
     saveLogin: 'Save login',

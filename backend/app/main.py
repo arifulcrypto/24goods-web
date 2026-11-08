@@ -28,6 +28,7 @@ from app.modules import emails, jobs
 from app.modules.admin.blocking import router as admin_blocking_router
 from app.modules.admin.categories import router as admin_categories_router
 from app.modules.admin.importer import router as admin_import_router
+from app.modules.admin.payment_gateways import router as payment_gateways_router
 from app.modules.admin.router import router as admin_router
 from app.modules.admin.settings import router as admin_settings_router
 from app.modules.admin.tokens import router as admin_tokens_router
@@ -36,13 +37,19 @@ from app.modules.aftersales.router import router as aftersales_router
 from app.modules.auth.oauth import router as oauth_router
 from app.modules.auth.router import router as auth_router
 from app.modules.catalog.router import router as catalog_router
+from app.modules.challenges.middleware import SiteVisitMiddleware
+from app.modules.challenges.router import router as challenges_router
+from app.modules.chat.actions import router as chat_actions_router
 from app.modules.chat.router import router as chat_router
 from app.modules.content.router import router as content_router
 from app.modules.lookup.router import router as lookup_router
 from app.modules.me.router import router as me_router
+from app.modules.operations import jobs as operations_jobs
+from app.modules.operations.router import router as operations_router
 from app.modules.orders.checkout_router import router as checkout_router
 from app.modules.orders.router import router as orders_router
 from app.modules.orders.service import expire_pending
+from app.modules.payments.epay_page import router as epay_page_router
 from app.modules.payments.router import NOTIFY_BEPUSDT_PATH, NOTIFY_PATH
 from app.modules.payments.router import router as payments_router
 from app.modules.promo.router import admin as promo_admin_router
@@ -63,8 +70,10 @@ UPLOAD_BODY_LIMIT = 8 * 1024 * 1024 + 64 * 1024
 __all__ = ["SECURITY_HEADERS", "create_app"]
 
 
-async def _job(name: str, coro) -> None:  # type: ignore[no-untyped-def]
+async def _job(name: str, coro, res: Resources | None = None) -> None:  # type: ignore[no-untyped-def]
     """Run one periodic job; a failure never stops the loop."""
+    started = time.monotonic()
+    failed = False
     try:
         n = await coro
         if n:
@@ -72,20 +81,36 @@ async def _job(name: str, coro) -> None:  # type: ignore[no-untyped-def]
     except asyncio.CancelledError:
         raise
     except Exception as exc:
+        failed = True
         log.error("%s failed error=%s", name, type(exc).__name__)
+    finally:
+        if res is not None:
+            try:
+                from app.modules.operations.task_events import report
+
+                await report(res, name, started, failed)
+            except Exception:
+                log.warning("task heartbeat unavailable")
 
 
 async def run_jobs_once(res: Resources, *, hourly: bool) -> None:
-    await _job("order expiry", expire_pending(res.maker, res))
-    await _job("auto confirm", jobs.auto_confirm(res.maker, res))
-    await _job("order emails", emails.enqueue_order_emails(res.maker))
-    await _job("order emails sent", emails.process_email_outbox(res.maker, res.settings))
+    from app.modules.payments.reconcile import run as reconcile_payments
+
+    await _job("payment reconciliation", reconcile_payments(res), res)
+    await _job("service reminder scheduling", operations_jobs.schedule_reminders(res), res)
+    await _job("service reminder delivery", operations_jobs.process_reminders(res), res)
+    await _job("order expiry", expire_pending(res.maker, res), res)
+    await _job("auto confirm", jobs.auto_confirm(res.maker, res), res)
+    await _job("order emails", emails.enqueue_order_emails(res.maker), res)
+    await _job("order emails sent", emails.process_email_outbox(res.maker, res.settings), res)
     if hourly:
-        await _job("card expiry", jobs.void_expired_cards(res.maker))
-        await _job("instant purge", jobs.purge_instant_accounts(res.maker, res.settings))
-        await _job("buyer input purge", jobs.purge_buyer_input(res.maker))
-        await _job("audit purge", jobs.purge_audit(res.maker))
-        await _job("reseller domains recheck", domains.recheck_active(res))
+        await _job("deleted media purge", jobs.purge_deleted_media(res), res)
+        await _job("card expiry", jobs.void_expired_cards(res.maker), res)
+        await _job("instant purge", jobs.purge_instant_accounts(res.maker, res.settings), res)
+        await _job("buyer input purge", jobs.purge_buyer_input(res.maker), res)
+        await _job("operations event purge", operations_jobs.purge_events(res), res)
+        await _job("audit purge", jobs.purge_audit(res.maker), res)
+        await _job("reseller domains recheck", domains.recheck_active(res), res)
 
 
 async def _expiry_loop(res: Resources) -> None:
@@ -101,6 +126,9 @@ async def _expiry_loop(res: Resources) -> None:
 
 def api_router() -> APIRouter:
     r = APIRouter(prefix="/api/v1")
+    r.include_router(payment_gateways_router)
+    r.include_router(epay_page_router)
+    r.include_router(operations_router)
     for sub in (
         auth_router,
         oauth_router,
@@ -110,6 +138,7 @@ def api_router() -> APIRouter:
         aftersales_router,
         catalog_router,
         chat_router,
+        chat_actions_router,
         orders_router,
         checkout_router,
         payments_router,
@@ -126,6 +155,7 @@ def api_router() -> APIRouter:
         admin_settings_router,
         admin_blocking_router,
         admin_tokens_router,
+        challenges_router,
     ):
         r.include_router(sub)
     return r
@@ -174,7 +204,8 @@ def create_app(res: Resources | None = None, *, background: bool = True) -> Fast
         return {"status": "ok"}
 
     # Added inner-most first:
-    # Core (outermost) -> IPBlock -> GlobalRateLimit -> BodyLimit -> CSRF -> routes.
+    # Core (outermost) -> IPBlock -> GlobalRateLimit -> BodyLimit -> CSRF -> SiteVisit -> routes.
+    app.add_middleware(SiteVisitMiddleware)
     app.add_middleware(CSRFMiddleware, exempt=[NOTIFY_PATH, NOTIFY_BEPUSDT_PATH])
     app.add_middleware(
         BodyLimitMiddleware,

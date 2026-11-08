@@ -22,3 +22,5 @@ export * from './recent'
 export * from './longtext'
 export * from './v5'
 export * from './turnstile'
+
+export * from './media/preferences'

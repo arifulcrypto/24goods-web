@@ -6,18 +6,24 @@ import asyncio
 import contextlib
 import json
 import logging
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
 from typing import Any
 
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
+from app.core.errors import RateLimited, Unavailable
 from app.modules.realtime.publish import PREFIX
 
 log = logging.getLogger("app.realtime")
 
 HEARTBEAT_S = 15.0
 QUEUE_MAX = 200
+MAX_SUBSCRIBERS = 256
+MAX_TENANT_SUBSCRIBERS = 64
+MAX_ACCOUNT_SUBSCRIBERS = 4
+MAX_IP_SUBSCRIBERS = 16
 
 
 class Subscription:
@@ -25,6 +31,7 @@ class Subscription:
         self.channels = frozenset(channels)
         self.queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=QUEUE_MAX)
         self.overflowed = False
+        self.budget_keys: tuple[tuple[str, str], ...] = ()
 
     def offer(self, item: dict[str, Any]) -> None:
         try:
@@ -39,6 +46,8 @@ class RealtimeHub:
         self._subs: dict[str, set[Subscription]] = {}
         self._task: asyncio.Task[None] | None = None
         self._ready = asyncio.Event()
+        self._admitted: set[Subscription] = set()
+        self._counts: dict[tuple[str, str], int] = {}
 
     def ensure_started(self) -> None:
         if self._task is None or self._task.done():
@@ -55,14 +64,47 @@ class RealtimeHub:
                 await self._task
             self._task = None
 
-    def subscribe(self, channels: Iterable[str]) -> Subscription:
+    def subscribe(
+        self,
+        channels: Iterable[str],
+        *,
+        tenant: str | None = None,
+        account: str | None = None,
+        ip: str | None = None,
+    ) -> Subscription:
+        if len(self._admitted) >= MAX_SUBSCRIBERS:
+            raise Unavailable("Realtime capacity reached", headers={"Retry-After": "15"})
+        budgets = (
+            ("tenant", tenant, MAX_TENANT_SUBSCRIBERS),
+            ("account", account, MAX_ACCOUNT_SUBSCRIBERS),
+            ("ip", ip, MAX_IP_SUBSCRIBERS),
+        )
+        keys = []
+        for kind, value, limit in budgets:
+            if value is not None:
+                key = (kind, value)
+                if self._counts.get(key, 0) >= limit:
+                    raise RateLimited(15, "Realtime connection limit reached")
+                keys.append(key)
         self.ensure_started()
         sub = Subscription(channels)
+        sub.budget_keys = tuple(keys)
+        self._admitted.add(sub)
+        for key in keys:
+            self._counts[key] = self._counts.get(key, 0) + 1
         for ch in sub.channels:
             self._subs.setdefault(ch, set()).add(sub)
         return sub
 
     def unsubscribe(self, sub: Subscription) -> None:
+        if sub in self._admitted:
+            self._admitted.remove(sub)
+            for key in sub.budget_keys:
+                n = self._counts[key] - 1
+                if n:
+                    self._counts[key] = n
+                else:
+                    self._counts.pop(key)
         for ch in sub.channels:
             subs = self._subs.get(ch)
             if subs is not None:
@@ -117,18 +159,30 @@ async def sse_events(
     heartbeat_s: float = HEARTBEAT_S,
     alive: Callable[[], Awaitable[bool]] | None = None,
 ) -> AsyncIterator[str]:
-    """``alive`` is re-checked at every heartbeat: a revoked session (logout, suspension)
-    closes the stream instead of receiving events until the client disconnects."""
+    """Authorization has a monotonic deadline independent of queue traffic.
+    Re-check after waiting and before forwarding, so a busy stream cannot defer revocation."""
+    deadline = time.monotonic() + heartbeat_s
     try:
         yield "retry: 4000\n\n"
         while not sub.overflowed:
+            if time.monotonic() >= deadline:
+                if alive is not None and not await alive():
+                    break
+                deadline = time.monotonic() + heartbeat_s
             try:
-                item = await asyncio.wait_for(sub.queue.get(), heartbeat_s)
+                item = await asyncio.wait_for(
+                    sub.queue.get(), max(0.001, deadline - time.monotonic())
+                )
             except asyncio.TimeoutError:
                 if alive is not None and not await alive():
                     break
+                deadline = time.monotonic() + heartbeat_s
                 yield ": ping\n\n"
                 continue
+            if time.monotonic() >= deadline:
+                if alive is not None and not await alive():
+                    break
+                deadline = time.monotonic() + heartbeat_s
             data = json.dumps(item.get("data"), separators=(",", ":"), default=str)
             yield f"event: {item['event']}\ndata: {data}\n\n"
     finally:

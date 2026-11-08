@@ -54,7 +54,7 @@ from app.modules.chat.messages import (
     order_card_messages,
     post_system,
 )
-from app.modules.common.buyerinput import chat_text, normalize_value
+from app.modules.common.buyerinput import normalize_value
 from app.modules.common.orderviews import latest_tickets, one_view, order_views  # noqa: F401
 from app.modules.common.views import REVEALABLE, order_card_payload
 from app.modules.content.site import tenant_settings
@@ -443,8 +443,21 @@ async def check_channel(db: AsyncSession, tenant_id: uuid.UUID, channel: str) ->
     return cfg.permille
 
 
-async def pay_url(db: AsyncSession, res: Resources, ref: str, user: User, channel: str) -> str:
+async def pay_url(
+    db: AsyncSession,
+    res: Resources,
+    ref: str,
+    user: User,
+    channel: str,
+    ip: str | None = None,
+    expected_binding: str | None = None,
+) -> str:
+    from app.modules.payments import gateways
+
     order = await get_owned(db, ref, user, lock=True)
+    from app.modules.challenges.service import check_marker
+
+    check_marker(order, None, expected_binding)
     if order.checkout_id is not None:
         # a member order is never paid on its own: its money only arrives via the checkout
         checkout_no = await db.scalar(
@@ -461,7 +474,7 @@ async def pay_url(db: AsyncSession, res: Resources, ref: str, user: User, channe
     usdt = is_usdt(channel)
     if usdt and not res.bepusdt.configured:
         raise Unavailable("Payment channel not configured")
-    if not usdt and not (res.settings.zpay_pid and res.settings.zpay_key):
+    if not usdt and not await gateways.configured(db, res, user.tenant_id):
         raise Unavailable("Payment channel not configured")
     permille = await check_channel(db, order.tenant_id, channel)
     if await db.scalar(select(Payment.id).where(Payment.order_id == order.id)):
@@ -518,12 +531,30 @@ async def pay_url(db: AsyncSession, res: Resources, ref: str, user: User, channe
         no, title, minor, cur = order.order_no, order.title, order.amount_minor, order.currency
         await db.commit()  # release the row lock before the gateway call
         await usdt_svc.start_attempt(
-            res, no=no, title=title, amount_minor=minor, currency=cur, channel=channel
+            res,
+            no=no,
+            title=title,
+            amount_minor=minor,
+            currency=cur,
+            channel=channel,
+            db=db,
+            tid=order.tenant_id,
         )
         if msg is not None:
             await broadcast_order(res, db, order, [msg])
         return f"/pay/usdt/{no}"
-    url = res.zpay.build_pay_url(order.order_no, order.title, to_decimal(order.amount_minor))
+    tid, no, title, minor, currency = (
+        order.tenant_id,
+        order.order_no,
+        order.title,
+        order.amount_minor,
+        order.currency,
+    )
+    await db.commit()
+    prepared = await gateways.prepare(
+        db, res, tid=tid, no=no, title=title, amount_minor=minor, currency=currency, ip=ip
+    )
+    url = prepared or res.zpay.build_pay_url(no, title, to_decimal(minor))
     await db.commit()
     if msg is not None:
         await broadcast_order(res, db, order, [msg])
@@ -537,13 +568,19 @@ async def update_input(
     order = await get_owned(db, ref, user, lock=True)
     if order.status not in ("pending_payment", "paid"):
         raise InvalidState("The order information can no longer be changed")
-    product = await db.get(Product, order.product_id) if order.product_id else None
+    product = (
+        await db.scalar(
+            select(Product).where(
+                Product.id == order.product_id, Product.tenant_id == order.tenant_id
+            )
+        )
+        if order.product_id
+        else None
+    )
     cfg = product.buyer_input if product else None
     if not (cfg and cfg.get("enabled")):
-        raise Validation("This order has no order information")
+        raise Validation("This order has no order information", code="buyer_input_disabled")
     new = normalize_value(cfg, value)
-    if new is None:
-        raise Validation("buyer_input is required")
     order.buyer_input = new
     order.version += 1
     await audit(
@@ -568,8 +605,8 @@ async def update_input(
             conversation_id=conv_id,
             sender_id=order.buyer_id,
             sender_role="buyer",
-            type="text",
-            text=chat_text(order.order_no, order.title, new).replace("📝", "📝 (updated)", 1),
+            type="order_card",
+            payload={**order_card_payload(order), "event": "order_input_updated"},
             client_msg_id=f"order-input:{order.id}:{order.version}",
         )
     await db.commit()

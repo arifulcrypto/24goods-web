@@ -27,6 +27,8 @@ SECRET_NAMES = (
 
 # Actions Turnstile can protect (review-v5 §5.1)
 TURNSTILE_ACTIONS = (
+    "payment_initiation",
+    "site_visit",
     "login",
     "register",
     "instant_account",
@@ -64,6 +66,9 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         "google_login": False,
     },
     "security": {
+        "payment_challenge_enabled": False,
+        "site_visit_enabled": False,
+        "challenge_preset": "standard",
         "turnstile_enabled": False,
         "turnstile_site_key": "",
         "turnstile_actions": ["login", "register", "instant_account", "password_reset"],
@@ -208,6 +213,7 @@ _INT_BOUNDS: dict[tuple[str, str], tuple[int, int]] = {
 }
 
 _ENUMS: dict[tuple[str, str], tuple[str, ...]] = {
+    ("security", "challenge_preset"): ("low", "standard", "high"),
     ("legal", "mode"): ("checkbox", "modal"),
     ("defaults", "locale"): LOCALES,
     ("email", "security"): ("starttls", "ssl", "none"),

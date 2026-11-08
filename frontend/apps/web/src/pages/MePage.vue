@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { imageQuality, compressUploads, setMediaPreference } from '@24goods/shared'
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
@@ -8,8 +9,10 @@ import MiniStrip from '../components/MiniStrip.vue'
 import { useAuthStore } from '../stores/auth'
 import { useConversationsStore } from '../stores/conversations'
 import { useSiteStore } from '../stores/site'
-import { setLocale } from '../locale'
+import { openSupport as support } from '../lib/support'
+import { languagePreference, setLocale } from '../locale'
 import type { AppLocale } from '../i18n'
+import type { LocalePreference } from '@24goods/shared'
 import { confirm, showSuccessToast, showToast, toastError } from '../ui'
 
 const { t, locale } = useI18n()
@@ -20,6 +23,13 @@ const site = useSiteStore()
 const initial = computed(() => (auth.user?.display_name || auth.user?.handle || auth.user?.email || '?').trim().charAt(0).toUpperCase())
 const identity = computed(() => auth.user?.email || auth.user?.handle || '')
 const recent = ref<ProductSummary[]>([])
+const ORDER_TABS = ['unpaid', 'toDeliver', 'delivered', 'afterSales'] as const
+const ORDER_ICONS: Record<(typeof ORDER_TABS)[number], string> = {
+  unpaid: 'balance-o',
+  toDeliver: 'logistics',
+  delivered: 'passed',
+  afterSales: 'after-sale',
+}
 
 onMounted(async () => {
   const ids = recentIds()
@@ -35,9 +45,7 @@ function clearViewed() {
   recent.value = []
 }
 
-function switchLang(l: AppLocale) {
-  if (locale.value !== l) setLocale(l)
-}
+function switchLang(l: LocalePreference) { setLocale(l) }
 async function logout() {
   if (!(await confirm(t('me.logout'), t('me.logoutConfirm', { brand: site.headerName })))) return
   try {
@@ -49,7 +57,7 @@ async function logout() {
   }
 }
 function openSupport() {
-  void router.push('/chat')
+  void support(router)
 }
 
 // ---- edit profile ----
@@ -66,8 +74,9 @@ async function saveProfile() {
   if (saving.value || !editName.value.trim()) return
   saving.value = true
   try {
+    const changedLocale = editLocale.value !== auth.user?.locale
     auth.setUser(await api.me.update({ display_name: editName.value.trim(), locale: editLocale.value }))
-    setLocale(editLocale.value as AppLocale)
+    if (changedLocale || languagePreference.value !== 'auto') setLocale(editLocale.value as AppLocale)
     editShow.value = false
     showSuccessToast(t('common.saved'))
   } catch (e) {
@@ -181,6 +190,19 @@ async function deleteAccount() {
       <van-button round type="primary" size="small" class="tap" @click="openCred">{{ t('me.secureCta') }}</van-button>
     </section>
 
+    <section v-if="auth.user" class="section card orders-card">
+      <RouterLink to="/orders" class="orders-head">
+        <strong>{{ t('me.orders') }}</strong>
+        <span class="muted small">{{ t('me.ordersAll') }} <van-icon name="arrow" /></span>
+      </RouterLink>
+      <nav class="orders-quick" :aria-label="t('me.orders')">
+        <RouterLink v-for="k in ORDER_TABS" :key="k" :to="`/orders?tab=${k}`">
+          <van-icon :name="ORDER_ICONS[k]" size="22" />
+          <span>{{ t(`ordersTab.${k}`) }}</span>
+        </RouterLink>
+      </nav>
+    </section>
+
     <MiniStrip :title="t('home.recentlyViewed')" :items="recent" :clear-label="t('home.clear')" @clear="clearViewed" />
 
     <section class="section card">
@@ -195,13 +217,16 @@ async function deleteAccount() {
         <van-cell :title="t('me.afterSalesPolicy')" icon="shield-o" is-link to="/a/after-sales" />
         <van-cell :title="t('me.terms')" icon="notes-o" is-link to="/a/terms" />
         <van-cell :title="t('me.privacy')" icon="eye-o" is-link to="/a/privacy" />
+        <van-cell :title="t('mediaPrefs.quality')"><template #value><select :value="imageQuality" @change="setMediaPreference(($event.target as HTMLSelectElement).value as 'auto' | 'low' | 'high', compressUploads)"><option value="auto">{{ t('mediaPrefs.auto') }}</option><option value="low">{{ t('mediaPrefs.low') }}</option><option value="high">{{ t('mediaPrefs.high') }}</option></select></template></van-cell>
+        <van-cell :title="t('mediaPrefs.compress')"><template #value><van-switch :model-value="compressUploads" @update:model-value="v => setMediaPreference(imageQuality, v)" /></template></van-cell>
         <van-cell :title="t('me.language')" icon="flag-o" center>
           <template #value>
             <div class="seg" role="radiogroup" :aria-label="t('me.language')">
-              <button type="button" role="radio" :aria-checked="locale === 'en'" :class="{ on: locale === 'en' }" @click="switchLang('en')">
+              <button type="button" role="radio" :aria-checked="languagePreference === 'auto'" :class="{ on: languagePreference === 'auto' }" @click="switchLang('auto')">{{ t('lang.auto') }}</button>
+              <button type="button" role="radio" :aria-checked="languagePreference === 'en'" :class="{ on: languagePreference === 'en' }" @click="switchLang('en')">
                 {{ t('lang.en') }}
               </button>
-              <button type="button" role="radio" :aria-checked="locale === 'zh-CN'" :class="{ on: locale === 'zh-CN' }" @click="switchLang('zh-CN')">
+              <button type="button" role="radio" :aria-checked="languagePreference === 'zh-CN'" :class="{ on: languagePreference === 'zh-CN' }" @click="switchLang('zh-CN')">
                 {{ t('lang.zh') }}
               </button>
             </div>
@@ -307,6 +332,38 @@ async function deleteAccount() {
 }
 .card {
   overflow: hidden;
+}
+.orders-card {
+  padding: 4px 0 8px;
+}
+.orders-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 44px;
+  padding: 0 16px;
+  color: inherit;
+  text-decoration: none;
+}
+.orders-quick {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+}
+.orders-quick a {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 64px;
+  padding: 6px 2px;
+  color: var(--c-text);
+  text-decoration: none;
+  font-size: 12px;
+  text-align: center;
+}
+.orders-quick a:active {
+  background: var(--c-bg);
 }
 .seg {
   display: inline-flex;
