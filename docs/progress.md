@@ -34,7 +34,7 @@ both findings are fixed, with regressions that fail against the fail-open versio
 
 **The reviews above were NOT independent** (same session wrote and reviewed). A cold-started
 re-review on Opus 5.5 (2026-11-08) found more on the money path, which `sec/legacy-pay-url-marker`
-fixes (ADR-027) -- **production must not take `main` before that PR merges**:
+fixed in **#44 (`ad14f01`, merged)** after full CI and a second cold auditor pass that found no remaining cancel-over-money path (ADR-027):
 
 1. Cancel inferred "could a legacy URL exist?" from the current channel / key / provider history.
    Fail-open after a channel switch, a provider cutover, or full de-configuration (#32); and a
@@ -48,6 +48,20 @@ fixes (ADR-027) -- **production must not take `main` before that PR merges**:
 4. Merging outcomes kept one duplicate trade, dropping a refund alert when three originals paid.
 
 Not affected: **production** (`7f36926`) predates all of this code -- the defects were never live.
+
+Verified on the demo after deploying `ad14f01` (migration `0013`): FORCE RLS restored on `orders` and
+`checkouts`; `legacy_pay_urls` RLS-forced, `app_api` = `INSERT, SELECT` only; as `app_api` an insert
+is idempotent, other tenants see nothing, `UPDATE`/`DELETE` are refused, a cross-tenant insert
+violates the policy. **The backfill processed zero rows there** (the demo had no pending payables), so
+it is first exercised for real on production: record the pending-payable count before deploying and
+check it equals the marker count after.
+
+Also 2026-11-08: the demo had SEO indexing **on** (mock products and a mock gateway indexable on the
+owner's domain); turned off in the DB and it survives redeploys (`seed` never touches it). robots.txt
+now refuses training crawlers only; AI search indexers and user-triggered fetchers are allowed (#43).
+
+**Next: production deploy of `main` to c4** -- needs explicit owner approval (real merchant, real
+USDT wallets). Prod is on `7f36926`; it will apply migrations `0010`-`0013`.
 
 **Merged and deployed (2026-11-08 UTC).** The above landed as PR #31 (`b2e7a1b`) with full CI
 green; two follow-up PRs merged on top:
