@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import { safeRedirect } from '@24goods/shared'
+import { i18n } from './i18n'
 import { useAuthStore } from './stores/auth'
 import { useSiteStore } from './stores/site'
 
@@ -8,7 +9,7 @@ declare module 'vue-router' {
     /** Requires a signed-in user. */
     auth?: boolean
     /** Show the bottom tabbar. */
-    tab?: 'home' | 'messages' | 'cart' | 'orders' | 'me'
+    tab?: 'home' | 'messages' | 'cart' | 'me'
     /** Use the wider 960 px column (Home / Search grids). */
     wide?: boolean
     /** Signed-in users are bounced away (login/register). */
@@ -19,6 +20,8 @@ declare module 'vue-router' {
     reseller?: boolean
     /** v5: hidden when the matching feature toggle is off. */
     feature?: 'cart' | 'lookup' | 'registration'
+    /** Buyer-only: staff browsing the shop with their own cookie are sent to the console. */
+    buyerOnly?: boolean
   }
 }
 
@@ -31,10 +34,11 @@ const routes: RouteRecordRaw[] = [
   { path: '/help', name: 'help', component: () => import('./pages/HelpPage.vue') },
   { path: '/a/:slug', name: 'article', component: () => import('./pages/ArticlePage.vue') },
   // /chat needs no sign-in: the page creates an instant account when there is none (review-v4 §5).
-  { path: '/chat', name: 'chat', component: () => import('./pages/ChatPage.vue'), meta: { nobubble: true } },
+  { path: '/chat', name: 'chat', component: () => import('./pages/ChatPage.vue'), meta: { nobubble: true, buyerOnly: true } },
   { path: '/cart', name: 'cart', component: () => import('./pages/CartPage.vue'), meta: { tab: 'cart', feature: 'cart' } },
   { path: '/messages', name: 'messages', component: () => import('./pages/MessagesPage.vue'), meta: { auth: true, tab: 'messages' } },
-  { path: '/orders', name: 'orders', component: () => import('./pages/OrdersPage.vue'), meta: { auth: true, tab: 'orders' } },
+  // Orders live under My Account (one tab fewer): the account tab stays active on these pages.
+  { path: '/orders', name: 'orders', component: () => import('./pages/OrdersPage.vue'), meta: { auth: true, tab: 'me' } },
   { path: '/orders/:id', name: 'order', component: () => import('./pages/OrderDetailPage.vue'), meta: { auth: true } },
   { path: '/pay/epay/:no', component: () => import('./pages/EpayPayPage.vue'), meta: { auth: true } },
   { path: '/pay/usdt/:no', name: 'pay-usdt', component: () => import('./pages/UsdtPayPage.vue'), meta: { auth: true } },
@@ -71,6 +75,12 @@ router.beforeEach(async (to) => {
   }
   if (to.meta.guestOnly && auth.loggedIn) {
     return safeRedirect(to.query.redirect, '/me')
+  }
+  if (to.meta.buyerOnly && auth.isStaff) {
+    // Say which account is in the way, rather than bouncing without explanation.
+    const { showToast } = await import('./ui')
+    showToast(i18n.global.t('cs.staffBlocked'))
+    return { name: 'me' }
   }
   return true
 })

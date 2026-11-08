@@ -22,6 +22,7 @@ import BuyerInputSheet from '../components/BuyerInputSheet.vue'
 import ManualPromise from '../components/ManualPromise.vue'
 import MiniStrip from '../components/MiniStrip.vue'
 import { cleanSrc, rememberSrc } from '../lib/attribution'
+import { openSupport as support } from '../lib/support'
 import { useCartStore } from '../stores/cart'
 import { useSiteStore } from '../stores/site'
 import { showImagePreview, showSuccessToast, showToast, toastError } from '../ui'
@@ -89,10 +90,10 @@ const redeem = computed(() => safeLinkUrl(product.value?.redeem_url))
 /** CS entry: /chat creates an instant account when needed (no login redirect). */
 function chat() {
   if (!product.value) return
-  void router.push({ path: '/chat', query: { product: product.value.id } })
+  void support(router, product.value.id)
 }
 function report() {
-  void router.push('/chat')
+  void support(router)
 }
 
 function addToCart() {

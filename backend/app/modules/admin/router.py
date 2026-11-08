@@ -31,10 +31,12 @@ from app.modules.admin.schemas import (
     CardsImportIn,
     ProductIn,
     ProductPatch,
+    ReplyTemplateIn,
 )
 from app.modules.catalog.service import support_status
 from app.modules.chat import quotes as quote_svc
 from app.modules.chat import service as chat
+from app.modules.chat import templates as reply_tpl
 from app.modules.chat.schemas import AssignIn, MessageIn, QuoteIn, ReadIn
 from app.modules.common.views import file_url
 from app.modules.inventory import service as inventory
@@ -534,6 +536,55 @@ async def put_agent_status(
 @router.get("/agents")
 async def agents(_: User = Depends(require_staff), db: AsyncSession = Depends(get_db)) -> list:
     return await service.agents(db)
+
+
+# ---------------------------------------------------------------- canned replies
+@router.get("/reply-templates")
+async def reply_templates(
+    staff: User = Depends(require_staff), db: AsyncSession = Depends(get_db)
+) -> list:
+    return await reply_tpl.listing(db, staff)
+
+
+@router.post("/reply-templates", status_code=201)
+async def create_reply_template(
+    body: ReplyTemplateIn,
+    request: Request,
+    staff: User = Depends(require_staff),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    return await reply_tpl.create(
+        db,
+        staff,
+        title=body.title,
+        body=body.body,
+        shared=body.shared,
+        ip=client_ip(request),
+    )
+
+
+@router.put("/reply-templates/{ref}")
+async def update_reply_template(
+    ref: uuid.UUID,
+    body: ReplyTemplateIn,
+    request: Request,
+    staff: User = Depends(require_staff),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    return await reply_tpl.update(
+        db, staff, ref, title=body.title, body=body.body, ip=client_ip(request)
+    )
+
+
+@router.delete("/reply-templates/{ref}", status_code=204)
+async def delete_reply_template(
+    ref: uuid.UUID,
+    request: Request,
+    staff: User = Depends(require_staff),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    await reply_tpl.remove(db, staff, ref, client_ip(request))
+    return Response(status_code=204)
 
 
 # ---------------------------------------------------------------- finance / audit

@@ -12,8 +12,7 @@ export default {
     home: 'Home',
     messages: 'Messages',
     cart: 'Cart',
-    orders: 'Orders',
-    me: 'Me',
+    me: 'My Account',
   },
   lang: {
     auto: 'Auto (browser)',
@@ -187,6 +186,7 @@ export default {
     loggedOut: 'Signed out',
     language: 'Language',
     orders: 'My orders',
+    ordersAll: 'View all',
     messages: 'Messages',
     staff: 'Staff console',
     staffHint: 'You are signed in with a staff account',
@@ -513,6 +513,10 @@ export default {
   cs: {
     verify: 'Complete the verification to start chatting',
     bubble: 'Customer service',
+    staffTitle: 'You are signed in as staff',
+    staffText:
+      'This browser is signed in to a staff account, so buyer chat is not available. Open the console inbox to answer customers, or sign out to browse as a buyer.',
+    staffBlocked: 'Staff accounts use the console inbox, not buyer chat.',
     connecting: 'Connecting you to support…',
     guestBanner: "You're chatting as guest {id}",
     saveLogin: 'Save login',

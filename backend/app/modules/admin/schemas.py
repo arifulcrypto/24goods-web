@@ -297,6 +297,20 @@ class AgentStatusIn(BaseModel):
     message: str | None = Field(None, max_length=200)
 
 
+class ReplyTemplateIn(BaseModel):
+    title: str = Field(min_length=1, max_length=60)
+    body: str = Field(min_length=1, max_length=2000)
+    shared: bool = False
+
+    @field_validator("title", "body")
+    @classmethod
+    def _trim(cls, v: str) -> str:
+        cleaned = v.strip()
+        if not cleaned:
+            raise ValueError("must not be blank")
+        return cleaned
+
+
 class BulkProductsIn(BaseModel):
     ids: list[uuid.UUID] = Field(min_length=1, max_length=200)
     action: Literal["publish", "unpublish", "archive", "restore", "set_category"]

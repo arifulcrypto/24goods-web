@@ -150,7 +150,7 @@ export default {
   agentStatus: {
     online: 'Online',
     away: 'Away',
-    on_hold: 'On hold',
+    on_hold: 'Busy',
     offline: 'Offline',
   },
   deliveryMode: {

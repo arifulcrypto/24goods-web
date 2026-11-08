@@ -30,6 +30,7 @@ import ManualPromise from '../components/ManualPromise.vue'
 import PayChannelPicker from '../components/PayChannelPicker.vue'
 import { cancelPending, payCheckout, payOrder } from '../lib/orderActions'
 import { dropAccessCode, readAccessCode } from '../lib/attribution'
+import { openSupport as support } from '../lib/support'
 import { useRealtimeStore } from '../stores/realtime'
 import { useSiteStore } from '../stores/site'
 import { confirm, showImagePreview, showSuccessToast, showToast, toastError } from '../ui'
@@ -458,7 +459,7 @@ function gotCode() {
       </section>
 
       <div class="contact">
-        <van-button round plain icon="chat-o" to="/chat">{{ t('order.contact') }}</van-button>
+        <van-button round plain icon="chat-o" @click="support(router)">{{ t('order.contact') }}</van-button>
       </div>
       <div class="contact">
         <RouterLink v-if="site.features.lookup" to="/lookup" class="lk">{{ t('lookup.title') }}</RouterLink>

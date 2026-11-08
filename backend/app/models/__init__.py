@@ -2,7 +2,7 @@
 
 from app.models.base import Base
 from app.models.catalog import Category, Product
-from app.models.chat import Attachment, Conversation, Message, Quote
+from app.models.chat import Attachment, Conversation, CsReplyTemplate, Message, Quote
 from app.models.content import AfterSales, Article
 from app.models.growth import (
     ApiToken,
@@ -37,6 +37,7 @@ __all__ = [
     "Category",
     "Checkout",
     "Conversation",
+    "CsReplyTemplate",
     "CustomDomain",
     "Delivery",
     "LedgerEntry",

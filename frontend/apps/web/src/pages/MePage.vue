@@ -9,6 +9,7 @@ import MiniStrip from '../components/MiniStrip.vue'
 import { useAuthStore } from '../stores/auth'
 import { useConversationsStore } from '../stores/conversations'
 import { useSiteStore } from '../stores/site'
+import { openSupport as support } from '../lib/support'
 import { languagePreference, setLocale } from '../locale'
 import type { AppLocale } from '../i18n'
 import type { LocalePreference } from '@24goods/shared'
@@ -22,6 +23,13 @@ const site = useSiteStore()
 const initial = computed(() => (auth.user?.display_name || auth.user?.handle || auth.user?.email || '?').trim().charAt(0).toUpperCase())
 const identity = computed(() => auth.user?.email || auth.user?.handle || '')
 const recent = ref<ProductSummary[]>([])
+const ORDER_TABS = ['unpaid', 'toDeliver', 'delivered', 'afterSales'] as const
+const ORDER_ICONS: Record<(typeof ORDER_TABS)[number], string> = {
+  unpaid: 'balance-o',
+  toDeliver: 'logistics',
+  delivered: 'passed',
+  afterSales: 'after-sale',
+}
 
 onMounted(async () => {
   const ids = recentIds()
@@ -49,7 +57,7 @@ async function logout() {
   }
 }
 function openSupport() {
-  void router.push('/chat')
+  void support(router)
 }
 
 // ---- edit profile ----
@@ -182,6 +190,19 @@ async function deleteAccount() {
       <van-button round type="primary" size="small" class="tap" @click="openCred">{{ t('me.secureCta') }}</van-button>
     </section>
 
+    <section v-if="auth.user" class="section card orders-card">
+      <RouterLink to="/orders" class="orders-head">
+        <strong>{{ t('me.orders') }}</strong>
+        <span class="muted small">{{ t('me.ordersAll') }} <van-icon name="arrow" /></span>
+      </RouterLink>
+      <nav class="orders-quick" :aria-label="t('me.orders')">
+        <RouterLink v-for="k in ORDER_TABS" :key="k" :to="`/orders?tab=${k}`">
+          <van-icon :name="ORDER_ICONS[k]" size="22" />
+          <span>{{ t(`ordersTab.${k}`) }}</span>
+        </RouterLink>
+      </nav>
+    </section>
+
     <MiniStrip :title="t('home.recentlyViewed')" :items="recent" :clear-label="t('home.clear')" @clear="clearViewed" />
 
     <section class="section card">
@@ -311,6 +332,38 @@ async function deleteAccount() {
 }
 .card {
   overflow: hidden;
+}
+.orders-card {
+  padding: 4px 0 8px;
+}
+.orders-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 44px;
+  padding: 0 16px;
+  color: inherit;
+  text-decoration: none;
+}
+.orders-quick {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+}
+.orders-quick a {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 64px;
+  padding: 6px 2px;
+  color: var(--c-text);
+  text-decoration: none;
+  font-size: 12px;
+  text-align: center;
+}
+.orders-quick a:active {
+  background: var(--c-bg);
 }
 .seg {
   display: inline-flex;

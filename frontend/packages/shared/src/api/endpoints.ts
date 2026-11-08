@@ -44,6 +44,8 @@ import type {
   ProductSummary,
   QuoteCardPayload,
   QuoteInput,
+  ReplyTemplate,
+  ReplyTemplateInput,
   SendMessageBody,
   User,
   LedgerRow,
@@ -328,6 +330,13 @@ export function createAdminApi(c: ApiClient) {
       setStatus: (status: AgentStatusValue, message?: string | null) =>
         c.put<AgentStatus>('/admin/agent/status', message ? { status, message } : { status }),
       list: () => c.get<AgentInfo[]>('/admin/agents'),
+    },
+    replyTemplates: {
+      list: () => c.get<ReplyTemplate[]>('/admin/reply-templates'),
+      create: (b: ReplyTemplateInput) => c.post<ReplyTemplate>('/admin/reply-templates', b),
+      update: (id: string, b: ReplyTemplateInput) =>
+        c.put<ReplyTemplate>(`/admin/reply-templates/${seg(id)}`, b),
+      remove: (id: string) => c.delete<void>(`/admin/reply-templates/${seg(id)}`),
     },
     ledger: (q: { page?: number; page_size?: number }) => c.get<Paginated<LedgerRow>>('/admin/ledger', q),
     audit: (q: { page?: number; page_size?: number }) => c.get<Paginated<AuditRow>>('/admin/audit', q),

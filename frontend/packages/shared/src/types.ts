@@ -666,6 +666,19 @@ export interface AgentInfo {
   display_name: string
   status: AgentStatusValue
 }
+/** A canned CS reply. `shared` ones belong to the tenant, the rest to the signed-in agent. */
+export interface ReplyTemplate {
+  id: string
+  title: string
+  body: string
+  sort: number
+  shared: boolean
+}
+export interface ReplyTemplateInput {
+  title: string
+  body: string
+  shared?: boolean
+}
 export interface LedgerRow {
   txn_id: string
   at: string

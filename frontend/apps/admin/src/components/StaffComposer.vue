@@ -15,6 +15,7 @@ import {
 } from '@24goods/shared'
 
 import ProductPickerDialog from './ProductPickerDialog.vue'
+import QuickReplies from './QuickReplies.vue'
 
 defineProps<{ disabled?: boolean }>()
 const emit = defineEmits<{
@@ -45,6 +46,11 @@ function send() {
   }
   emit('sendText', v)
   text.value = ''
+}
+/** A quick reply fills the box so staff can still edit it; it is never sent on its own. */
+function insertReply(body: string) {
+  const current = text.value.trim()
+  text.value = current ? `${current}\n${body}` : body
 }
 function onKeydown(ev: Event | KeyboardEvent) {
   if (!(ev instanceof KeyboardEvent)) return
@@ -159,6 +165,7 @@ defineExpose({ quote: (value: string) => { text.value = `> ${value.slice(0, 300)
           <el-button text circle :icon="Microphone" :disabled="disabled" :aria-label="t('chat.voice.record')" @click="startVoice" />
         </el-tooltip>
         <el-button text :icon="Goods" :disabled="disabled" @click="pickerOpen = true">{{ t('inbox.product_btn') }}</el-button>
+        <QuickReplies :disabled="disabled" @pick="insertReply" />
         <input ref="fileInput" type="file" accept="image/jpeg,image/png,image/webp,image/gif" hidden @change="onFile" />
       </div>
       <div class="input-row">

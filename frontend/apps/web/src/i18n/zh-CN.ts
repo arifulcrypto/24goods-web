@@ -12,8 +12,7 @@ const zhCN: WebMessages = {
     home: '首页',
     messages: '消息',
     cart: '购物车',
-    orders: '订单',
-    me: '我的',
+    me: '我的账户',
   },
   lang: {
     auto: '自动（浏览器）',
@@ -187,6 +186,7 @@ const zhCN: WebMessages = {
     loggedOut: '已退出登录',
     language: '语言',
     orders: '我的订单',
+    ordersAll: '查看全部',
     messages: '消息',
     staff: '员工后台',
     staffHint: '你当前使用的是员工账号',
@@ -513,6 +513,9 @@ const zhCN: WebMessages = {
   cs: {
     verify: '请先完成验证再开始对话',
     bubble: '联系客服',
+    staffTitle: '你当前使用的是员工账号',
+    staffText: '当前浏览器登录的是员工账号，无法使用买家聊天。请前往后台收件箱接待客户，或退出登录后以买家身份浏览。',
+    staffBlocked: '员工账号请使用后台收件箱，而非买家聊天。',
     connecting: '正在为你连接客服…',
     guestBanner: '你正以游客身份 {id} 咨询',
     saveLogin: '保存登录信息',

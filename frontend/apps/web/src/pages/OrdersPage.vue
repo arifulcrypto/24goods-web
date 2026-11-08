@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { canRequestAfterSales, formatDateTime, formatMoney, type AfterSales, type CheckoutView, type Order } from '@24goods/shared'
 import AfterSalesSheet from '../components/AfterSalesSheet.vue'
@@ -12,10 +12,12 @@ import { useSiteStore } from '../stores/site'
 
 const { t, locale } = useI18n()
 const router = useRouter()
+const route = useRoute()
 const site = useSiteStore()
 type Tab = 'all' | 'unpaid' | 'toDeliver' | 'delivered' | 'afterSales'
 const TABS: Tab[] = ['all', 'unpaid', 'toDeliver', 'delivered', 'afterSales']
-const tab = ref<Tab>('all')
+const asked = String(route.query.tab ?? '')
+const tab = ref<Tab>(TABS.includes(asked as Tab) ? (asked as Tab) : 'all')
 const matchTab = (o: Order, k: Tab): boolean => {
   switch (k) {
     case 'unpaid':
@@ -126,7 +128,7 @@ const tone = (s: Order['status']) =>
 
 <template>
   <div class="page with-tabbar">
-    <van-nav-bar :title="t('orders.title')" class="dock-top" fixed placeholder safe-area-inset-top :right-text="site.features.lookup ? t('lookup.title') : ''" @click-right="site.features.lookup && router.push('/lookup')" />
+    <van-nav-bar :title="t('orders.title')" class="dock-top" fixed placeholder safe-area-inset-top left-arrow :left-text="t('tabs.me')" :right-text="site.features.lookup ? t('lookup.title') : ''" @click-left="router.push('/me')" @click-right="site.features.lookup && router.push('/lookup')" />
     <van-tabs v-model:active="tab" class="otabs" sticky :offset-top="46" shrink>
       <van-tab v-for="k in TABS" :key="k" :name="k" :title="t(`ordersTab.${k}`)" />
     </van-tabs>
