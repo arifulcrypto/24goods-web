@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -79,8 +81,14 @@ async def run(res: Resources) -> int:
     async with tenant_session(res.maker, None) as db:
         tids = list(await db.scalars(select(Tenant.id)))
     total = 0
+    started = time.monotonic()
+    if tids:
+        offset = int(await res.redis.incr("sec:reconcile-tenant")) % len(tids)
+        tids = tids[offset:] + tids[:offset]
     cutoff = datetime.now(timezone.utc) - timedelta(minutes=2)
     for tid in tids:
+        if time.monotonic() - started >= 20:
+            break
         async with tenant_session(res.maker, tid) as db:
             refs = list(
                 await db.scalars(
@@ -93,16 +101,23 @@ async def run(res: Resources) -> int:
                             PaymentAttempt.checked_at.is_(None), PaymentAttempt.checked_at < cutoff
                         ),
                     )
-                    .order_by(PaymentAttempt.created_at)
-                    .limit(20)
+                    .order_by(
+                        PaymentAttempt.checked_at.asc().nullsfirst(), PaymentAttempt.created_at
+                    )
+                    .limit(8)
                 )
             )
             for no in dict.fromkeys(refs):
+                remaining = 20 - (time.monotonic() - started)
+                if remaining <= 0:
+                    break
                 try:
-                    outcome, _ = await requery_attempts(db, res, tid, no)
+                    outcome, _ = await asyncio.wait_for(
+                        requery_attempts(db, res, tid, no), timeout=min(10, remaining)
+                    )
                     if outcome is not None:
                         total += 1
-                except Unavailable:
+                except (Unavailable, asyncio.TimeoutError):
                     await db.rollback()
                 rows = await db.scalars(
                     select(PaymentAttempt).where(

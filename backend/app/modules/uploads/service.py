@@ -124,12 +124,17 @@ async def text_preview(store: FileStore, att: Attachment) -> str:
 
 
 async def can_read(db: AsyncSession, att: Attachment, user: User) -> bool:
+    if att.tenant_id != user.tenant_id:
+        return False
     if att.is_public or att.owner_id == user.id or user.role in STAFF_ROLES:
         return True
     in_conversation = await db.scalar(
         select(
             exists().where(
                 Message.attachment_id == att.id,
+                Message.tenant_id == user.tenant_id,
+                Conversation.tenant_id == user.tenant_id,
+                Message.payload["recalled"].as_boolean().is_not(True),
                 Message.conversation_id == Conversation.id,
                 Conversation.buyer_id == user.id,
             )
@@ -139,7 +144,11 @@ async def can_read(db: AsyncSession, att: Attachment, user: User) -> bool:
         return True
     in_order = await db.scalar(
         select(
-            exists().where(Order.manual_delivery_attachment_id == att.id, Order.buyer_id == user.id)
+            exists().where(
+                Order.tenant_id == user.tenant_id,
+                Order.manual_delivery_attachment_id == att.id,
+                Order.buyer_id == user.id,
+            )
         )
     )
     return bool(in_order)

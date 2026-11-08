@@ -16,7 +16,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.resources import Resources
-from app.models import Order, Outbox
+from app.models import Order, Outbox, PaymentAttempt
 from app.modules.operations.service import utcnow
 
 STARTED = time.monotonic()
@@ -129,6 +129,7 @@ async def overview(db: AsyncSession, res: Resources, tenant: Any) -> dict[str, A
     database = {"status": "unknown", "schema_version": None}
     outbox: dict[str, Any] = {"pending": None, "oldest_at": None, "failed": None}
     review = None
+    uncertain = None
     try:
         await db.execute(text("SET LOCAL statement_timeout = '1500ms'"))
         database = {
@@ -155,6 +156,12 @@ async def overview(db: AsyncSession, res: Resources, tenant: Any) -> dict[str, A
         review = await db.scalar(
             select(func.count(Order.id)).where(
                 Order.tenant_id == tenant, Order.status == "manual_review"
+            )
+        )
+        uncertain = await db.scalar(
+            select(func.count(PaymentAttempt.id)).where(
+                PaymentAttempt.tenant_id == tenant,
+                PaymentAttempt.status.in_(("preparing", "unknown")),
             )
         )
     except Exception:
@@ -190,6 +197,6 @@ async def overview(db: AsyncSession, res: Resources, tenant: Any) -> dict[str, A
         "database": database,
         "redis": redis,
         "outbox": outbox,
-        "payment_review": {"orders": review},
+        "payment_review": {"orders": review, "uncertain_attempts": uncertain},
         "delivery": {"status": "unknown"},
     }

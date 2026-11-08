@@ -124,7 +124,16 @@
 
 	log {
 		output stdout
-		format json
+		format filter {
+			wrap json
+			fields {
+				request>uri regexp "\\?.*$" ""
+				request>headers>Referer delete
+				request>headers>X-Turnstile-Token delete
+				request>headers>X-Access-Code delete
+				request>headers>X-Api-Key delete
+			}
+		}
 	}
 }
 

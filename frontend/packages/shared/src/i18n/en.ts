@@ -3,6 +3,8 @@
  * vue-i18n syntax: {name} interpolation, `|` plurals; write a literal @ as {'@'}.
  */
 export default {
+  mediaPrefs: {quality:'Image quality',auto:'Auto (network)',low:'Low data',high:'High quality',compress:'Compress images before upload'},
+  chatActions: {"menu": "Message actions", "copy": "Copy text", "reply": "Quote in draft", "pin": "Pin", "unpin": "Unpin", "recall": "Recall", "recalled": "Message recalled by sender", "media": "Pinned media"},
   paste: {
     tip: 'Tip: paste a screenshot with Ctrl+V',
   },
@@ -43,6 +45,7 @@ export default {
     offlineBanner: 'Live updates paused — refreshing every few seconds',
   },
   errors: {
+    buyer_input_disabled: 'This order does not accept additional information.',
     unauthorized: 'Please sign in again',
     forbidden: 'You do not have permission to do that',
     csrf: 'Security check failed, please refresh the page',

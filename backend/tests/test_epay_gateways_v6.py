@@ -187,3 +187,17 @@ async def test_gateway_creation_requires_fresh_auth_and_never_returns_secret(env
     assert r.status_code == 403 and key not in r.text
     buyer, _ = await env.login()
     assert (await buyer.get("/api/v1/admin/payment-gateways")).status_code == 403
+
+
+async def test_legacy_environment_key_cannot_bypass_versioned_attempt_or_cutover(env, monkeypatch):
+    from app.core.errors import Unavailable
+    from app.modules.payments.gateways import legacy_allowed, routed_resources
+
+    admin, _ = await env.login("admin")
+    await _gateway(env, admin, monkeypatch)
+    buyer, _ = await env.login()
+    order = await buy(buyer, await env.product(mode="manual"))
+    async with env.api_session() as db:
+        assert not await legacy_allowed(db, env.tenant_id, order["order_no"])
+        with pytest.raises(Unavailable):
+            await routed_resources(db, env.res, env.tenant_id, order["order_no"])

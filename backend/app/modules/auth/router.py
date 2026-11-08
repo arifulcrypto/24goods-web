@@ -33,6 +33,7 @@ from app.modules.auth.schemas import (
 )
 from app.modules.common.views import user_view
 from app.modules.content.site import tenant_settings
+from app.modules.operations.service import record_event
 
 
 class TermsRequired(ApiError):
@@ -119,7 +120,35 @@ async def login(
     await require_turnstile(
         request, await tenant_settings(db, tenant_id), "login", body.turnstile_token
     )
-    user = await service.login(db, res.redis, res.settings, tenant_id, body, client_ip(request))
+    try:
+        user = await service.login(db, res.redis, res.settings, tenant_id, body, client_ip(request))
+    except ApiError:
+        await record_event(
+            db,
+            tenant_id=tenant_id,
+            environment=res.settings.env,
+            family="login",
+            action="auth.login",
+            outcome="denied",
+            reason="authentication_rejected",
+            ip=client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+        )
+        await db.commit()
+        raise
+    await record_event(
+        db,
+        tenant_id=tenant_id,
+        environment=res.settings.env,
+        family="login",
+        action="auth.login",
+        outcome="success",
+        reason="authenticated",
+        actor_id=user.id,
+        ip=client_ip(request),
+        user_agent=request.headers.get("user-agent"),
+    )
+    await db.commit()
     if user.role in STAFF_ROLES:
         await forbid_custom_host(request, db, tenant_id)
     return await _start_session(request, res, user)

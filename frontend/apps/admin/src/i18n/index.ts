@@ -1,5 +1,5 @@
 import { createI18n } from 'vue-i18n'
-import { detectLocale, localeFromQuery, mergeMessageTrees, persistLocale, sharedMessages, type MessageTree } from '@24goods/shared'
+import { detectLocale, localeFromQuery, localePreference, mergeMessageTrees, sharedMessages, type MessageTree } from '@24goods/shared'
 import en from './en'
 import zhCN from './zh-CN'
 
@@ -16,8 +16,7 @@ export const messages = {
 
 const initial = detectLocale()
 // a ?lang= link must not overwrite the saved choice (only the in-app switcher persists)
-if (localeFromQuery()) document.documentElement.lang = initial
-else persistLocale(initial)
+if (typeof document !== 'undefined') document.documentElement.lang = initial
 
 export const i18n = createI18n({
   legacy: false,
@@ -31,3 +30,11 @@ export const i18n = createI18n({
 export function currentLocale(): AppLocale {
   return i18n.global.locale.value as AppLocale
 }
+
+if (typeof window !== 'undefined') window.addEventListener('languagechange', () => {
+  if (localePreference() === 'auto' && !localeFromQuery()) {
+    const l = detectLocale()
+    i18n.global.locale.value = l
+    document.documentElement.lang = l
+  }
+})

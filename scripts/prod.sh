@@ -113,24 +113,9 @@ cmd_logs() {
 # ------------------------------------------------------------------ backups
 # The remote script is the single source for manual + cron backups.
 remote_backup_script() {
-  cat <<'EOF'
-#!/usr/bin/env bash
-# Installed by scripts/prod.sh. Nightly/manual backup: Postgres dump + uploads + config/secrets (vault keys!).
-set -euo pipefail
-BK=/opt/kesiv/backups; D=/opt/kesiv/deploy; KEEP=14
-mkdir -p "$BK"; chmod 700 "$BK"; umask 077
-TS=$(date -u +%Y%m%dT%H%M%SZ)
-DC=(docker compose -f "$D/docker-compose.yml" -f "$D/docker-compose.prod.yml" --env-file "$D/.env")
-"${DC[@]}" exec -T postgres pg_dump -U postgres -Fc goods24 > "$BK/goods24-$TS.dump.part"
-mv "$BK/goods24-$TS.dump.part" "$BK/goods24-$TS.dump"
-docker run --rm -v goods24_uploads:/data:ro --entrypoint tar postgres:17-alpine -C /data -czf - . > "$BK/uploads-$TS.tgz"
-tar -C "$D" -czf "$BK/config-$TS.tgz" .env env secrets
-for p in goods24 uploads config; do
-  ls -1t "$BK"/$p-*.* 2>/dev/null | tail -n +$((KEEP + 1)) | xargs -r rm -f --
-done
-echo "backup ok: $TS"
-EOF
+  cat "$ROOT/deploy/backup.sh"
 }
+
 install_backup_script() {
   remote_backup_script | rsh "cat > $REMOTE/backup.sh && chmod 700 $REMOTE/backup.sh"
 }
@@ -139,26 +124,28 @@ cmd_backup() {
   install_backup_script
   rsh "$REMOTE/backup.sh"
   mkdir -p "$LOCAL_BACKUPS"; chmod 700 "$LOCAL_BACKUPS"; umask 077
-  local latest f
-  latest=$(rsh "ls -1t $REMOTE/backups/goods24-*.dump | head -1" | sed -E 's#.*/goods24-(.*)\.dump#\1#')
-  [[ -n "$latest" ]] || die "no backup found on c4"
-  for f in "goods24-$latest.dump" "uploads-$latest.tgz" "config-$latest.tgz"; do
-    rcp_from "$REMOTE/backups/$f" "$LOCAL_BACKUPS/$f"
-  done
-  # keep 14 generations locally too
-  local p
-  for p in goods24 uploads config; do
-    # shellcheck disable=SC2012
-    ls -1t "$LOCAL_BACKUPS"/$p-* 2>/dev/null | tail -n +15 | xargs -r rm -f --
-  done
-  c_ok "backup copied to $LOCAL_BACKUPS (stamp $latest)"
+  local latest staging
+  latest=$(rsh "find $REMOTE/backups -mindepth 2 -maxdepth 2 -name COMPLETE -printf '%h\n' | sort | tail -1" | sed 's#.*/##')
+  [[ "$latest" =~ ^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}$ ]] || die "no complete v2 backup found"
+  staging=$(mktemp -d "$LOCAL_BACKUPS/.partial-$latest-XXXXXX")
+  # Copy one immutable complete directory, then verify locally before publishing a receipt.
+  rsh "tar -C $REMOTE/backups -cf - $latest" | tar -xf - -C "$staging" --no-same-owner
+  (cd "$staging/$latest" && sha256sum -c MANIFEST.sha256)
+  [[ -s "$staging/$latest/COMPLETE" ]] || die "incomplete backup"
+  [[ ! -e "$LOCAL_BACKUPS/$latest" ]] || die "backup generation already exists locally"
+  mv "$staging/$latest" "$LOCAL_BACKUPS/$latest"
+  rmdir "$staging"
+  rsh "umask 077; date -u +%FT%TZ > $REMOTE/backups/$latest/OFFSITE_VERIFIED"
+  c_ok "encrypted complete set copied and verified: $LOCAL_BACKUPS/$latest"
+  c_warn "Retain independently held recovery keys and run an isolated restore test. No automatic pruning."
+
 }
 cmd_install_backup_cron() {
   install_backup_script
   rsh "printf '%s\n' 'SHELL=/bin/bash' 'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' \
     '30 3 * * * root $REMOTE/backup.sh >> /var/log/kesiv-backup.log 2>&1' > /etc/cron.d/kesiv-backup && chmod 644 /etc/cron.d/kesiv-backup"
   rsh "test -x /usr/sbin/cron -o -x /usr/sbin/crond" || c_warn "cron daemon not found on c4: apt-get install -y cron"
-  c_ok "nightly backup installed (03:30 UTC, keep 14, log /var/log/kesiv-backup.log). Pull copies with 'scripts/prod.sh backup'."
+  c_ok "nightly encrypted backup installed (03:30 UTC, no automatic pruning, log /var/log/kesiv-backup.log). Pull copies with 'scripts/prod.sh backup'."
 }
 
 # ------------------------------------------------------------------ smoke (read-only)

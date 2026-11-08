@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core import safefetch, secretbox
 from app.core.audit import audit
 from app.core.deps import client_ip, get_db, get_res, require_admin
-from app.core.errors import Forbidden, NotFound
+from app.core.errors import Forbidden, NotFound, Validation
 from app.core.ratelimit import enforce
 from app.core.resources import Resources
 from app.core.security import verify_password
@@ -21,6 +21,12 @@ from app.models import PaymentGateway, User
 from app.modules.payments.gateways import active_gateway, normalize_gateway, set_active
 
 router = APIRouter(prefix="/admin/payment-gateways", tags=["admin"])
+
+
+async def session_admin(request: Request, user: User = Depends(require_admin)) -> User:
+    if getattr(request.state, "api_token", None) is not None:
+        raise Forbidden("An administrator session is required")
+    return user
 
 
 class GatewayIn(BaseModel):
@@ -34,7 +40,7 @@ class GatewayIn(BaseModel):
 
 @router.get("")
 async def list_gateways(
-    admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)
+    admin: User = Depends(session_admin), db: AsyncSession = Depends(get_db)
 ) -> dict:
     active = await active_gateway(db, admin.tenant_id)
     rows = await db.scalars(
@@ -64,13 +70,15 @@ async def list_gateways(
 async def create_gateway(
     body: GatewayIn,
     request: Request,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(session_admin),
     db: AsyncSession = Depends(get_db),
     res: Resources = Depends(get_res),
 ) -> dict:
     await enforce(res.redis, "gateway:config", str(admin.id), 10, 3600)
     if not (await verify_password(admin.pw_hash, body.current_password))[0]:
         raise Forbidden("Current password required")
+    if not body.label.strip():
+        raise Validation("A provider label is required")
     base = normalize_gateway(body.gateway)
     await safefetch.vet_url(base)
     ref = uuid.uuid4()
@@ -114,7 +122,7 @@ async def activate_gateway(
     ref: uuid.UUID,
     body: ActivateIn,
     request: Request,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(session_admin),
     db: AsyncSession = Depends(get_db),
     res: Resources = Depends(get_res),
 ) -> dict:

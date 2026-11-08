@@ -92,6 +92,10 @@ async def _settle_if_paid(
     outcome, managed = await requery_attempts(db, res, tid, out_trade_no)
     if outcome is not None or managed:
         return outcome
+    from app.modules.payments.gateways import legacy_allowed
+
+    if not await legacy_allowed(db, tid, out_trade_no):
+        return None
     try:
         q = await res.zpay.query_order(out_trade_no)
     except ZPayQueryError:
@@ -127,11 +131,26 @@ async def _settle_usdt_if_paid(
 ) -> NotifyOutcome | None:
     """Same as the ZPay path for a USDT order: re-query the stored trade_id (BEpusdt cannot be
     queried by our order number)."""
-    att = await usdt_svc.load_attempt(res, no)
+    att = await usdt_svc.load_attempt(res, no, db=db, tid=db.info["tenant_id"])
     if not att or att.get("channel") != channel or not att.get("trade_id"):
-        return None  # no transaction was ever opened: nothing can have been paid
+        raise Unavailable(
+            "USDT recovery state is missing; reconcile with the gateway before cancellation"
+        )
     try:
-        info = await res.bepusdt.query_info(str(att["trade_id"]))
+        from app.models import PaymentAttempt
+
+        stored = await db.scalar(
+            select(PaymentAttempt)
+            .where(
+                PaymentAttempt.tenant_id == db.info["tenant_id"],
+                PaymentAttempt.local_ref == no,
+                PaymentAttempt.provider_id.is_(None),
+                PaymentAttempt.data["trade_id"].as_string() == str(att["trade_id"]),
+            )
+            .limit(1)
+        )
+        client = usdt_svc.original_client(res, stored) if stored else res.bepusdt
+        info = await client.query_info(str(att["trade_id"]))
     except BepusdtError:
         raise Unavailable("Could not verify the payment status; please try again") from None
     if not info.found or info.status != bepusdt.STATUS_PAID:
@@ -142,6 +161,8 @@ async def _settle_usdt_if_paid(
         or info.trade_id != att["trade_id"]
         or info.money != expected
         or info.fiat != bepusdt.FIAT
+        or (att.get("address") and att["address"] != info.address)
+        or (att.get("actual_amount") and Decimal(att["actual_amount"]) != info.actual_amount)
         or bepusdt.TRADE_TYPE_TO_CHANNEL.get(info.trade_type) != channel
     ):
         raise Unavailable("Could not verify the payment status; please try again")

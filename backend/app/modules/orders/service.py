@@ -531,7 +531,14 @@ async def pay_url(
         no, title, minor, cur = order.order_no, order.title, order.amount_minor, order.currency
         await db.commit()  # release the row lock before the gateway call
         await usdt_svc.start_attempt(
-            res, no=no, title=title, amount_minor=minor, currency=cur, channel=channel
+            res,
+            no=no,
+            title=title,
+            amount_minor=minor,
+            currency=cur,
+            channel=channel,
+            db=db,
+            tid=order.tenant_id,
         )
         if msg is not None:
             await broadcast_order(res, db, order, [msg])

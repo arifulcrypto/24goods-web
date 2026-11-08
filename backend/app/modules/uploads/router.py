@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import uuid
+from typing import Literal
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile
 from fastapi.responses import FileResponse
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.apitoken import require_scope
@@ -18,6 +20,7 @@ from app.modules.common.views import attachment_view
 from app.modules.content.site import tenant_settings
 from app.modules.uploads import service
 from app.modules.uploads.storage import FileStore
+from app.modules.uploads.thumbnail import small_image
 
 router = APIRouter(tags=["uploads"])
 
@@ -48,11 +51,17 @@ async def upload(
 @router.get("/files/{file_id}")
 async def get_file(
     file_id: uuid.UUID,
+    variant: Literal["original", "small"] = "original",
+    res: Resources = Depends(get_res),
     db: AsyncSession = Depends(get_db),
     user: User | None = Depends(optional_user),
     store: FileStore = Depends(get_store),
 ) -> FileResponse:
-    att = await db.get(Attachment, file_id)
+    att = await db.scalar(
+        select(Attachment).where(
+            Attachment.id == file_id, Attachment.tenant_id == db.info["tenant_id"]
+        )
+    )
     if att is None or att.deleted_at is not None:
         raise NotFound("File not found")
     if not att.is_public:
@@ -64,6 +73,12 @@ async def get_file(
     if not path.is_file():
         raise NotFound("File not found")
     media_type = att.mime
+    if variant == "small" and att.kind == "image":
+        await enforce(
+            res.redis, "image:preview", str(user.id) if user else str(att.tenant_id), 60, 60
+        )
+        path = await small_image(store, att.storage_key)
+        media_type = "image/webp"
     disposition = "inline" if att.kind == "image" else "attachment"
     if att.kind == "file":
         media_type = "text/plain; charset=utf-8"
@@ -75,6 +90,6 @@ async def get_file(
         # plays it, but direct navigation never renders it as a document.
         "Content-Disposition": disposition,
         "Cross-Origin-Resource-Policy": "same-origin",
-        "Cache-Control": "public, max-age=86400" if att.is_public else "private, max-age=300",
+        "Cache-Control": "public, max-age=86400" if att.is_public else "private, no-store",
     }
     return FileResponse(path, media_type=media_type, headers=headers)

@@ -220,6 +220,7 @@ onBeforeUnmount(() => {
   recorder?.cancel()
   recorder = null
 })
+defineExpose({ quote: (value: string) => { text.value = `> ${value.slice(0, 300).replace(/\n/g, '\n> ')}\n\n`; } })
 </script>
 
 <template>

@@ -584,7 +584,14 @@ async def pay_checkout(
         no, minor, cur = co.checkout_no, co.amount_minor, co.currency
         await db.commit()  # release the row locks before the gateway call
         await usdt_svc.start_attempt(
-            res, no=no, title=name, amount_minor=minor, currency=cur, channel=channel
+            res,
+            no=no,
+            title=name,
+            amount_minor=minor,
+            currency=cur,
+            channel=channel,
+            db=db,
+            tid=co.tenant_id,
         )
         await _announce(res, db, msgs)
         return f"/pay/usdt/{no}"

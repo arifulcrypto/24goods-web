@@ -1,4 +1,5 @@
 import { ApiClient, createBuyerApi, createRateLimitNotifier, storefrontHeaders, type ApiError } from '@24goods/shared'
+import { verifiedPay } from './lib/securityChallenge'
 import { currentLocale, i18n } from './i18n'
 import { showFailToast } from './ui'
 
@@ -20,3 +21,6 @@ export const client = new ApiClient({
   ),
 })
 export const api = createBuyerApi(client)
+
+api.orders.pay = (ref, channel) => verifiedPay(client, 'order', ref, channel)
+api.checkout.pay = (ref, channel) => verifiedPay(client, 'checkout', ref, channel)

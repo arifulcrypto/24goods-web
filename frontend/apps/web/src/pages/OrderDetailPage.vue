@@ -214,29 +214,11 @@ watch(
 const infoSheet = ref(false)
 const infoBusy = ref(false)
 const infoConfig = ref<BuyerInputConfig | null>(null)
-const canEditInput = computed(() => order.value?.status === 'pending_payment' || order.value?.status === 'paid')
-const FALLBACK_INPUT: BuyerInputConfig = {
-  enabled: true,
-  required: true,
-  multiline: true,
-  max_len: 2000,
-  title: '',
-  prompt: '',
-  placeholder: '',
-}
+const canEditInput = computed(() => order.value?.can_edit_input === true)
 async function editInput() {
-  const o = order.value
-  if (!o) return
-  let cfg = FALLBACK_INPUT
-  if (o.product_id) {
-    try {
-      const p = await api.product(o.product_id)
-      if (p.buyer_input?.enabled) cfg = { ...p.buyer_input, prompt: '' }
-    } catch {
-      /* use the fallback */
-    }
-  }
-  infoConfig.value = cfg
+  const cfg = order.value?.input_config
+  if (!canEditInput.value || !cfg?.enabled) return
+  infoConfig.value = { ...cfg, prompt: '' }
   infoSheet.value = true
 }
 async function saveInput(v: string) {

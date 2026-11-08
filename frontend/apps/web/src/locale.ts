@@ -1,7 +1,8 @@
 import { Locale } from 'vant'
 import enUS from 'vant/es/locale/lang/en-US'
 import zhCNVant from 'vant/es/locale/lang/zh-CN'
-import { persistLocale } from '@24goods/shared'
+import { ref } from 'vue'
+import { browserLocale, localePreference, persistLocale, type LocalePreference } from '@24goods/shared'
 import { i18n, type AppLocale } from './i18n'
 
 export function applyVantLocale(l: AppLocale): void {
@@ -9,8 +10,14 @@ export function applyVantLocale(l: AppLocale): void {
   else Locale.use('en-US', enUS)
 }
 
-export function setLocale(l: AppLocale): void {
+export const languagePreference = ref<LocalePreference>(localePreference())
+
+export function setLocale(preference: LocalePreference): void {
+  languagePreference.value = preference
+  const l = preference === 'auto' ? browserLocale() : preference
   i18n.global.locale.value = l
-  persistLocale(l)
+  persistLocale(preference)
   applyVantLocale(l)
 }
+
+window.addEventListener('languagechange', () => applyVantLocale(i18n.global.locale.value as AppLocale))

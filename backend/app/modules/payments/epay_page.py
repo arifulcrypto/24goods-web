@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from urllib.parse import urlsplit
+
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -51,6 +53,9 @@ async def payment_view(
         "expires_at": att.expires_at.isoformat() if att.expires_at else None,
         "expired": expired,
         "kind": data.get("kind"),
+        "redirect_host": urlsplit(data.get("payload", "")).hostname
+        if data.get("kind") == "redirect"
+        else None,
         "redirect_url": data.get("payload") if data.get("kind") == "redirect" else None,
         "qr_svg": qr_svg(data["payload"]) if data.get("kind") == "qr" else None,
     }

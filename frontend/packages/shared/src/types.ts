@@ -232,6 +232,8 @@ export interface Order {
   checkout_no?: string | null
   /** Owner/staff only. Never logged. */
   buyer_input?: string | null
+  input_config?: BuyerInputConfig | null
+  can_edit_input?: boolean
   cancel_reason?: string | null
   // ---- v5 (review-v5 §12) ----
   /** Money off, minor units. */
@@ -687,4 +689,19 @@ export type ConversationFilter = 'all' | 'mine' | 'unassigned'
 export interface StreamMessageEvent {
   conversation_id: string
   message: Message
+}
+
+/** Private server-generated EPay presentation, never a payment-success assertion. */
+export interface EpayPaymentView {
+  redirect_host: string | null
+  attempt_id: string
+  status: string
+  attempt_status: string
+  amount: string
+  currency: string
+  expires_at: string | null
+  expired: boolean
+  kind: 'qr' | 'redirect' | null
+  redirect_url: string | null
+  qr_svg: string | null
 }

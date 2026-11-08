@@ -1,6 +1,8 @@
 import type { MessageSchema } from './index'
 
 const zhCN: MessageSchema = {
+  mediaPrefs: {quality:'图片质量',auto:'自动（网络）',low:'节省流量',high:'高画质',compress:'上传前压缩图片'},
+  chatActions: {menu:'消息操作',copy:'复制文字',reply:'引用到草稿',pin:'置顶',unpin:'取消置顶',recall:'撤回',recalled:'发送者已撤回消息',media:'置顶媒体'},
   paste: {
     tip: '提示：可按 Ctrl+V 直接粘贴截图',
   },
@@ -41,6 +43,7 @@ const zhCN: MessageSchema = {
     offlineBanner: '实时连接已暂停，正在每隔几秒自动刷新',
   },
   errors: {
+    buyer_input_disabled: '此订单未启用附加信息填写。',
     unauthorized: '请重新登录',
     forbidden: '你没有执行此操作的权限',
     csrf: '安全校验失败，请刷新页面',

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { imageQuality, compressUploads, setMediaPreference } from '@24goods/shared'
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
@@ -8,8 +9,9 @@ import MiniStrip from '../components/MiniStrip.vue'
 import { useAuthStore } from '../stores/auth'
 import { useConversationsStore } from '../stores/conversations'
 import { useSiteStore } from '../stores/site'
-import { setLocale } from '../locale'
+import { languagePreference, setLocale } from '../locale'
 import type { AppLocale } from '../i18n'
+import type { LocalePreference } from '@24goods/shared'
 import { confirm, showSuccessToast, showToast, toastError } from '../ui'
 
 const { t, locale } = useI18n()
@@ -35,9 +37,7 @@ function clearViewed() {
   recent.value = []
 }
 
-function switchLang(l: AppLocale) {
-  if (locale.value !== l) setLocale(l)
-}
+function switchLang(l: LocalePreference) { setLocale(l) }
 async function logout() {
   if (!(await confirm(t('me.logout'), t('me.logoutConfirm', { brand: site.headerName })))) return
   try {
@@ -66,8 +66,9 @@ async function saveProfile() {
   if (saving.value || !editName.value.trim()) return
   saving.value = true
   try {
+    const changedLocale = editLocale.value !== auth.user?.locale
     auth.setUser(await api.me.update({ display_name: editName.value.trim(), locale: editLocale.value }))
-    setLocale(editLocale.value as AppLocale)
+    if (changedLocale || languagePreference.value !== 'auto') setLocale(editLocale.value as AppLocale)
     editShow.value = false
     showSuccessToast(t('common.saved'))
   } catch (e) {
@@ -195,13 +196,16 @@ async function deleteAccount() {
         <van-cell :title="t('me.afterSalesPolicy')" icon="shield-o" is-link to="/a/after-sales" />
         <van-cell :title="t('me.terms')" icon="notes-o" is-link to="/a/terms" />
         <van-cell :title="t('me.privacy')" icon="eye-o" is-link to="/a/privacy" />
+        <van-cell :title="t('mediaPrefs.quality')"><template #value><select :value="imageQuality" @change="setMediaPreference(($event.target as HTMLSelectElement).value as 'auto' | 'low' | 'high', compressUploads)"><option value="auto">{{ t('mediaPrefs.auto') }}</option><option value="low">{{ t('mediaPrefs.low') }}</option><option value="high">{{ t('mediaPrefs.high') }}</option></select></template></van-cell>
+        <van-cell :title="t('mediaPrefs.compress')"><template #value><van-switch :model-value="compressUploads" @update:model-value="v => setMediaPreference(imageQuality, v)" /></template></van-cell>
         <van-cell :title="t('me.language')" icon="flag-o" center>
           <template #value>
             <div class="seg" role="radiogroup" :aria-label="t('me.language')">
-              <button type="button" role="radio" :aria-checked="locale === 'en'" :class="{ on: locale === 'en' }" @click="switchLang('en')">
+              <button type="button" role="radio" :aria-checked="languagePreference === 'auto'" :class="{ on: languagePreference === 'auto' }" @click="switchLang('auto')">{{ t('lang.auto') }}</button>
+              <button type="button" role="radio" :aria-checked="languagePreference === 'en'" :class="{ on: languagePreference === 'en' }" @click="switchLang('en')">
                 {{ t('lang.en') }}
               </button>
-              <button type="button" role="radio" :aria-checked="locale === 'zh-CN'" :class="{ on: locale === 'zh-CN' }" @click="switchLang('zh-CN')">
+              <button type="button" role="radio" :aria-checked="languagePreference === 'zh-CN'" :class="{ on: languagePreference === 'zh-CN' }" @click="switchLang('zh-CN')">
                 {{ t('lang.zh') }}
               </button>
             </div>

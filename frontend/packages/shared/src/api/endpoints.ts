@@ -116,6 +116,10 @@ export function createBuyerApi(c: ApiClient) {
         c.post<InstantResult>('/auth/instant', b, { skipAuthHandler: true }),
     },
     /** v3: brand, announcement, defaults, fixed pages. */
+    chatActions: {
+      recall: (id: number) => c.post<Message>(`/chat/messages/${id}/recall`, {}),
+      pin: (id: number, pinned: boolean) => c.post<Message>(`/chat/messages/${id}/pin`, { pinned }),
+    },
     site: () => c.get<SiteInfo>('/site'),
     pow: {
       challenge: (scope: PowScope) => c.get<PowChallenge>('/pow/challenge', { scope }),
@@ -183,7 +187,7 @@ export function createBuyerApi(c: ApiClient) {
           qty,
           ...(promo_code ? { promo_code } : {}),
           ...(src ? { src } : {}),
-          ...(buyer_input ? { buyer_input } : {}),
+          ...(buyer_input !== undefined ? { buyer_input } : {}),
         }),
       /** v4 §3: buyer cancel (whole checkout for member orders). 409 already_paid / 503 retry. */
       cancel: (id: string, reason?: string) =>
@@ -200,6 +204,7 @@ export function createBuyerApi(c: ApiClient) {
       afterSales: (id: string, b: AfterSalesInput) => c.post<AfterSales>(`/orders/${seg(id)}/after-sales`, b),
     },
     /** v5.2 §7: data of the USDT pay page (owner only; 404 when no attempt exists). */
+    epayPay: (no: string) => c.get<import('../types').EpayPaymentView>(`/pay/epay/${seg(no)}`),
     usdtPay: (no: string) => c.get<UsdtPayView>(`/pay/usdt/${seg(no)}`),
     /** v4 §1 */
     paymentChannels: () => c.get<PaymentChannel[]>('/site/payment-channels'),
@@ -264,6 +269,7 @@ export function createAdminApi(c: ApiClient) {
   const buyer = createBuyerApi(c)
   return {
     auth: buyer.auth,
+    chatActions: buyer.chatActions,
     categories: buyer.categories,
     upload: buyer.upload,
     stats: () => c.get<AdminStats>('/admin/stats'),

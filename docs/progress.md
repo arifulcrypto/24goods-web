@@ -4,7 +4,7 @@ Update this file in every PR. Phases are defined in [review-v2.md §8](review-v2
 
 ## Current state — hand-off (read this first in a new session)
 
-_Last updated 2026-11-08 UTC (v5.1 + v5.2 implementation; security/operations research added)._
+_Last updated 2026-11-08 UTC (v6 implementation in unmerged draft PR #31; deployed-state notes below have not been reverified)._
 
 - **Prod** https://shop.kesiv.com (c4, IIJ Japan) runs **v4**; deployed by the owner from another session
   (`scripts/prod.sh`). This box = dev + demo. Prod needs `APP_SETTINGS_KEY` and the new env vars
@@ -40,7 +40,7 @@ _Last updated 2026-11-08 UTC (v5.1 + v5.2 implementation; security/operations re
   payment attempts. This review does not satisfy the independent pentest gate; no business code changed.
 - **Working rules:** AGENTS.md §7 (2 GB box: full suite in CI only, ≤ 2 agents, dev stack down when idle).
 
-### Follow-up requirements — documented, not implemented (2026-11-08 UTC)
+### Original follow-up requirements (see implementation status below; 2026-11-08 UTC)
 
 Tracking: [#27 payments](https://github.com/arifulcrypto/24goods-web/issues/27),
 [#28 operations/recovery](https://github.com/arifulcrypto/24goods-web/issues/28),
@@ -81,8 +81,19 @@ Tracking: [#27 payments](https://github.com/arifulcrypto/24goods-web/issues/27),
   explicit merchant-ownership acknowledgement, durable reservations, original-provider notify/query
   routing, bounded DNS-pinned HTTPS, typed local QR and reconciliation. Alipay is the enabled-method
   scope supplied by the owner; native RSA and unapproved payment methods are not inferred available.
-- Remaining implementation/review in progress: durable USDT recovery, entry/payment challenge UI,
-  chat/locale/media preferences, operations/backups and service reminders; full CI/review gates pending.
+- USDT: durable encrypted original-provider binding and address/amount/trade history, PostgreSQL
+  recovery after Redis loss, fail-closed unknown creation/cancellation, receiver mismatch holds.
+- Buyer/staff UX: backend-owned input capabilities, no synthetic input fallback, browser Auto locale,
+  bounded sender-only 180-second recall, shared pins/copy/quoted draft, private low-data thumbnails,
+  default upload compression and local quality preferences.
+- Operations/services: platform-admin overview and sanitized events; staff service activation,
+  versioned periods and verified once-only renewal, durable opt-in staff SMTP/TG reminders. No debit.
+- Recovery: encrypted complete-set maintenance backup, separate vault recovery recipient, writer
+  fencing, lock, manifest, atomic completion and verified offsite receipt; simulated failure tests.
+  See [operations-v6.md](operations-v6.md). Operator tools include age (new operational dependency).
+- Entry/payment gates, full CI and read-only security/payment/mobile reviews are being integrated.
+  No deployment, live provider credential use, real payment or production backup/restore was performed.
+  See [implementation matrix](implementation-v6.md) for concrete completion evidence and limits.
 
 ## Done
 

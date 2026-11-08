@@ -48,24 +48,31 @@ export function localeFromQuery(): 'en' | 'zh-CN' | null {
   }
 }
 
-export function detectLocale(): 'en' | 'zh-CN' {
-  const fromUrl = localeFromQuery()
-  if (fromUrl) return fromUrl
+export type LocalePreference = 'auto' | 'en' | 'zh-CN'
+
+export function localePreference(): LocalePreference {
   try {
     const saved = localStorage.getItem(LOCALE_STORAGE_KEY)
     if (saved === 'en' || saved === 'zh-CN') return saved
-  } catch {
-    /* storage blocked */
-  }
-  const nav = typeof navigator !== 'undefined' ? navigator.language : 'en'
-  return /^zh\b/i.test(nav) ? 'zh-CN' : 'en'
+  } catch { /* storage blocked */ }
+  return 'auto'
 }
 
-export function persistLocale(l: 'en' | 'zh-CN'): void {
-  try {
-    localStorage.setItem(LOCALE_STORAGE_KEY, l)
-  } catch {
-    /* ignore */
+export function browserLocale(): 'en' | 'zh-CN' {
+  const languages = typeof navigator === 'undefined' ? [] : (navigator.languages?.length ? navigator.languages : [navigator.language])
+  for (const lang of languages) {
+    if (/^zh(?:-|$)/i.test(lang)) return 'zh-CN'
+    if (/^en(?:-|$)/i.test(lang)) return 'en'
   }
-  if (typeof document !== 'undefined') document.documentElement.lang = l
+  return 'en'
+}
+
+export function detectLocale(): 'en' | 'zh-CN' {
+  const pref = localePreference()
+  return localeFromQuery() ?? (pref === 'auto' ? browserLocale() : pref)
+}
+
+export function persistLocale(l: LocalePreference): void {
+  try { localStorage.setItem(LOCALE_STORAGE_KEY, l) } catch { /* storage blocked */ }
+  if (typeof document !== 'undefined') document.documentElement.lang = l === 'auto' ? browserLocale() : l
 }

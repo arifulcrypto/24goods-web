@@ -81,6 +81,7 @@ async def notify_bepusdt(
         params = bepusdt.parse_json(await request.body())
     except ValueError:
         return PlainTextResponse("fail", status_code=400)
+    res = await usdt_svc.routed_resources(db, res, tenant_id, params)
     signed = res.bepusdt.configured and res.bepusdt.verify_signature(params)
     if not signed:
         # unsigned noise: cheap refusal, rate limited per source IP
@@ -133,7 +134,7 @@ async def usdt_attempt(
         if order is None or order.buyer_id != user.id:
             raise NotFound("Payment not found")
         status, channel = order.status, order.channel
-    att = await usdt_svc.load_attempt(res, no)
+    att = await usdt_svc.load_attempt(res, no, db=db, tid=user.tenant_id)
     if att is None or att.get("channel") != channel:
         raise NotFound("Payment not found")
     return usdt_svc.attempt_view(res, att, status)

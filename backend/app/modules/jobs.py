@@ -13,7 +13,7 @@ from app.core.config import Settings
 from app.core.db import tenant_session
 from app.core.resources import Resources
 from app.core.settings_v5 import section
-from app.models import AfterSales, Message, Order, Tenant, User
+from app.models import AfterSales, Attachment, Message, Order, Tenant, User
 from app.modules.chat.messages import post_system
 from app.modules.content.site import tenant_settings
 from app.modules.inventory.service import void_expired
@@ -204,4 +204,44 @@ async def purge_buyer_input(
             )
             await db.commit()
             total += res.rowcount or 0
+    return total
+
+
+async def purge_deleted_media(res: Resources) -> int:
+    """Fair bounded physical deletion retries; tombstoned attachments stay inaccessible."""
+    import uuid
+
+    from app.modules.uploads.thumbnail import delete_thumbnail
+
+    store = FileStore(res.settings.upload_dir)
+    total = 0
+    for tid in await _tenant_ids(res.maker):
+        cursor_key = "sec:media-purge:" + str(tid)
+        raw = await res.redis.get(cursor_key)
+        try:
+            cursor = uuid.UUID(raw.decode()) if raw else uuid.UUID(int=0)
+        except (ValueError, AttributeError):
+            cursor = uuid.UUID(int=0)
+        async with tenant_session(res.maker, tid) as db:
+            rows = list(
+                await db.scalars(
+                    select(Attachment)
+                    .where(
+                        Attachment.tenant_id == tid,
+                        Attachment.deleted_at.is_not(None),
+                        Attachment.id > cursor,
+                    )
+                    .order_by(Attachment.id)
+                    .limit(BATCH)
+                )
+            )
+            for att in rows:
+                try:
+                    await store.delete(att.storage_key)
+                    await delete_thumbnail(store, att.storage_key)
+                    total += 1
+                except OSError:
+                    continue
+            next_id = str(rows[-1].id) if len(rows) == BATCH else str(uuid.UUID(int=0))
+            await res.redis.set(cursor_key, next_id, ex=7 * 86400)
     return total

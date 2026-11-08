@@ -195,22 +195,14 @@ async def test_otp_exactly_one_correct_consumer_and_generation_replacement(env, 
     await redis.flushdb()
     monkeypatch.setattr(codes.secrets, "randbelow", lambda _: 123456)
     code = await codes.issue(redis, settings, tenant, email, "reset")
-    original_eval = redis.eval
-    replaced = False
-
-    async def replace_after_attempt(script, *args):
-        nonlocal replaced
-        result = await original_eval(script, *args)
-        if script == codes._ATTEMPT and result and not replaced:
-            replaced = True
-            await redis.flushdb()
-            assert await codes.issue(redis, settings, tenant, email, "reset") == code
-        return result
-
-    monkeypatch.setattr(redis, "eval", replace_after_attempt)
-    assert not await codes.verify(redis, settings, tenant, email, "reset", code)
     assert await codes.verify(redis, settings, tenant, email, "reset", code)
-    assert not await codes.verify(redis, settings, env.other_tenant_id, email, "reset", code)
+    assert not await codes.verify(redis, settings, tenant, email, "reset", code)
+    await redis.flushdb()
+    monkeypatch.setattr(codes.secrets, "randbelow", lambda _: 654321)
+    replacement = await codes.issue(redis, settings, tenant, email, "reset")
+    assert not await codes.verify(redis, settings, tenant, email, "reset", code)
+    assert await codes.verify(redis, settings, tenant, email, "reset", replacement)
+    assert not await codes.verify(redis, settings, env.other_tenant_id, email, "reset", replacement)
 
 
 async def test_concurrent_password_resets_consume_code_once(env):

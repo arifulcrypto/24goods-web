@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.money import to_decimal
 from app.core.resources import Resources
-from app.models import Checkout, Order
+from app.models import Checkout, Order, PaymentAttempt
 from app.modules.payments.channels import is_usdt
 from app.modules.payments.notify import (
     CHECKOUT_PREFIX,
@@ -180,6 +180,22 @@ async def handle_bepusdt_notify(
             raw = {**_str_params(params), "token": info.address}
             # the channel the money actually arrived on (from the gateway's own trade type)
             actual = bepusdt.TRADE_TYPE_TO_CHANNEL.get(info.trade_type) or ""
+            att = await db.scalar(
+                select(PaymentAttempt)
+                .where(
+                    PaymentAttempt.tenant_id == tenant_id,
+                    PaymentAttempt.local_ref == order_id,
+                    PaymentAttempt.provider_id.is_(None),
+                    PaymentAttempt.data["trade_id"].as_string() == trade_id,
+                )
+                .limit(1)
+            )
+            if att is not None and (
+                att.data.get("address") != info.address
+                or Decimal(att.data.get("actual_amount", "0")) != info.actual_amount
+            ):
+                hold = "receiver_mismatch"
+
             if hold is None and actual != order_channel:
                 hold = "channel_mismatch"
             if is_checkout:

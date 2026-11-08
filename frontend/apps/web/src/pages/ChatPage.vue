@@ -51,6 +51,16 @@ const busyQuoteId = ref<string | null>(null)
 const list = ref<InstanceType<typeof ChatMessageList> | null>(null)
 const opening = ref(true)
 
+const composer = ref<InstanceType<typeof ChatComposer> | null>(null)
+async function messageAction(action: 'recall' | 'pin' | 'reply', id: number) {
+  const m = chat.messages.value.find(m => m.id === id)
+  if (!m) return
+  if (action === 'reply') { composer.value?.quote(m.text ?? ''); return }
+  try {
+    const updated = action === 'recall' ? await api.chatActions.recall(id) : await api.chatActions.pin(id, !(m.payload as {pinned?: boolean} | null)?.pinned)
+    chat.apply([updated])
+  } catch (e) { toastError(e) }
+}
 const chat = useConversation({
   selfRole: 'buyer',
   adapter: {
@@ -321,6 +331,8 @@ function deliveredOrderId(it: { kind: string; message?: { type: string; payload:
     <div v-if="offline" class="notice offline" role="status">{{ offlineText }}</div>
 
     <ChatMessageList
+      :self-id="auth.user?.id"
+      @action="messageAction"
       ref="list"
       :items="chat.items.value"
       mode="buyer"
@@ -376,6 +388,7 @@ function deliveredOrderId(it: { kind: string; message?: { type: string; payload:
       <van-button size="small" round type="primary" @click="startNew">{{ t('chat.startNew') }}</van-button>
     </div>
     <ChatComposer
+      ref="composer"
       v-else
       :voice="site.features.voice_messages"
       :disabled="connecting"

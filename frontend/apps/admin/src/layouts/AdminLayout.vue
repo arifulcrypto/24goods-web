@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { imageQuality, compressUploads, setMediaPreference } from '@24goods/shared'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
@@ -30,7 +31,7 @@ import { useAuthStore } from '../stores/auth'
 import { useRealtimeStore } from '../stores/realtime'
 import { usePrefsStore } from '../stores/prefs'
 import { setLocale } from '../locale'
-import type { AppLocale } from '../i18n'
+import type { LocalePreference } from '@24goods/shared'
 
 const { t, locale } = useI18n()
 const route = useRoute()
@@ -55,6 +56,7 @@ const groups = computed(() => {
         { path: '/', key: 'nav.dashboard', icon: DataBoard },
         { path: '/inbox', key: 'nav.inbox', icon: ChatDotRound },
         { path: '/orders', key: 'nav.orders', icon: List },
+        { path: '/services', key: 'services.title', icon: List },
         { path: '/after-sales', key: 'nav.afterSales', icon: Service },
         { path: '/users', key: 'v5.nav.users', icon: User },
       ],
@@ -88,6 +90,7 @@ const groups = computed(() => {
         items: [
           { path: '/settings', key: 'v5.nav.settings', icon: Setting },
           { path: '/audit', key: 'v5.nav.logs', icon: Document },
+          { path: '/operations', key: 'ops.title', icon: DataBoard },
           { path: '/ledger', key: 'nav.ledger', icon: Coin },
         ],
       },
@@ -112,7 +115,7 @@ onBeforeUnmount(() => {
   rt.stop()
 })
 
-function switchLang(l: AppLocale) {
+function switchLang(l: LocalePreference) {
   setLocale(l)
 }
 function openShop() {
@@ -169,10 +172,15 @@ async function logout() {
         <div class="top-right">
           <AgentStatusSelect />
           <NotifyPopover />
+          <el-popover trigger="click" width="260"><template #reference><el-button>{{ t('mediaPrefs.quality') }}</el-button></template>
+            <label>{{ t('mediaPrefs.quality') }} <select :value="imageQuality" @change="setMediaPreference(($event.target as HTMLSelectElement).value as 'auto' | 'low' | 'high', compressUploads)"><option value="auto">{{ t('mediaPrefs.auto') }}</option><option value="low">{{ t('mediaPrefs.low') }}</option><option value="high">{{ t('mediaPrefs.high') }}</option></select></label>
+            <el-checkbox :model-value="compressUploads" @update:model-value="v => setMediaPreference(imageQuality, !!v)">{{ t('mediaPrefs.compress') }}</el-checkbox>
+          </el-popover>
           <el-dropdown trigger="click" @command="switchLang">
             <el-button text>{{ locale === 'zh-CN' ? t('lang.zh') : t('lang.en') }}</el-button>
             <template #dropdown>
               <el-dropdown-menu>
+                <el-dropdown-item command="auto">{{ t('lang.auto') }}</el-dropdown-item>
                 <el-dropdown-item command="en">{{ t('lang.en') }}</el-dropdown-item>
                 <el-dropdown-item command="zh-CN">{{ t('lang.zh') }}</el-dropdown-item>
               </el-dropdown-menu>

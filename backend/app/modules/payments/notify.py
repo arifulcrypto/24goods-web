@@ -86,6 +86,18 @@ async def _security_event(
         detail=detail,
         severity="critical",
     )
+    from app.modules.operations.service import record_event
+
+    await record_event(
+        db,
+        tenant_id=tenant_id,
+        environment="unknown",
+        family="security",
+        action=action,
+        outcome="denied",
+        reason="callback_rejected",
+        ip=ip,
+    )
     await db.commit()
 
 

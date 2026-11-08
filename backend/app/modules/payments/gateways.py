@@ -24,7 +24,11 @@ from app.payments.zpay import ZPayClient, ZPayConfig, ZPayQueryError
 
 def normalize_gateway(value: str) -> str:
     """Accept base or complete EPay endpoint, never credentials/query/fragment."""
-    p = urlsplit(value.strip())
+    try:
+        p = urlsplit(value.strip())
+        port = p.port
+    except ValueError:
+        raise Validation("Invalid gateway URL") from None
     if (
         p.scheme != "https"
         or not p.hostname
@@ -32,7 +36,7 @@ def normalize_gateway(value: str) -> str:
         or p.password
         or p.query
         or p.fragment
-        or p.port not in (None, 443)
+        or port not in (None, 443)
         or any(ord(c) < 33 for c in value)
     ):
         raise Validation("A public HTTPS EPay gateway is required")
@@ -102,6 +106,8 @@ async def routed_resources(
         )
     )
     if att is None or att.provider_id is None:
+        if not await legacy_allowed(db, tid, gateway_ref):
+            raise Unavailable("An original provider attempt is required")
         return res, gateway_ref
     row = await db.scalar(
         select(PaymentGateway).where(
@@ -264,5 +270,24 @@ async def set_active(db: AsyncSession, tid: uuid.UUID, ref: uuid.UUID | None) ->
     settings["payments"] = {
         **(settings.get("payments") or {}),
         "epay_provider_id": str(ref) if ref else None,
+        "epay_legacy_cutover": (settings.get("payments") or {}).get("epay_legacy_cutover")
+        or datetime.now(timezone.utc).isoformat(),
     }
     tenant.settings = settings
+
+
+async def legacy_allowed(db: AsyncSession, tid: uuid.UUID, no: str) -> bool:
+    """An old environment key cannot route around a durable/versioned attempt."""
+    from sqlalchemy import exists
+
+    managed = await db.scalar(
+        select(exists().where(PaymentAttempt.tenant_id == tid, PaymentAttempt.local_ref == no))
+    )
+    if managed:
+        return False
+    cutover = ((await tenant_settings(db, tid)).get("payments") or {}).get("epay_legacy_cutover")
+    if not cutover:
+        return True
+    model, col = (Checkout, Checkout.checkout_no) if no.startswith("C") else (Order, Order.order_no)
+    created = await db.scalar(select(model.created_at).where(col == no, model.tenant_id == tid))
+    return bool(created and created < datetime.fromisoformat(cutover))

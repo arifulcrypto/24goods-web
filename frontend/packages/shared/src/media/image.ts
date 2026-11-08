@@ -1,3 +1,4 @@
+import { compressUploads, lowData } from './preferences'
 /**
  * Client-side image downscale before upload (≤ 2048 px on the long edge).
  * The server still validates magic bytes, re-encodes and strips EXIF — this is only for speed.
@@ -60,8 +61,9 @@ export interface CompressedImage {
 }
 
 export async function compressImage(file: Blob, o: CompressOptions = {}): Promise<CompressedImage> {
-  const maxDim = o.maxDim ?? IMAGE_MAX_DIM
-  const quality = o.quality ?? 0.85
+  if (!compressUploads.value) return { blob: file, width: 0, height: 0 }
+  const maxDim = o.maxDim ?? (lowData() ? 1280 : IMAGE_MAX_DIM)
+  const quality = o.quality ?? (lowData() ? 0.72 : 0.85)
   const skipBelow = o.skipBelowBytes ?? 1024 * 1024
   // GIFs: server takes the first frame; canvas would do the same but we let the server do it.
   if (file.type === 'image/gif') return { blob: file, width: 0, height: 0 }

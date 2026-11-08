@@ -86,23 +86,21 @@ async def issue(
     return code
 
 
-# Atomic attempt accounting: count first, refuse past the cap (and burn the code) BEFORE any
-# comparison happens; returns the stored MAC for a constant-time compare in Python.
-_ATTEMPT = """
+# Compare the fixed-size keyed MAC and consume/count in ONE atomic script. A burst of
+# correct submissions cannot delete the record before the winning consumer claims it.
+# Redis Lua has bit operations; inspect every byte instead of an early-exit string compare.
+_VERIFY = """
 local stored = redis.call('HGET', KEYS[1], 'mac')
-if not stored then return false end
+if not stored then return 0 end
+local given = ARGV[1]
+local diff = bit.bxor(string.len(stored), string.len(given))
+for i=1,64 do
+  diff = bit.bor(diff, bit.bxor(string.byte(stored,i) or 0, string.byte(given,i) or 0))
+end
+if diff == 0 then return redis.call('DEL', KEYS[1]) end
 local n = redis.call('HINCRBY', KEYS[1], 'n', 1)
-if n > tonumber(ARGV[1]) then redis.call('DEL', KEYS[1]) return false end
-if n >= tonumber(ARGV[1]) then redis.call('PEXPIRE', KEYS[1], 5000) end
-return {stored, redis.call('HGET', KEYS[1], 'generation') or ''}
-"""
-
-# Claim the exact generation inspected by _ATTEMPT. Constant-time MAC comparison stays
-# in Python; neither a second correct verifier nor a stale verifier may consume a new code.
-_CONSUME = """
-if redis.call('HGET', KEYS[1], 'mac') ~= ARGV[1] then return 0 end
-if (redis.call('HGET', KEYS[1], 'generation') or '') ~= ARGV[2] then return 0 end
-return redis.call('DEL', KEYS[1])
+if n >= tonumber(ARGV[2]) then redis.call('DEL', KEYS[1]) end
+return 0
 """
 
 
@@ -114,19 +112,13 @@ async def verify(
     purpose: Purpose,
     code: str | None,
 ) -> bool:
-    """Constant-time check; consumes the code on success and after the last allowed attempt."""
-    key = _key(purpose, tenant_id, email)
-    if not code or not code.isdigit() or len(code) != 6:
+    """Fixed-size constant-time MAC comparison, attempt cap and consumption are atomic."""
+    if not code or not code.isascii() or not code.isdigit() or len(code) != 6:
         return False
-    stored = await redis.eval(_ATTEMPT, 1, key, MAX_ATTEMPTS)
-    if not stored:
-        return False
-    stored_mac, generation = stored
-    stored_s = stored_mac.decode() if isinstance(stored_mac, bytes) else str(stored_mac)
-    ok = hmac.compare_digest(stored_s, _mac(settings, purpose, tenant_id, email, code))
-    if ok:
-        return bool(await redis.eval(_CONSUME, 1, key, stored_mac, generation))
-    return ok
+    candidate = _mac(settings, purpose, tenant_id, email, code)
+    return bool(
+        await redis.eval(_VERIFY, 1, _key(purpose, tenant_id, email), candidate, MAX_ATTEMPTS)
+    )
 
 
 async def drain_pending() -> None:

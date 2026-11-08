@@ -44,6 +44,7 @@ export const FEATURE_KEYS = [
   'google_login',
 ] as const satisfies readonly (keyof FeaturesCfg)[]
 export const TURNSTILE_ACTIONS = [
+  'payment_initiation', 'site_visit',
   'login',
   'register',
   'instant_account',
@@ -53,6 +54,9 @@ export const TURNSTILE_ACTIONS = [
   'reseller_apply',
 ] as const
 export interface SecurityCfg {
+  payment_challenge_enabled: boolean
+  site_visit_enabled: boolean
+  challenge_preset: 'low'|'standard'|'high'
   turnstile_enabled: boolean
   turnstile_site_key: string
   turnstile_actions: string[]

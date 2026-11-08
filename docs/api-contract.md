@@ -541,3 +541,32 @@ default_description_i18n, og_image}` (`og_image`: empty, `/path` or `https://` U
 - `POST /cart/quote` and `POST /checkout` accept optional `channel` (one of the channel ids): the fee uses that channel when enabled, else the first enabled one. `/cart/quote` also returns `channel` and `channel_totals: {channel_id: {fee, fee_rate, amount}}` for every enabled channel (fee ceiled per line, same as checkout).
 - Pending-payment order views (`GET /orders/{ref}`, lists, SSE) and checkout views carry `channel_totals` (same shape; `null` otherwise). The client renders these for the selected channel and never computes money itself.
 - New 409 `too_many_unpaid` (unpaid-order cap; was generic `conflict`) and 422 `buyer_input_too_long` (was generic `validation`; also for the pydantic 4000-char cap). Pasted order info drops zero-width/BOM characters.
+
+
+## V6 unmerged additions (PR #31)
+
+- `GET/POST /admin/payment-gateways`: administrator sessions only; immutable encrypted write-only
+  merchant keys. Create requires `label,gateway,merchant_id,secret,current_password,mode` (`qr` or
+  `redirect`). HTTPS base or complete EPay endpoint is normalized, DNS/public-network validated.
+  `POST /admin/payment-gateways/{id}/activate` requires fresh `current_password` and
+  `ownership_confirmed=true`. Lists expose configuration metadata, never the merchant secret.
+- Existing order/checkout `/pay` routes return `/pay/epay/{local_ref}` for a database provider.
+  `GET /pay/epay/{local_ref}` is owner/tenant-only, no-store and never fulfils. It returns typed
+  presentation, exact fiat amount, expiry and state; no QR is exposed after payment/expiry.
+  Existing stored channel names are retained; arbitrary provider protocols are not inferred.
+- `POST /chat/messages/{id}/recall` is sender-only for text/image/voice/file within 180 server
+  seconds; returns a tombstone with `payload.recalled=true`. Private unreferenced media is revoked
+  transactionally before physical deletion; retries run in the bounded deletion job.
+  `POST /chat/messages/{id}/pin {pinned:boolean}` is conversation-authorized, audited and capped at
+  three shared pins. Copy and quoted draft are local UI actions, not trusted payment instructions.
+- `GET /files/{id}?variant=small`: the same private ACL as the original; bounded cached 480px WebP
+  generated from stored re-encoded images. Private originals/thumbnails are no-store. Browser
+  network hints choose previews only; manual quality/original viewing remains available.
+- `GET /admin/operations` and `/admin/operations/events?family=&outcome=&page=` are platform-admin
+  session-only. Metrics have explicit scope/unknown fields; event strings are bounded escaped text.
+- `GET/POST /admin/services`, `GET/PATCH /admin/services/{id}`, `POST .../{id}/activate` and
+  `POST .../{id}/renewals` are tenant staff session endpoints. Creation links a buyer, verified paid
+  original order, staff owner, label, IANA timezone, period policy/days/grace and opt-in reminders.
+  PATCH requires `reason` and supports `expected_version`; activation time must have a timezone.
+  Renewal links a separate verified paid `order_id` plus staff `reason`/completion confirmation.
+  No automatic charge or customer bulk notification is introduced.

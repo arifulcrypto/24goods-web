@@ -41,6 +41,7 @@ __all__ = [
     "Delivery",
     "LedgerEntry",
     "Message",
+    "OperationEvent",
     "Order",
     "OrderEvent",
     "Outbox",
@@ -55,7 +56,17 @@ __all__ = [
     "ResellerDomain",
     "ResellerPayout",
     "ResellerPrice",
+    "ServiceEntitlement",
+    "ServiceReminder",
+    "ServiceRenewal",
     "Tenant",
     "TenantSecret",
     "User",
 ]
+
+from app.models.operations import (
+    OperationEvent,
+    ServiceEntitlement,
+    ServiceReminder,
+    ServiceRenewal,
+)
