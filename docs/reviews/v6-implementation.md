@@ -25,3 +25,7 @@ The first read-only security/payment/mobile source review of `0335f87` **failed*
 Dedicated tests cover payment/query/numeric/stream/receiver/history and denied-log boundaries, plus parallel read state and actual thumbnail URL behavior. Existing channel-switch and account-deletion regressions were run because integration exposed compatibility failures; the fixes preserve private-input redaction and legitimate pre-cutover payment draining.
 
 Physical Safari/Chrome/embedded-wallet/assistive-technology validation is still an explicit release check. Source inspection, unit tests and CI do not demonstrate every device's clipboard, long-press, Turnstile or QR album-scanning behavior. No deliberately vulnerable honeypot, production traffic test or live provider/key rotation was performed.
+
+## Second review checkpoint — f414c59
+
+**FAIL, stopped at owner request.** Two Medium issues remain: unconfigured legacy EPay fall-through after unpaid USDT recovery, and committed notifications/duplicate alerts dropped when a different original remains unresolved. Preserve outcomes independently from unresolved status while keeping cancellation fail-closed. One minor event-family localization item remains. Full reproduction/next steps and final CI caveats are in [HANDOFF-v6.md](../HANDOFF-v6.md). No browser/device validation was performed.

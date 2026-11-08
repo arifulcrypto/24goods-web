@@ -4,6 +4,8 @@ Update this file in every PR. Phases are defined in [review-v2.md §8](review-v2
 
 ## Current state — hand-off (read this first in a new session)
 
+**Owner-requested checkpoint:** work stopped for agent/quota handoff. Read [HANDOFF-v6.md](HANDOFF-v6.md) first. PR #31 remains Draft/unmerged; re-review of implementation `f414c59` still FAILED on two Medium payment/recovery issues. Final CI is not yet established green.
+
 _Last updated 2026-11-08 UTC (v6 implementation in unmerged draft PR #31; deployed-state notes below have not been reverified)._
 
 - **Prod** https://shop.kesiv.com (c4, IIJ Japan) runs **v4**; deployed by the owner from another session
