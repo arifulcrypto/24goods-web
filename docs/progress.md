@@ -4,9 +4,26 @@ Update this file in every PR. Phases are defined in [review-v2.md §8](review-v2
 
 ## Current state — hand-off (read this first in a new session)
 
-**Owner-requested checkpoint:** work stopped for agent/quota handoff. Read [HANDOFF-v6.md](HANDOFF-v6.md) first. PR #31 remains Draft/unmerged; re-review of implementation `f414c59` still FAILED on two Medium payment/recovery issues. Final CI is not yet established green.
+**v6 blockers closed + owner UX round (2026-11-08 UTC).** Read [HANDOFF-v6.md](HANDOFF-v6.md) for the
+implementation inventory. Since that checkpoint, on `feat/issues-25-30-hardening`:
 
-_Last updated 2026-11-08 UTC (v6 implementation in unmerged draft PR #31; deployed-state notes below have not been reverified)._
+- Both Medium re-review blockers are fixed with regressions that fail without the fix:
+  USDT-only cancellation no longer falls through to an unconfigured legacy EPay gateway (the legacy
+  key, not the current channel, gates the drain, so an old EPay URL stays drainable after a switch);
+  and a durably committed settlement now travels with unresolved evidence
+  (`UnresolvedEvidence.settled`) so its broadcast and duplicate-payment alert still fire while
+  cancellation keeps failing closed. Admin Operations shows translated event families.
+- Owner UX round: four-tab storefront (Home / Messages / Cart / My Account) with Orders moved under
+  My Account plus `?tab=` deep links; presence defaults to busy for support and offline for admin
+  (never online); CS quick replies (built-in bilingual starters + tenant-scoped, RLS-enforced
+  `cs_reply_templates`, personal vs admin-only shared); staff browsing the shop are told which
+  account is in the way and sent to the console inbox instead of buyer chat (`/chat` is buyer-only).
+
+**Not established:** full CI green on the final head, and the re-run of the read-only
+security/payment/mobile reviews. No production deploy, key rotation or real payment. The
+independent pentest before real money (M1 gate) still stands.
+
+_Last updated 2026-11-08 UTC (deployed-state notes below have not been reverified)._
 
 - **Prod** https://shop.kesiv.com (c4, IIJ Japan) runs **v4**; deployed by the owner from another session
   (`scripts/prod.sh`). This box = dev + demo. Prod needs `APP_SETTINGS_KEY` and the new env vars

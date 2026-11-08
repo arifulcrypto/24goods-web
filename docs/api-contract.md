@@ -240,8 +240,12 @@ All `*_html` fields (articles, announcement, product usage) are rendered server-
 | POST `/admin/conversations/{id}/close` | — | `Conversation` | agent |
 | POST `/admin/conversations/{id}/quotes` | `{title, amount, qty, note?, product_id?, expires_in_minutes (5–1440)}` | `QuoteCardPayload` + posts a `quote_card` | agent |
 | POST `/admin/quotes/{id}/withdraw` | — | `QuoteCardPayload` | agent |
-| GET `/admin/agent/status` / PUT `/admin/agent/status` | `{status, message?}` | `AgentStatus` | agent (own status) |
+| GET `/admin/agent/status` / PUT `/admin/agent/status` | `{status, message?}` | `AgentStatus`; with no row yet the default is `on_hold` for an agent and `offline` for an admin — never `online` | agent (own status) |
 | GET `/admin/agents` | — | `[{id, display_name, status}]` | agent |
+| GET `/admin/reply-templates` | — | `[{id, title, body, sort, shared}]` — shared ones plus the caller's own | agent |
+| POST `/admin/reply-templates` | `{title (≤60), body (≤2000), shared?}` | `ReplyTemplate` (201) | agent; `shared` admin only |
+| PUT `/admin/reply-templates/{id}` | `{title, body}` | `ReplyTemplate` | owner; shared ones admin only |
+| DELETE `/admin/reply-templates/{id}` | — | 204 | owner; shared ones admin only |
 | GET `/admin/stream` | — | SSE: all conversation, message, order and `after_sales` (StaffAfterSales) events for the tenant | agent |
 | GET `/admin/ledger` | `page` | Paginated `{txn_id, at, account, amount, currency, memo, order_id}` | admin |
 | GET `/admin/audit` | `page` | Paginated `{at, actor, action, target, ip, detail}` | admin |
