@@ -172,6 +172,14 @@ export function validationDetail(e: unknown): string | undefined {
   if (!isApiError(e) || e.code !== 'validation') return undefined
   const msg = e.message.trim()
   // The handler sends "Invalid request" when it cannot name a field: nothing to add.
-  if (!msg || msg === 'Invalid request' || !msg.includes(':')) return undefined
+  // The handler formats exactly `${loc}: ${msg}` -- colon AND space. Splitting on a bare ':' would
+  // take "https" from "https://evil.example/x: ..." as the field and pass the check below.
+  const sep = msg.indexOf(': ')
+  if (!msg || msg === 'Invalid request' || sep < 1) return undefined
+  // pydantic's `loc` can carry a client-chosen key (a dict body key, a bad enum value), so only a
+  // plain dotted field path is trusted as the prefix. Anything else could put attacker-written
+  // prose in a staff toast; it renders as text, but it is still words we did not write.
+  const field = msg.slice(0, sep)
+  if (!/^[A-Za-z_][\w.[\]-]{0,63}$/.test(field)) return undefined
   return msg.slice(0, 160)
 }
