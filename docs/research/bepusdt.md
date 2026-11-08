@@ -28,7 +28,11 @@ Legend: **[V]** verified in the upstream repo/docs on 2026-11-07, **[I]** inferr
 
 ## Notify (`docs/notify/readme.md`) **[V]**
 - POST to `notify_url`, same body for 3 events, `status`: 1 waiting (every minute, no retry),
-  2 paid (retries 2,4,8…min up to 10×; success = HTTP 200 + body `ok`), 3 expired.
+  2 paid (retries with back-off up to the upstream retry limit), 3 expired.
+  **Correction 2026-11-08:** the configured `0716485` native POST notifier accepts any
+  HTTP 200, ignoring the body; this differs from its EPay GET notifier. Current API
+  `200 fail` replies incorrectly suppress retries (#26); retryable failures must return
+  non-200. See [pinned-source verification](security-payment-audit-2026-11-08.md#f0--bepusdt-http-200-failure-replies-permanently-acknowledge-failed-callbacks).
 - Fields include `trade_id`, `order_id`, `amount`, `actual_amount`, `token`, `block_transaction_id`,
   `status`, `signature` [I: confirm exact names in the doc's field table].
 

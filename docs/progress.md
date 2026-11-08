@@ -4,7 +4,7 @@ Update this file in every PR. Phases are defined in [review-v2.md §8](review-v2
 
 ## Current state — hand-off (read this first in a new session)
 
-_Last updated 2026-11-07 (v5.1 + v5.2)._
+_Last updated 2026-11-08 UTC (v5.1 + v5.2 implementation; security/operations research added)._
 
 - **Prod** https://shop.kesiv.com (c4, IIJ Japan) runs **v4**; deployed by the owner from another session
   (`scripts/prod.sh`). This box = dev + demo. Prod needs `APP_SETTINGS_KEY` and the new env vars
@@ -31,7 +31,39 @@ _Last updated 2026-11-07 (v5.1 + v5.2)._
   5. Cloudflare 5-second challenge / IP-list sync for blocked IPs: Cloudflare settings + token permission.
 - **Next (code):** v5.2 §8 optional entry check (Turnstile on entry), category pages for SEO, Telegram for
   manual-delivery completion, persisting USDT trade ids on the order (cancel-time re-query without Redis).
+- **Security/payment review 2026-11-08 UTC (analysis only, fixes pending; [issue #26](https://github.com/arifulcrypto/24goods-web/issues/26)):** see
+  [source findings and acceptance criteria](research/security-payment-audit-2026-11-08.md) and
+  [upstream research](research/security-payment-references-2026-11-08.md). Priority: BEpusdt native
+  callback HTTP 200 failure acknowledgements suppress retries; sensitive order-input copies in chat
+  escape retention; busy SSE streams defer session revocation checks. Also track OTP atomic consumption,
+  challenge configuration/action binding, order-input editing, resource admission budgets and durable
+  payment attempts. This review does not satisfy the independent pentest gate; no business code changed.
 - **Working rules:** AGENTS.md §7 (2 GB box: full suite in CI only, ≤ 2 agents, dev stack down when idle).
+
+### Follow-up requirements — documented, not implemented (2026-11-08 UTC)
+
+Tracking: [#27 payments](https://github.com/arifulcrypto/24goods-web/issues/27),
+[#28 operations/recovery](https://github.com/arifulcrypto/24goods-web/issues/28),
+[#29 service reminders](https://github.com/arifulcrypto/24goods-web/issues/29).
+
+- [v6 payment/operations proposal](review-v6-payments-ops.md): API-direct QR with explicit provider
+  capabilities and truthful domain/privacy limits; immutable provider/attempt configuration; active
+  ownership/permission/settlement cross-checks; optional server-enforced payment challenge with bounded
+  self-hosted difficulty; callbacks/recovery stay interactive-challenge-free.
+- Lightweight server-admin overview, structured operation/login/system/task/payment events, trusted
+  proxy IP and approximate location/browser metadata, bounded alerts, key/software review reminders
+  and optional static canary detection; no root panel or Docker/LXD socket in the API.
+- [New source observations B1–B5](research/payment-qr-ops-2026-11-08.md): backup script has no archive
+  encryption/whole-set manifest/job lock, excludes BEpusdt state, and does not establish cross-store
+  consistency/PITR/restore proof; edge query redaction also needs review. Actual remote setup is unverified.
+- [GCSA/Web3/runtime research](research/web3-ops-risks-2026-11-08.md): original @GCSAHK reports,
+  signed-intent/valid-credential abuse, token/chain/finality checks, and separate PHP2Shell/LXD/runc
+  advisories. No current host/wallet compromise is claimed.
+- Staff-managed monthly-service entitlements and email/TG expiry reminders, separate from unpaid-order
+  expiry; no automatic recurring debit. Reminder scheduling is idempotent; external sends can repeat
+  after an uncertain outcome, so use stable IDs and bounded retries.
+- Documentation review caught and corrected the unsafe blanket restore restart and an exactly-once
+  notification overclaim. Implementation and independent security review remain pending.
 
 ## Current phase: **MVP-0: local demo with mock data** (finishing) → next: **M1 production MVP**
 

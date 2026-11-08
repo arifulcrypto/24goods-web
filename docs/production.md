@@ -52,18 +52,34 @@ Migrations are forward-only; roll back only to an image whose schema is compatib
 
 ## Backups and restore
 
+**Review note (2026-11-08; implementation pending):** the current script below is a starting
+point, not a complete verified disaster-recovery system. It does not encrypt the config/key
+archive, include `bepusdt_data`, or publish a verified whole-set manifest. Permissions and SSH
+transport do not replace backup encryption/off-host recovery. Cron installation and restore
+success must be verified on the actual host. See [observed gaps](research/payment-qr-ops-2026-11-08.md#newly-observed-backup-and-logging-gaps)
+and the [proposed recovery requirements](review-v6-payments-ops.md#7-complete-encrypted-and-recoverable-backups).
+Restore drills must disable outbound notifications/callbacks and prevent duplicate delivery
+until provider payments and the restored outbox are reconciled.
+
 - `scripts/prod.sh backup` runs `/opt/kesiv/backup.sh` on c4 and copies the files to `/root/kesiv-backups/` (14 generations kept on both sides): `goods24-<ts>.dump` (`pg_dump -Fc`), `uploads-<ts>.tgz`, `config-<ts>.tgz` (`.env`, `env/`, `secrets/`: contains the vault private keys, treat as top secret; without them card stock cannot be revealed).
 - `scripts/prod.sh install-backup-cron` installs `/etc/cron.d/kesiv-backup` (03:30 UTC) on c4. Backups on c4 are on the same disk: pull copies regularly with `scripts/prod.sh backup`.
-- Restore the database (stack running, app stopped):
-  ```bash
-  cd /opt/kesiv/deploy; DC="docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env"
-  $DC stop api delivery
-  $DC exec -T postgres dropdb -U postgres goods24 && $DC exec -T postgres createdb -U postgres -O app_owner goods24
-  $DC exec -T postgres pg_restore -U postgres -d goods24 --no-owner --role=app_owner < /opt/kesiv/backups/goods24-<ts>.dump
-  $DC up -d --wait
-  ```
-  Run a restore drill on a scratch host before relying on this (M1 exit gate); the role grants come from the migrations/init scripts, so verify with the smoke checks and a login.
-- Uploads: `docker run --rm -i -v goods24_uploads:/data --entrypoint tar postgres:17-alpine -C /data -xzf - < uploads-<ts>.tgz`.
+- Recover on an **isolated scratch host** with the selected complete backup set, compatible
+  image/schema versions and separately recovered keys. Keep API/delivery stopped and block
+  external payment callbacks, SMTP/TG and outbound provider calls while restoring. If an
+  operator needs controlled read-only provider reconciliation later, grant only that path.
+- Recreate database ownership/RLS/role grants using the reviewed init/migration procedure;
+  restore the PG archive with `pg_restore`, matching uploads, BEpusdt state and configuration
+  into explicitly selected recovery volumes. Validate checksums, media references and secret
+  recovery; do not point a scratch restore at the production Compose project or volumes.
+- Before enabling any fulfilment, reconcile restored payments/outbox/entitlements against
+  the provider's post-backup history using an authorized controlled recovery task. Existing
+  background loops do not establish this recovery capability; implementing and testing it
+  is part of the open release gate. The restore task itself must not deliver or notify.
+- Start only the explicitly approved services after those checks and record the release,
+  recovery point, RLS/grant/synthetic-vault/private-media checks and measured recovery time.
+  Then re-enable callbacks/delivery/notifications in a controlled order and observe duplicate
+  or late-payment handling. A blanket full-stack restart is not a safe restore completion step.
+  The measured scratch-host drill remains an M1 exit gate.
 
 ## Rotating the ZPay KEY
 
@@ -73,6 +89,12 @@ Migrations are forward-only; roll back only to an image whose schema is compatib
 4. Make a small test purchase.
 
 ## USDT (self-hosted BEpusdt)
+
+**Known payment reliability defect, #26:** the configured upstream native notifier treats
+any HTTP 200 as acknowledgement, while the current API can return `200 fail` on temporary
+query failure. Do not treat the existing body-only retry test as upstream retry proof. Repair
+and verify the [ACK contract](research/security-payment-audit-2026-11-08.md#f0--bepusdt-http-200-failure-replies-permanently-acknowledge-failed-callbacks)
+and durable reconciliation before enabling real-money USDT.
 
 BEpusdt v1.24.3 (`v03413/bepusdt:0716485@sha256:0a7d85…`, pinned by digest; compose profile `usdt`) receives USDT on Arbitrum One, X Layer and
 TRON. It is INTERNAL: docker network `usdt` only (shared with `api`), no published port, no Caddy route.
