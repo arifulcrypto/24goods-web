@@ -37,6 +37,8 @@ from app.modules.aftersales.router import router as aftersales_router
 from app.modules.auth.oauth import router as oauth_router
 from app.modules.auth.router import router as auth_router
 from app.modules.catalog.router import router as catalog_router
+from app.modules.challenges.middleware import SiteVisitMiddleware
+from app.modules.challenges.router import router as challenges_router
 from app.modules.chat.router import router as chat_router
 from app.modules.content.router import router as content_router
 from app.modules.lookup.router import router as lookup_router
@@ -133,6 +135,7 @@ def api_router() -> APIRouter:
         admin_settings_router,
         admin_blocking_router,
         admin_tokens_router,
+        challenges_router,
     ):
         r.include_router(sub)
     return r
@@ -181,7 +184,8 @@ def create_app(res: Resources | None = None, *, background: bool = True) -> Fast
         return {"status": "ok"}
 
     # Added inner-most first:
-    # Core (outermost) -> IPBlock -> GlobalRateLimit -> BodyLimit -> CSRF -> routes.
+    # Core (outermost) -> IPBlock -> GlobalRateLimit -> BodyLimit -> CSRF -> SiteVisit -> routes.
+    app.add_middleware(SiteVisitMiddleware)
     app.add_middleware(CSRFMiddleware, exempt=[NOTIFY_PATH, NOTIFY_BEPUSDT_PATH])
     app.add_middleware(
         BodyLimitMiddleware,

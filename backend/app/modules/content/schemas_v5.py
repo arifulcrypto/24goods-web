@@ -104,6 +104,9 @@ class FeaturesIn(BaseModel):
 
 
 class SecurityIn(BaseModel):
+    payment_challenge_enabled: bool | None = None
+    site_visit_enabled: bool | None = None
+    challenge_preset: Literal["low", "standard", "high"] | None = None
     turnstile_enabled: bool | None = None
     turnstile_site_key: str | None = Field(None, max_length=100)
     turnstile_actions: list[str] | None = None

@@ -136,7 +136,10 @@ async def _public_v5(
         and configured["turnstile_secret"]["configured"]
     )
     by_slug = {slug: title for slug, title in pages}
+    from app.modules.challenges.service import policy
+
     return {
+        "security_challenges": policy(ts),
         "features": section(ts, "features"),
         "general": {
             "site_name": pick(gen["site_name_i18n"], lang) if gen["site_name_i18n"] else "",

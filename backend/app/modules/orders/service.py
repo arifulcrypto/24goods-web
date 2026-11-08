@@ -444,11 +444,20 @@ async def check_channel(db: AsyncSession, tenant_id: uuid.UUID, channel: str) ->
 
 
 async def pay_url(
-    db: AsyncSession, res: Resources, ref: str, user: User, channel: str, ip: str | None = None
+    db: AsyncSession,
+    res: Resources,
+    ref: str,
+    user: User,
+    channel: str,
+    ip: str | None = None,
+    expected_binding: str | None = None,
 ) -> str:
     from app.modules.payments import gateways
 
     order = await get_owned(db, ref, user, lock=True)
+    from app.modules.challenges.service import check_marker
+
+    check_marker(order, None, expected_binding)
     if order.checkout_id is not None:
         # a member order is never paid on its own: its money only arrives via the checkout
         checkout_no = await db.scalar(

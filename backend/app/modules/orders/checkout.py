@@ -511,6 +511,7 @@ async def pay_checkout(
     user: User,
     channel: str,
     ip: str | None = None,
+    expected_binding: str | None = None,
 ) -> str:
     from app.modules.payments import gateways
 
@@ -523,6 +524,9 @@ async def pay_checkout(
             .with_for_update()
         )
     )
+    from app.modules.challenges.service import check_marker
+
+    check_marker(co, orders, expected_binding)
     if co.status != "pending_payment" or any(o.status != "pending_payment" for o in orders):
         raise InvalidState("Checkout is not awaiting payment")
     if co.expires_at is not None and co.expires_at <= utcnow():
