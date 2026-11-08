@@ -8,10 +8,11 @@ from collections.abc import Awaitable, Callable
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
+from sqlalchemy import select
 
 from app.core import suspend
 from app.core.db import tenant_session
-from app.core.deps import get_res, get_session, get_tenant_id
+from app.core.deps import client_ip, get_res, get_session, get_tenant_id
 from app.core.errors import Forbidden, Unauthorized
 from app.core.resources import Resources
 from app.core.security import STAFF_ROLES, SessionData
@@ -28,7 +29,9 @@ async def _stream_user(res: Resources, sess: SessionData | None, tenant_id: uuid
     if sess is None:
         raise Unauthorized("Authentication required")
     async with tenant_session(res.maker, tenant_id) as db:
-        user = await db.get(User, sess.user_id)
+        user = await db.scalar(
+            select(User).where(User.id == sess.user_id, User.tenant_id == tenant_id)
+        )
     if user is None or user.status != "active":
         raise Unauthorized("Authentication required")
     if suspend.is_suspended(user):
@@ -36,12 +39,26 @@ async def _stream_user(res: Resources, sess: SessionData | None, tenant_id: uuid
     return user
 
 
-def _alive(res: Resources, request: Request, tenant_id: uuid.UUID) -> Callable[[], Awaitable[bool]]:
+def _alive(
+    res: Resources, request: Request, tenant_id: uuid.UUID, user: User
+) -> Callable[[], Awaitable[bool]]:
     token = res.sessions.token_from(request.cookies)
+    user_id, role = user.id, user.role
 
     async def check() -> bool:
         sess = await res.sessions.get(token)
-        return sess is not None and sess.tenant_id == tenant_id
+        if sess is None or sess.tenant_id != tenant_id or sess.user_id != user_id:
+            return False
+        async with tenant_session(res.maker, tenant_id) as db:
+            current = await db.scalar(
+                select(User).where(User.id == user_id, User.tenant_id == tenant_id)
+            )
+        return bool(
+            current is not None
+            and current.status == "active"
+            and current.role == role
+            and not suspend.is_suspended(current)
+        )
 
     return check
 
@@ -54,9 +71,14 @@ async def stream(
     res: Resources = Depends(get_res),
 ) -> StreamingResponse:
     user = await _stream_user(res, sess, tenant_id)
-    sub = res.hub.subscribe([user_channel(user.id), public_channel(tenant_id)])
+    sub = res.hub.subscribe(
+        [user_channel(user.id), public_channel(tenant_id)],
+        tenant=str(tenant_id),
+        account=str(user.id),
+        ip=client_ip(request) or "-",
+    )
     return StreamingResponse(
-        sse_events(res.hub, sub, alive=_alive(res, request, tenant_id)),
+        sse_events(res.hub, sub, alive=_alive(res, request, tenant_id, user)),
         media_type="text/event-stream",
         headers=SSE_HEADERS,
     )
@@ -72,9 +94,14 @@ async def admin_stream(
     user = await _stream_user(res, sess, tenant_id)
     if user.role not in STAFF_ROLES:
         raise Forbidden("Staff only")
-    sub = res.hub.subscribe([staff_channel(tenant_id)])
+    sub = res.hub.subscribe(
+        [staff_channel(tenant_id)],
+        tenant=str(tenant_id),
+        account=str(user.id),
+        ip=client_ip(request) or "-",
+    )
     return StreamingResponse(
-        sse_events(res.hub, sub, alive=_alive(res, request, tenant_id)),
+        sse_events(res.hub, sub, alive=_alive(res, request, tenant_id, user)),
         media_type="text/event-stream",
         headers=SSE_HEADERS,
     )

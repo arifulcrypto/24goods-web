@@ -73,7 +73,14 @@ async def issue(
     key = _key(purpose, tenant_id, email)
     async with redis.pipeline(transaction=True) as pipe:
         pipe.delete(key)
-        pipe.hset(key, mapping={"mac": _mac(settings, purpose, tenant_id, email, code), "n": 0})
+        pipe.hset(
+            key,
+            mapping={
+                "mac": _mac(settings, purpose, tenant_id, email, code),
+                "generation": secrets.token_hex(16),
+                "n": 0,
+            },
+        )
         pipe.expire(key, CODE_TTL_S)
         await pipe.execute()
     return code
@@ -87,7 +94,15 @@ if not stored then return false end
 local n = redis.call('HINCRBY', KEYS[1], 'n', 1)
 if n > tonumber(ARGV[1]) then redis.call('DEL', KEYS[1]) return false end
 if n >= tonumber(ARGV[1]) then redis.call('PEXPIRE', KEYS[1], 5000) end
-return stored
+return {stored, redis.call('HGET', KEYS[1], 'generation') or ''}
+"""
+
+# Claim the exact generation inspected by _ATTEMPT. Constant-time MAC comparison stays
+# in Python; neither a second correct verifier nor a stale verifier may consume a new code.
+_CONSUME = """
+if redis.call('HGET', KEYS[1], 'mac') ~= ARGV[1] then return 0 end
+if (redis.call('HGET', KEYS[1], 'generation') or '') ~= ARGV[2] then return 0 end
+return redis.call('DEL', KEYS[1])
 """
 
 
@@ -106,10 +121,11 @@ async def verify(
     stored = await redis.eval(_ATTEMPT, 1, key, MAX_ATTEMPTS)
     if not stored:
         return False
-    stored_s = stored.decode() if isinstance(stored, bytes) else str(stored)
+    stored_mac, generation = stored
+    stored_s = stored_mac.decode() if isinstance(stored_mac, bytes) else str(stored_mac)
     ok = hmac.compare_digest(stored_s, _mac(settings, purpose, tenant_id, email, code))
     if ok:
-        await redis.delete(key)
+        return bool(await redis.eval(_CONSUME, 1, key, stored_mac, generation))
     return ok
 
 

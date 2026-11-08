@@ -27,8 +27,8 @@ def _from(env, ip: str, *, trusted: bool = True) -> httpx.AsyncClient:
 async def test_admin_login_turnstile_and_allowlist_skip(env, monkeypatch):
     admin, _ = await env.login("admin")
     await env.user("admin", email="boss@example.com")
-    await put_site(env, admin, {"security": {"turnstile_enabled": True, "turnstile_site_key": "k"}})
     await set_secret(admin, "turnstile_secret", "ts-secret-1234")
+    await put_site(env, admin, {"security": {"turnstile_enabled": True, "turnstile_site_key": "k"}})
     sv = SiteVerify(ok=True)
     monkeypatch.setattr(env.res.http, "post", sv.post)
     creds = {"email": "boss@example.com", "password": PASSWORD}

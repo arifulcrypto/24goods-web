@@ -54,7 +54,7 @@ from app.modules.chat.messages import (
     order_card_messages,
     post_system,
 )
-from app.modules.common.buyerinput import chat_text, normalize_value
+from app.modules.common.buyerinput import normalize_value
 from app.modules.common.orderviews import latest_tickets, one_view, order_views  # noqa: F401
 from app.modules.common.views import REVEALABLE, order_card_payload
 from app.modules.content.site import tenant_settings
@@ -537,13 +537,19 @@ async def update_input(
     order = await get_owned(db, ref, user, lock=True)
     if order.status not in ("pending_payment", "paid"):
         raise InvalidState("The order information can no longer be changed")
-    product = await db.get(Product, order.product_id) if order.product_id else None
+    product = (
+        await db.scalar(
+            select(Product).where(
+                Product.id == order.product_id, Product.tenant_id == order.tenant_id
+            )
+        )
+        if order.product_id
+        else None
+    )
     cfg = product.buyer_input if product else None
     if not (cfg and cfg.get("enabled")):
-        raise Validation("This order has no order information")
+        raise Validation("This order has no order information", code="buyer_input_disabled")
     new = normalize_value(cfg, value)
-    if new is None:
-        raise Validation("buyer_input is required")
     order.buyer_input = new
     order.version += 1
     await audit(
@@ -568,8 +574,8 @@ async def update_input(
             conversation_id=conv_id,
             sender_id=order.buyer_id,
             sender_role="buyer",
-            type="text",
-            text=chat_text(order.order_no, order.title, new).replace("📝", "📝 (updated)", 1),
+            type="order_card",
+            payload={**order_card_payload(order), "event": "order_input_updated"},
             client_msg_id=f"order-input:{order.id}:{order.version}",
         )
     await db.commit()

@@ -142,11 +142,13 @@ async def test_bad_signature_rejected(env, mock):
     body = await mock.body(trade_id)
     body["signature"] = "0" * 32
     r = await _post(env, body)
-    assert r.text == "fail" and await _status(buyer, order) == "pending_payment"
+    assert r.status_code == 403 and r.text == "fail"
+    assert await _status(buyer, order) == "pending_payment"
     body = await mock.body(trade_id)
     body["amount"] = "0.01"  # tampered after signing
     r = await _post(env, body)
-    assert r.text == "fail" and await _status(buyer, order) == "pending_payment"
+    assert r.status_code == 403 and r.text == "fail"
+    assert await _status(buyer, order) == "pending_payment"
     body.pop("signature")
     assert (await _post(env, body)).text == "fail"
     assert await env.scalar("SELECT count(*) FROM payments") == 0
@@ -195,10 +197,15 @@ async def test_requery_transport_failure_is_retryable(env, mock):
     good = env.res.bepusdt._http
     env.res.bepusdt._http = httpx.AsyncClient(transport=httpx.MockTransport(boom))
     r = await _post(env, body)
-    assert r.text == "fail" and await _status(buyer, order) == "pending_payment"
+    assert r.status_code == 503 and r.text == "fail"
+    assert await _status(buyer, order) == "pending_payment"
     env.res.bepusdt._http = good  # the gateway retries -> now processed (no stale replay lock)
-    assert (await _post(env, body)).text == "ok"
+    retried = await _post(env, body)
+    assert retried.status_code == 200 and retried.text == "ok"
     assert await _status(buyer, order) == "paid"
+    assert (await _post(env, body)).status_code == 200
+    assert await env.scalar("SELECT count(*) FROM payments") == 1
+    assert await env.scalar("SELECT count(*) FROM outbox") == 1
 
 
 @pytest.mark.parametrize("status", [1, 3])

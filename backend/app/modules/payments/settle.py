@@ -29,7 +29,7 @@ from app.modules.chat.messages import (
     insert_message,
     post_system,
 )
-from app.modules.common.buyerinput import chat_text
+from app.modules.common.views import order_card_payload
 from app.modules.orders.events import add_event, snapshot
 from app.modules.payments.channels import provider
 from app.modules.payments.ledger import Line, post_txn
@@ -338,8 +338,8 @@ async def settle_member(
                 conversation_id=order.conversation_id,
                 sender_id=order.buyer_id,
                 sender_role="buyer",
-                type="text",
-                text=chat_text(order.order_no, order.title, order.buyer_input),
+                type="order_card",
+                payload={**order_card_payload(order), "event": "order_input"},
                 client_msg_id=f"order-input:{order.id}",
             )
             msgs.append(m)

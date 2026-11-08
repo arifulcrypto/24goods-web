@@ -73,21 +73,22 @@ async def notify_bepusdt(
     db: AsyncSession = Depends(get_db),
     res: Resources = Depends(get_res),
 ) -> PlainTextResponse:
-    """BEpusdt JSON notify (internal network). Body ``ok`` ONLY for a processed paid notify
-    (or a harmless waiting/expired ping / duplicate); anything else gets ``fail`` so the gateway
-    retries. The pipeline is documented in :mod:`app.modules.payments.notify_bepusdt`."""
+    """BEpusdt native callbacks acknowledge by HTTP status, ignoring the body.
+    Only durable/idempotent success and harmless pings return 200; failures return non-200
+    so the pinned gateway revision retries instead of losing the settlement hint."""
     ip = client_ip(request)
     try:
         params = bepusdt.parse_json(await request.body())
     except ValueError:
-        return PlainTextResponse("fail", status_code=200)
-    if not res.bepusdt.configured or not res.bepusdt.verify_signature(params):
+        return PlainTextResponse("fail", status_code=400)
+    signed = res.bepusdt.configured and res.bepusdt.verify_signature(params)
+    if not signed:
         # unsigned noise: cheap refusal, rate limited per source IP
         allowed, _ = await hit(
             res.redis, "notify:ip", ip or "-", res.settings.notify_rate_per_min, 60
         )
         if not allowed:
-            return PlainTextResponse("fail", status_code=200)
+            return PlainTextResponse("fail", status_code=429)
     outcome = await handle_bepusdt_notify(db, res, tenant_id, params, ip)
     touched = outcome.orders or ([outcome.order] if outcome.order is not None else [])
     if outcome.reply == SUCCESS:
@@ -99,7 +100,13 @@ async def notify_bepusdt(
                 [m for m in outcome.messages if m and m.conversation_id == o.conversation_id],
             )
         notify_tg.outcome_events(res, touched, outcome.dup_trade_no)
-    return PlainTextResponse("ok" if outcome.reply in (SUCCESS, "ok") else "fail", status_code=200)
+    acknowledged = outcome.reply in (SUCCESS, "ok")
+    return PlainTextResponse(
+        "ok" if acknowledged else "fail",
+        status_code=200
+        if acknowledged
+        else (403 if res.bepusdt.configured and not signed else 503),
+    )
 
 
 @router.get("/usdt/{no}")

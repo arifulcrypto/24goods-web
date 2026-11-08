@@ -2,8 +2,8 @@
 
 Off by default. When enabled in Settings -> Security, the listed actions require a token
 (JSON field ``turnstile_token`` or, for lookup, header ``X-Turnstile-Token``). Fail closed on
-failure/timeout; if enabled but no secret is configured the check is skipped (and a warning
-logged) so a misconfiguration cannot lock everybody out. Tokens are single use (Redis, 5 min).
+failure/timeout and incomplete configuration. Tokens are single use (Redis, 5 min).
+An authenticated administrator can disable the setting through the audited settings route.
 """
 
 from __future__ import annotations
@@ -54,9 +54,14 @@ async def require_turnstile(
     tenant_id: uuid.UUID = request.state.tenant_id
     async with tenant_session(res.maker, tenant_id) as db:
         secret = await secretbox.get_secret(db, res.settings, tenant_id, "turnstile_secret")
-    if not secret:
-        log.warning("turnstile enabled but not configured; check skipped tenant=%s", tenant_id)
-        return
+    is_test_secret = bool(secret and secret.startswith(TEST_SECRET_PREFIXES))
+    if (
+        not secret
+        or not sec["turnstile_site_key"]
+        or (res.settings.env == "prod" and is_test_secret)
+    ):
+        log.warning("turnstile configuration unhealthy tenant=%s", tenant_id)
+        raise TurnstileFailed("Human verification is temporarily unavailable")
     token = (token or "").strip()
     if not token or len(token) > MAX_TOKEN_LEN:
         raise TurnstileFailed("Human verification required")
@@ -70,16 +75,21 @@ async def require_turnstile(
     try:
         r = await res.http.post(SITEVERIFY_URL, data=data, timeout=5.0)
         body = r.json()
-        ok = r.status_code == 200 and body.get("success") is True
+        ok = (
+            r.status_code == 200
+            and isinstance(body, dict)
+            and body.get("success") is True
+            and body.get("action") == action
+        )
         # the token must have been issued for one of OUR hostnames (Cloudflare test secrets
         # always answer example.com, so the check is skipped for them)
         host = body.get("hostname") if isinstance(body, dict) else None
-        if ok and host and not secret.startswith(TEST_SECRET_PREFIXES):
+        if ok and not is_test_secret:
             allowed = {
                 (urlsplit(res.settings.public_base_url).hostname or "").lower(),
                 (request.headers.get("host") or "").rsplit(":", 1)[0].lower().strip("[]"),
             } - {""}
-            ok = str(host).lower() in allowed
+            ok = isinstance(host, str) and host.lower() in allowed
     except (httpx.HTTPError, ValueError, AttributeError):
         ok = False
     if not ok:

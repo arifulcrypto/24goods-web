@@ -251,6 +251,17 @@ def order_view(
         "checkout_no": checkout_no,
         # the buyer's order information (may hold a session token): owner and staff only
         "buyer_input": o.buyer_input if (viewer_is_owner or viewer_is_staff) else None,
+        # Current server schema remains available even when the product is unpublished.
+        "input_config": public_config(product.buyer_input if product else None, lang)
+        if (viewer_is_owner or viewer_is_staff)
+        else None,
+        "can_edit_input": bool(
+            viewer_is_owner
+            and o.status in ("pending_payment", "paid")
+            and product
+            and product.buyer_input
+            and product.buyer_input.get("enabled")
+        ),
         "cancel_reason": o.cancel_reason,
         "currency": o.currency,
         "status": o.status,
@@ -284,7 +295,9 @@ def message_view(
     attachment: Attachment | None = None,
     payload_overlay: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    if m.payload is not None and m.payload.get("redacted"):
+    if (m.payload is not None and m.payload.get("redacted")) or (
+        m.type == "text" and (m.client_msg_id or "").startswith("order-input:")
+    ):
         # the author deleted their account: keep the row (ordering, type) but no content
         return {
             "id": m.id,

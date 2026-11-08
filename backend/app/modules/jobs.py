@@ -13,7 +13,7 @@ from app.core.config import Settings
 from app.core.db import tenant_session
 from app.core.resources import Resources
 from app.core.settings_v5 import section
-from app.models import AfterSales, Order, Tenant, User
+from app.models import AfterSales, Message, Order, Tenant, User
 from app.modules.chat.messages import post_system
 from app.modules.content.site import tenant_settings
 from app.modules.inventory.service import void_expired
@@ -175,12 +175,23 @@ _FINAL_STATES = ("completed", "cancelled", "expired", "refunded")
 async def purge_buyer_input(
     maker: async_sessionmaker[AsyncSession], days: int = BUYER_INPUT_RETENTION_DAYS
 ) -> int:
-    """Null ``orders.buyer_input`` (it can hold session tokens) on finished orders older than
-    ``days``, measured from ``completed_at`` (else ``updated_at``). Idempotent."""
+    """Purge finished-order input and all historical auto-generated plaintext chat copies.
+    Copies are unnecessary at any age: authorized readers use the order reference. Both
+    updates are tenant-bound and idempotent; no sensitive values enter audit payloads."""
     total = 0
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     for tid in await _tenant_ids(maker):
         async with tenant_session(maker, tid) as db:
+            await db.execute(
+                update(Message)
+                .where(
+                    Message.tenant_id == tid,
+                    Message.type == "text",
+                    Message.client_msg_id.startswith("order-input:"),
+                    Message.text.is_not(None),
+                )
+                .values(text=None, payload={"redacted": True})
+            )
             res = await db.execute(
                 update(Order)
                 .where(

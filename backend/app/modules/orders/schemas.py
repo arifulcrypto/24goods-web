@@ -49,7 +49,7 @@ class BuyerCancelIn(BaseModel):
 
 
 class InputIn(BaseModel):
-    buyer_input: str = Field(max_length=4000)
+    buyer_input: str | None = Field(max_length=4000)
 
 
 class CartItemIn(BaseModel):

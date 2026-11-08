@@ -8,7 +8,7 @@ from fastapi import UploadFile
 from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import UploadRejected
+from app.core.errors import Unavailable, UploadRejected
 from app.core.security import STAFF_ROLES
 from app.models import Attachment, Conversation, Message, Order, User
 from app.modules.uploads.processing import (
@@ -35,8 +35,12 @@ async def read_limited(file: UploadFile, limit: int) -> bytes:
 
 
 async def image_from_upload(file: UploadFile) -> Processed:
-    data = await read_limited(file, MAX_IMAGE_BYTES)
+    # The locked check and uncontended acquisition have no suspension point between
+    # them on this event loop. Refuse excess work instead of queuing buffered images.
+    if _image_slot.locked():
+        raise Unavailable("Image processing is busy", headers={"Retry-After": "2"})
     async with _image_slot:
+        data = await read_limited(file, MAX_IMAGE_BYTES)
         return await anyio.to_thread.run_sync(process_image, data)
 
 

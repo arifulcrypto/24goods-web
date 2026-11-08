@@ -584,8 +584,13 @@ async def test_buyer_input_required_max_len_and_never_audited(env, gw):
     assert (
         await c.get(NOTIFY, params=notify_params(o["order_no"], "10.00", trade_no="TIN1"))
     ).text == "success"
-    msg = await env.scalar("SELECT text FROM messages WHERE sender_role='buyer' AND type='text'")
-    assert msg == f"📝 Order {o['order_no']} · {o['title']}\nTOKEN-2"
+    assert (
+        await env.scalar(
+            "SELECT count(*) FROM messages WHERE sender_role='buyer' AND type='order_card'"
+        )
+        == 1
+    )
+    assert await leaks(env, "messages", "TOKEN-2") == 0
     # editable while paid (not yet delivered): CS gets an updated message
     r = await buyer.patch(f"/api/v1/orders/{o['id']}/input", json={"buyer_input": "TOKEN-3"})
     assert r.status_code == 200
