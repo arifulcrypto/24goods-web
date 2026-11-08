@@ -44,8 +44,12 @@
 		?Referrer-Policy "strict-origin-when-cross-origin"
 		?Permissions-Policy "camera=(), geolocation=(), microphone=(self)"
 		?Cross-Origin-Opener-Policy "same-origin"
+		# One origin for SPA, admin, API and uploads: nothing legitimate embeds our resources.
+		?Cross-Origin-Resource-Policy "same-origin"
 		?Content-Security-Policy "default-src 'self'; script-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+		# do not advertise the proxy or its version (Caddy adds `Via: 1.1 Caddy` on proxied responses)
 		-Server
+		-Via
 	}
 }
 
@@ -79,7 +83,7 @@
 	# SEO documents rendered by the API (review-v5.2 §6, ADR-024): crawler HTML + first paint.
 	# The SPA still boots from the same shell; the API serves it with per-route metadata. If the
 	# API cannot answer (down / 503 shell unavailable) the static shell is served instead.
-	@seo path / /p/* /a/* /help /search /sitemap.xml /robots.txt
+	@seo path / /p/* /a/* /help /search /sitemap.xml /robots.txt /ai.txt
 	handle @seo {
 		reverse_proxy api:8000 {
 			header_up X-Forwarded-For {client_ip}
