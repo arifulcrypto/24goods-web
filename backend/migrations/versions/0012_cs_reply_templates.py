@@ -33,10 +33,8 @@ def upgrade() -> None:
     )
     op.execute("ALTER TABLE cs_reply_templates ENABLE ROW LEVEL SECURITY")
     op.execute("ALTER TABLE cs_reply_templates FORCE ROW LEVEL SECURITY")
-    op.execute(
-        f"CREATE POLICY tenant_isolation ON cs_reply_templates "
-        f"USING ({PRED}) WITH CHECK ({PRED})"
-    )
+    scope = f"USING ({PRED}) WITH CHECK ({PRED})"
+    op.execute(f"CREATE POLICY tenant_isolation ON cs_reply_templates {scope}")
     op.execute("GRANT SELECT, INSERT, UPDATE, DELETE ON cs_reply_templates TO app_api")
 
 
