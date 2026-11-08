@@ -44,3 +44,19 @@ class PaymentAttempt(Base):
     checked_at: Mapped[datetime | None]
     created_at: Mapped[datetime] = created_at()
     updated_at: Mapped[datetime] = updated_at()
+
+
+class LegacyPayUrl(Base):
+    """Durable proof that a signed environment-key ``submit.php`` URL was handed out (issue #32).
+
+    The legacy path signs a URL with the deployment's env key and records nothing else, so without
+    this row the question "can money arrive for this payable through a URL we cannot see?" had to
+    be guessed from the current channel, key presence or provider history, all of which can change
+    after the URL was issued. Written in the same transaction that returns the URL.
+    """
+
+    __tablename__ = "legacy_pay_urls"
+
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id"), primary_key=True)
+    local_ref: Mapped[str] = mapped_column(String(16), primary_key=True)
+    issued_at: Mapped[datetime] = created_at()

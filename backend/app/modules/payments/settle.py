@@ -52,6 +52,9 @@ class NotifyOutcome:
     messages: list[Message | None] = field(default_factory=list)
     orders: list[Order] = field(default_factory=list)  # every order touched (checkout path)
     dup_trade_no: str | None = None  # a SECOND paid trade arrived: staff must refund it
+    # Every distinct duplicate when several outcomes are merged (reconciliation): each one is a
+    # separate refund staff owe, so each needs its own alert. Empty on single-notify outcomes.
+    dup_trade_nos: tuple[str, ...] = ()
 
 
 def exact_minor(amount: Decimal) -> int | None:

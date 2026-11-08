@@ -107,19 +107,22 @@ async def _settle_if_paid(
         )
         if outcome is not None:
             return outcome
-    from app.modules.payments.gateways import legacy_allowed
+    from app.modules.payments.gateways import legacy_allowed, legacy_url_issued
 
-    # A legacy environment-key pay URL leaves no durable record, so the payable's own channel is
-    # the only evidence of whether one can exist: USDT is served by BEpusdt, never by submit.php.
-    # With no usable key such a URL cannot be verified, so an EPay payable fails closed instead of
-    # cancelling over money that may already have arrived; a USDT-only payable cancels normally.
-    # While the key is present the legacy query still runs for USDT too, so an EPay URL issued
-    # before a switch to USDT stays drainable.
+    # Since #32 a legacy env-key URL is recorded when it is handed out. The record ADDS certainty
+    # and never removes a check:
+    # - recorded: always query it, whatever the current channel or provider history -- both can
+    #   change after the URL was issued -- and fail closed if the key that signed it is gone;
+    # - not recorded, no key: nothing was issued and there is nothing to ask, so proceed (this is
+    #   the tenant on durable providers only, whose every EPay cancel used to 503);
+    # - not recorded, key present: keep the best-effort query (v4 review W2/W3) for payables that
+    #   predate the record, as long as no durable attempt or cutover rules a legacy URL out.
+    issued = await legacy_url_issued(db, tid, out_trade_no)
     if not (res.settings.zpay_pid and res.settings.zpay_key):
-        if not is_usdt(channel):
+        if issued:
             raise Unavailable("Could not verify the payment status; please try again")
         return None
-    if not await legacy_allowed(db, tid, out_trade_no):
+    if not issued and not await legacy_allowed(db, tid, out_trade_no):
         return None
     try:
         q = await res.zpay.query_order(out_trade_no)
@@ -237,8 +240,19 @@ async def cancel_group(
     has_history = await db.scalar(
         select(exists().where(PaymentAttempt.tenant_id == tid, PaymentAttempt.local_ref == no))
     )
-    gateway_ready = has_history or (
-        res.bepusdt.configured if is_usdt(group_channel) else await _epay_configured(db, res, tid)
+    from app.modules.payments.gateways import legacy_url_issued
+
+    # A recorded legacy URL forces the check even when nothing is configured any more: that is the
+    # de-configured case (#32) in which skipping the query cancelled over a URL still in the wild.
+    # _settle_if_paid then queries it, or fails closed if the env key is gone.
+    gateway_ready = (
+        has_history
+        or await legacy_url_issued(db, tid, no)
+        or (
+            res.bepusdt.configured
+            if is_usdt(group_channel)
+            else await _epay_configured(db, res, tid)
+        )
     )
     if gateway_ready:
         no = co.checkout_no if co is not None else orders[0].order_no

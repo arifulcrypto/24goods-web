@@ -14,7 +14,7 @@ import asyncio
 import html
 import logging
 import uuid
-from collections.abc import Coroutine
+from collections.abc import Coroutine, Sequence
 from typing import Any
 
 from app.core import secretbox
@@ -193,19 +193,26 @@ def order_event(
     )
 
 
-def outcome_events(res: Resources, orders: list[Any], dup_trade_no: str | None = None) -> None:
+def outcome_events(
+    res: Resources, orders: list[Any], dup_trade_no: str | Sequence[str] | None = None
+) -> None:
     """After a settled payment: paid -> order_paid (+ low stock); manual_review -> review.
-    Never raises: runs inline on the payment-notify path after commit."""
+    Never raises: runs inline on the payment-notify path after commit.
+
+    ``dup_trade_no`` may be several trades (a merged reconciliation outcome): each is a separate
+    refund owed, so each gets its own alert rather than being folded into one."""
     try:
         _outcome_events(res, orders)
-        if dup_trade_no:  # a second paid trade: never throttled behind the first review alert
+        dups = [dup_trade_no] if isinstance(dup_trade_no, str) else list(dup_trade_no or ())
+        for dup in dict.fromkeys(d for d in dups if d):
+            # a second paid trade: never throttled behind the first review alert
             for o in orders:
                 order_event(
                     res,
                     o,
                     "payment_review",
-                    [f"SECOND payment, refund it: trade {dup_trade_no[:32]}"],
-                    once_suffix=f":{dup_trade_no[:64]}",
+                    [f"SECOND payment, refund it: trade {dup[:32]}"],
+                    once_suffix=f":{dup[:64]}",
                 )
     except Exception as exc:  # a notification bug must not fail a notify reply
         log.warning("telegram outcome events skipped (%s)", type(exc).__name__)

@@ -17,7 +17,7 @@ from app.core.audit import audit
 from app.core.errors import InvalidState, Unavailable, Validation
 from app.core.money import to_decimal
 from app.core.resources import Resources
-from app.models import Checkout, Order, PaymentAttempt, PaymentGateway, Tenant
+from app.models import Checkout, LegacyPayUrl, Order, PaymentAttempt, PaymentGateway, Tenant
 from app.modules.content.site import tenant_settings
 from app.payments.zpay import ZPayClient, ZPayConfig, ZPayQueryError
 
@@ -297,3 +297,33 @@ async def legacy_allowed(db: AsyncSession, tid: uuid.UUID, no: str) -> bool:
     model, col = (Checkout, Checkout.checkout_no) if no.startswith("C") else (Order, Order.order_no)
     created = await db.scalar(select(model.created_at).where(col == no, model.tenant_id == tid))
     return bool(created and created < datetime.fromisoformat(cutover))
+
+
+async def record_legacy_url(db: AsyncSession, tid: uuid.UUID, no: str) -> None:
+    """Record that an environment-key pay URL is about to be handed out for ``no`` (issue #32).
+
+    Call it BEFORE the URL leaves the server, in the transaction that commits before returning it:
+    if that commit fails the buyer never receives the URL, and if it succeeds the evidence exists.
+    Idempotent: a payable re-opening its pay page keeps its first marker.
+    """
+    from sqlalchemy.dialects.postgresql import insert
+
+    await db.execute(
+        insert(LegacyPayUrl).values(tenant_id=tid, local_ref=no).on_conflict_do_nothing()
+    )
+
+
+async def legacy_url_issued(db: AsyncSession, tid: uuid.UUID, no: str) -> bool:
+    """Whether a legacy env-key URL was ever handed out for this payable.
+
+    This is the only reliable answer to "can money arrive through a URL we cannot see?". The
+    current channel, key presence, cutover time and provider history can all change after a URL
+    is issued, so none of them may stand in for this record.
+    """
+    from sqlalchemy import exists
+
+    return bool(
+        await db.scalar(
+            select(exists().where(LegacyPayUrl.tenant_id == tid, LegacyPayUrl.local_ref == no))
+        )
+    )

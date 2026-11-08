@@ -237,8 +237,9 @@ async def test_usdt_order_drains_a_legacy_epay_url_while_the_key_exists(
     mock,  # noqa: F811
     monkeypatch,
 ):
-    """A pay URL issued before a switch to USDT stays drainable: the key decides, not the
-    channel."""
+    """No legacy URL is RECORDED for this pure-USDT order (``_order`` never issues one), yet with a
+    key present the best-effort legacy query still runs (v4 review W2/W3). The case this name
+    used to claim -- a URL really issued before a switch -- is the next test down."""
     buyer, order, p = await _order(env)
     assert p.status_code == 200, p.text
     queried: list[str] = []
@@ -321,8 +322,8 @@ async def test_requery_all_propagates_a_committed_outcome_through_mixed_evidence
 
 
 async def test_epay_order_refuses_to_cancel_when_the_legacy_key_is_gone(env, monkeypatch):
-    """Fail closed: a legacy EPay pay URL leaves no durable record, so with the key cleared it
-    cannot be verified and cancelling could release an order the buyer already paid for.
+    """Fail closed: a legacy EPay pay URL was issued (and, since #32, recorded); with the key
+    cleared it cannot be verified, and cancelling could release an order already paid for.
 
     The reachable shape is the operator one: the legacy URL is issued, then a durable gateway is
     configured (so a gateway is still 'ready') and the old environment key is cleared.
@@ -400,3 +401,254 @@ async def test_a_settled_original_is_not_requeried_on_retry(env, monkeypatch):
     assert again is None
     assert await env.scalar("SELECT count(*) FROM payments") == 1
     assert await env.scalar("SELECT count(*) FROM audit_log WHERE action='payment.duplicate'") == 0
+
+
+# --------------------------------------------------------------- independent audit, 2026-11-08
+# A cold-started payment-auditor pass (no context shared with the session that wrote #31) found
+# the defects below. Each test fails against the code it replaces.
+
+
+async def _alipay_then_usdt(env):
+    """A real legacy EPay URL is issued, THEN the buyer switches the same order to USDT."""
+    await set_channels(
+        env,
+        {
+            "zpay_alipay": {"surcharge_permille": 0},
+            "usdt_trc20": {"enabled": True, "surcharge_permille": 0},
+        },
+    )
+    product = await env.product(mode="manual", price=1990, floor=100)
+    buyer, _ = await env.login("buyer")
+    r = await buyer.post("/api/v1/orders", json={"product_id": str(product.id), "qty": 1})
+    assert r.status_code == 200, r.text
+    order = r.json()
+    for channel in ("zpay_alipay", "usdt_trc20"):
+        p = await buyer.post(f"/api/v1/orders/{order['id']}/pay", json={"channel": channel})
+        assert p.status_code == 200, (channel, p.text)
+    return buyer, order
+
+
+async def _qr(monkeypatch):
+    async def create(*args):
+        return {"kind": "qr", "payload": "https://qr.alipay.com/fixture"}
+
+    monkeypatch.setattr(ZPayClient, "create_payment", create)
+
+
+async def test_a_legacy_url_is_recorded_when_issued_and_only_then(env, monkeypatch):
+    """#32: the durable record exists exactly when an env-key URL left the server."""
+    admin, _ = await env.login("admin")
+    buyer, _ = await env.login()
+    legacy = await _prepare(buyer, await env.product(mode="manual"))
+    await _gateway(env, admin, monkeypatch)
+    await _qr(monkeypatch)
+    durable = await _prepare(buyer, await env.product(mode="manual"))
+    sql = "SELECT count(*) FROM legacy_pay_urls WHERE local_ref = :n"
+    assert await env.scalar(sql, n=legacy["order_no"]) == 1
+    assert await env.scalar(sql, n=durable["order_no"]) == 0  # a durable provider records nothing
+
+
+async def test_durable_only_tenant_with_no_env_key_can_cancel_an_unpaid_order(env, monkeypatch):
+    """Audit finding 1: the key check ran even after requery_all had resolved every durable
+    attempt as unpaid, so a tenant on durable providers only got a permanent 503."""
+    admin, _ = await env.login("admin")
+    buyer, _ = await env.login()
+    await _gateway(env, admin, monkeypatch)
+    await _qr(monkeypatch)
+    monkeypatch.setattr(env.res.settings, "zpay_pid", "")
+    monkeypatch.setattr(env.res.settings, "zpay_key", "")
+    order = await _prepare(buyer, await env.product(mode="manual"))
+
+    async def query(self, no):
+        return QueryResult(False, False, None, "", no)
+
+    monkeypatch.setattr(ZPayClient, "query_order", query)
+    r = await buyer.post(f"/api/v1/orders/{order['id']}/cancel", json={})
+    assert r.status_code == 200, r.text
+    assert await _status(buyer, order) == "cancelled"
+
+
+async def test_a_recorded_legacy_url_is_drained_after_a_switch_to_usdt(env, mock, monkeypatch):  # noqa: F811
+    buyer, order = await _alipay_then_usdt(env)
+    queried: list[str] = []
+
+    async def query(self, no):
+        queried.append(no)
+        return QueryResult(False, False, None, "", no)
+
+    monkeypatch.setattr(ZPayClient, "query_order", query)
+    r = await buyer.post(f"/api/v1/orders/{order['id']}/cancel", json={})
+    assert r.status_code == 200, r.text
+    assert queried == [order["order_no"]]
+
+
+async def test_a_recorded_legacy_url_fails_closed_after_a_switch_to_usdt(env, mock, monkeypatch):  # noqa: F811
+    """Audit finding 2(a): the gate read the CURRENT channel, so once the order had switched to
+    USDT a cleared key let the cancel proceed over a legacy URL still in the wild."""
+    buyer, order = await _alipay_then_usdt(env)
+    monkeypatch.setattr(env.res.settings, "zpay_pid", "")
+    monkeypatch.setattr(env.res.settings, "zpay_key", "")
+    r = await buyer.post(f"/api/v1/orders/{order['id']}/cancel", json={})
+    assert r.status_code == 503, r.text
+    assert await _status(buyer, order) == "pending_payment"
+
+
+async def test_a_recorded_legacy_url_is_queried_despite_a_later_durable_attempt(env, monkeypatch):
+    """Audit finding 2(b): any durable provider attempt made legacy_allowed() False for the whole
+    payable, so money paid on the earlier legacy URL was never looked for and the cancel ran."""
+    admin, _ = await env.login("admin")
+    buyer, _ = await env.login()
+    order = await _prepare(buyer, await env.product(mode="manual"))  # legacy URL, recorded
+    await _gateway(env, admin, monkeypatch)
+    await _qr(monkeypatch)
+    again = await buyer.post(f"/api/v1/orders/{order['id']}/pay", json={"channel": "zpay_alipay"})
+    assert again.status_code == 200, again.text  # now a durable attempt exists too
+
+    async def query(self, no):
+        if no == order["order_no"]:  # the legacy URL was paid
+            return QueryResult(True, True, Decimal(order["amount"]), "LEGACY-TRADE-1", no)
+        return QueryResult(False, False, None, "", no)  # the durable attempt was not
+
+    monkeypatch.setattr(ZPayClient, "query_order", query)
+    r = await buyer.post(f"/api/v1/orders/{order['id']}/cancel", json={})
+    assert r.status_code == 409 and r.json()["error"]["code"] == "already_paid", r.text
+    assert await _status(buyer, order) in {"paid", "manual_review"}
+
+
+async def test_a_deconfigured_tenant_fails_closed_over_a_recorded_legacy_url(env, monkeypatch):
+    """Audit finding 2(c) / #32: with no key, no provider and no attempt history gateway_ready was
+    False, so _settle_if_paid never ran and the cancel proceeded unqueried."""
+    buyer, _ = await env.login()
+    order = await _prepare(buyer, await env.product(mode="manual"))  # legacy URL, recorded
+    monkeypatch.setattr(env.res.settings, "zpay_pid", "")
+    monkeypatch.setattr(env.res.settings, "zpay_key", "")
+    r = await buyer.post(f"/api/v1/orders/{order['id']}/cancel", json={})
+    assert r.status_code == 503, r.text
+    assert await _status(buyer, order) == "pending_payment"
+
+
+async def _two_durable_originals(env, monkeypatch):
+    admin, _ = await env.login("admin")
+    buyer, _ = await env.login()
+    await _gateway(env, admin, monkeypatch)
+    await _qr(monkeypatch)
+    order = await _prepare(buyer, await env.product(mode="manual"))
+    await _gateway(env, admin, monkeypatch, "fixture2")
+    again = await buyer.post(f"/api/v1/orders/{order['id']}/pay", json={"channel": "zpay_alipay"})
+    assert again.status_code == 200, again.text
+    return buyer, order
+
+
+async def test_an_unexpected_error_after_a_commit_still_carries_the_settlement(env, monkeypatch):
+    """Audit finding 3: only Unavailable was carried, so any other exception after the first
+    original settled lost its broadcast and duplicate alert for good."""
+    _, order = await _two_durable_originals(env, monkeypatch)
+    seen: list[str] = []
+
+    async def query(self, no):
+        seen.append(no)
+        if len(seen) == 1:
+            return QueryResult(True, True, Decimal(order["amount"]), secrets.token_hex(16), no)
+        raise RuntimeError("driver failure on the second original")
+
+    monkeypatch.setattr(ZPayClient, "query_order", query)
+    async with env.api_session() as db:
+        with pytest.raises(UnresolvedEvidence) as raised:
+            await requery_attempts(db, env.res, env.tenant_id, order["order_no"])
+    assert raised.value.settled is not None and raised.value.settled.orders
+    assert isinstance(raised.value.__cause__, RuntimeError)
+    assert await env.scalar("SELECT count(*) FROM payments") == 1
+
+
+async def test_the_settled_mark_rides_in_the_settlement_commit(env, monkeypatch):
+    """Audit finding 4: the attempt was marked settled only AFTER apply_* had committed, so a
+    crash in between left it 'ready' and the next tick re-applied it."""
+    from app.modules.payments import reconcile
+
+    admin, _ = await env.login("admin")
+    buyer, _ = await env.login()
+    await _gateway(env, admin, monkeypatch)
+    await _qr(monkeypatch)
+    order = await _prepare(buyer, await env.product(mode="manual"))
+
+    async def query(self, no):
+        return QueryResult(True, True, Decimal(order["amount"]), secrets.token_hex(16), no)
+
+    monkeypatch.setattr(ZPayClient, "query_order", query)
+    real, calls = reconcile._mark_settled, []
+
+    async def crash_after_apply(*args, **kwargs):
+        calls.append(1)
+        if len(calls) == 2:  # the re-mark that follows apply's own commit
+            raise RuntimeError("process died between the settlement and the mark")
+        return await real(*args, **kwargs)
+
+    monkeypatch.setattr(reconcile, "_mark_settled", crash_after_apply)
+    async with env.api_session() as db:
+        with pytest.raises(UnresolvedEvidence):
+            await requery_attempts(db, env.res, env.tenant_id, order["order_no"])
+    assert await env.scalar("SELECT count(*) FROM payments") == 1
+    assert await env.scalar("SELECT status FROM payment_attempts") == "settled"
+
+
+async def test_a_timeout_keeps_what_already_committed(env, monkeypatch):
+    """#33: asyncio.wait_for cancels the coroutine, so an outcome it was about to return was
+    lost for good. The caller's sink holds every outcome the moment it commits."""
+    import asyncio
+
+    _, order = await _two_durable_originals(env, monkeypatch)
+    seen: list[str] = []
+
+    async def query(self, no):
+        seen.append(no)
+        if len(seen) == 1:
+            return QueryResult(True, True, Decimal(order["amount"]), secrets.token_hex(16), no)
+        await asyncio.sleep(60)  # the second original hangs
+        raise AssertionError("unreachable")
+
+    monkeypatch.setattr(ZPayClient, "query_order", query)
+    sink: list = []
+    async with env.api_session() as db:
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(
+                requery_all(db, env.res, env.tenant_id, order["order_no"], sink), timeout=3
+            )
+    assert len(sink) == 1 and sink[0].orders
+    assert await env.scalar("SELECT count(*) FROM payments") == 1
+
+
+async def test_every_distinct_duplicate_keeps_its_own_staff_alert(env, monkeypatch):
+    """Audit finding 5: merge_outcomes kept only the LAST dup_trade_no, so with three paid
+    originals one of the two refunds staff owed never raised an alert."""
+    import uuid
+
+    from app.core import notify_tg
+    from app.models import Order
+    from app.modules.payments.reconcile import merge_outcomes
+    from app.modules.payments.settle import NotifyOutcome
+
+    buyer, _ = await env.login()
+    order = await buy(buyer, await env.product(mode="manual"))
+    async with env.api_session() as db:
+        o = await db.get(Order, uuid.UUID(order["id"]))
+        merged = await merge_outcomes(
+            db,
+            env.tenant_id,
+            [
+                NotifyOutcome("success", o, [], [o], "TRADE-B"),
+                NotifyOutcome("success", o, [], [o], "TRADE-C"),
+                NotifyOutcome("success", o, [], [o], None),
+            ],
+        )
+    assert merged.dup_trade_nos == ("TRADE-B", "TRADE-C")
+
+    sent: list[str] = []
+    monkeypatch.setattr(notify_tg, "_outcome_events", lambda res, orders: None)
+    monkeypatch.setattr(
+        notify_tg, "order_event", lambda res, o, kind, lines, **kw: sent.append(lines[0])
+    )
+    notify_tg.outcome_events(env.res, merged.orders, merged.dup_trade_nos)
+    assert sorted(sent) == [
+        "SECOND payment, refund it: trade TRADE-B",
+        "SECOND payment, refund it: trade TRADE-C",
+    ]
