@@ -60,8 +60,28 @@ Also 2026-11-08: the demo had SEO indexing **on** (mock products and a mock gate
 owner's domain); turned off in the DB and it survives redeploys (`seed` never touches it). robots.txt
 now refuses training crawlers only; AI search indexers and user-triggered fetchers are allowed (#43).
 
-**Next: production deploy of `main` to c4** -- needs explicit owner approval (real merchant, real
-USDT wallets). Prod is on `7f36926`; it will apply migrations `0010`-`0013`.
+**Production deployed 2026-11-08 18:42 UTC: `e1fb9e7`** (owner-approved), from `7f36926`, applying
+migrations `0010`-`0013`. Pre-deploy backup was taken with the installed v1 script, validated with
+`pg_restore --list`, and copied off-host with matching sha256 to
+`/root/kesiv-backups/predeploy-20261108T181022Z/`. Rollback images are pinned on c4 as
+`goods24-{api,web}:rollback-7f36926`; all four migrations are additive (new tables only), so
+**rollback = retag those images, no DB restore**. Verified: revisions `e1fb9e7`, alembic `0013`,
+FORCE RLS on all payment tables, `scripts/prod.sh smoke` all pass, `via` gone + CORP present
+(`Caddyfile.prod` had drifted from `Caddyfile` -- fixed in #46), `/ai.txt` live, robots refuses
+training crawlers only, api->BEpusdt HTTP 200, all 14 background jobs succeeded post-deploy.
+Prod had **zero** pending payables, so the 0013 backfill processed no rows (as on the demo).
+
+**`main` is branch-protected** (7 required checks, enforced for admins, linear history). Merge with
+`gh pr merge --squash --auto`.
+
+**Backup trap (fixed in code, not on c4):** c4 still runs the **unencrypted v1** backup script from
+cron; `deploy/backup.sh` is v2 (age) and c4 lacks `age` and both recipient files. `prod.sh backup` /
+`install-backup-cron` used to overwrite the working cron script with v2 and silently break nightly
+backups; `install_backup_script` now refuses until c4 is ready. Installing age + recipients is the
+owner-only part of #28 -- until then backups contain plaintext secrets.
+
+**Next (owner):** the small live USDT test transfer on https://shop.kesiv.com (now on current code);
+#28 age recipients; #30 rotate the Xiaodou secret/PID.
 
 **Merged and deployed (2026-11-08 UTC).** The above landed as PR #31 (`b2e7a1b`) with full CI
 green; two follow-up PRs merged on top:

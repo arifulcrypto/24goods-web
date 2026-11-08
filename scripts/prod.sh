@@ -117,6 +117,11 @@ remote_backup_script() {
 }
 
 install_backup_script() {
+  # deploy/backup.sh (v2) encrypts with age and refuses to run without both recipient files. The
+  # nightly cron calls $REMOTE/backup.sh, so overwriting a working script with one c4 cannot run
+  # would stop every nightly backup silently. Check BEFORE replacing anything (issue #28).
+  rsh "command -v age >/dev/null && test -s $REMOTE/backup-recipients.txt && test -s $REMOTE/backup-vault-recipients.txt" \
+    || die "c4 is not ready for the v2 backup script (needs 'age' plus $REMOTE/backup-recipients.txt and backup-vault-recipients.txt; see #28). Left $REMOTE/backup.sh untouched. For a one-off backup with the installed script run: ssh to c4 and execute $REMOTE/backup.sh"
   remote_backup_script | rsh "cat > $REMOTE/backup.sh && chmod 700 $REMOTE/backup.sh"
 }
 cmd_backup() {
