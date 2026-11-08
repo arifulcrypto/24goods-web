@@ -48,16 +48,19 @@ HOME_PRODUCTS = 24
 DISALLOW = ("/admin", "/api", "/cart", "/orders", "/pay", "/me", "/messages", "/reseller",
             "/chat", "/lookup")  # fmt: skip
 
-# Agents whose published purpose is collecting content for model training or answer synthesis
-# rather than sending visitors to the site. Search crawlers are deliberately NOT listed: being
-# indexable is how buyers arrive. Names are the vendors' own documented tokens.
+# Agents whose published purpose is collecting content to train models or build training
+# datasets. Names are the vendors' own documented tokens.
+#
+# Deliberately NOT listed, and asserted by test_seo_v52 so a later edit cannot slip them back in:
+# - classic search crawlers (Googlebot, bingbot, Baiduspider): being indexable is how buyers arrive;
+# - AI *search* indexers (OAI-SearchBot, Claude-SearchBot, PerplexityBot): they index pages so an
+#   answer can cite and link them, which sends buyers here rather than replacing the visit;
+# - user-triggered fetchers (ChatGPT-User, Claude-User, Perplexity-User): a person asked for this
+#   page, the equivalent of their browser, not a crawl.
+# Owner decision 2026-11-08: refuse training, keep search and user fetches.
 TRAINING_AGENTS = (
     "GPTBot",
-    "OAI-SearchBot",
-    "ChatGPT-User",
     "ClaudeBot",
-    "Claude-User",
-    "Claude-SearchBot",
     "anthropic-ai",
     "CCBot",
     "Google-Extended",
@@ -65,8 +68,6 @@ TRAINING_AGENTS = (
     "meta-externalagent",
     "FacebookBot",
     "Bytespider",
-    "PerplexityBot",
-    "Perplexity-User",
     "Diffbot",
     "Omgilibot",
     "ImagesiftBot",
@@ -518,8 +519,8 @@ async def robots(
     ctx = await _ctx(request, db, tid, res)
     if ctx.indexable:
         lines = ["User-agent: *", "Allow: /", *(f"Disallow: {p}" for p in DISALLOW), ""]
-        # Search crawlers stay allowed above; these agents collect for model training or answer
-        # synthesis instead of sending visitors, which the LICENSE withholds permission for.
+        # Search crawlers, AI search indexers and user-triggered fetches stay allowed above; these
+        # agents collect for model training, which the LICENSE withholds permission for.
         # robots.txt is advisory, so this records the refusal rather than enforcing it.
         for agent in TRAINING_AGENTS:
             lines += [f"User-agent: {agent}", "Disallow: /", ""]
@@ -547,7 +548,7 @@ async def ai_txt(
         "Training: disallowed\n"
         "Fine-tuning: disallowed\n"
         "Dataset-inclusion: disallowed\n"
-        "Retrieval-augmented-generation: disallowed\n"
+        "Search-and-citation: allowed with attribution and a link to the source page\n"
         "Reverse-engineering: disallowed\n"
         "\n"
         "# All content, code, design, copy and translations on this site are\n"

@@ -74,6 +74,45 @@ async def test_a_reply_is_invisible_across_tenants(env):
     assert [r["title"] for r in (await admin.get(TPL)).json()] == ["Shared"]
 
 
+async def test_a_foreign_admin_cannot_change_or_delete_a_reply_by_id(env):
+    """Invariant 4 asks for two layers, so prove each on its own. The HTTP test above stops at
+    the host->tenant mapping and the raw-SQL check proves only the policy; neither tried a write."""
+    import uuid
+
+    import pytest
+
+    from app.core.errors import NotFound
+    from app.models import CsReplyTemplate
+    from app.modules.chat import templates
+
+    admin, _ = await env.login("admin")
+    ref = uuid.UUID((await _create(admin, "Shared", "Tenant one", shared=True)).json()["id"])
+    outsider = await env.user("admin", tenant_id=env.other_tenant_id)
+
+    # Repository filter alone: the session is pinned to the OWNING tenant, so RLS would let the
+    # row through -- only `tenant_id == staff.tenant_id` stands between a foreign admin and it.
+    async with env.api_session(env.tenant_id) as db:
+        with pytest.raises(NotFound):
+            await templates.update(db, outsider, ref, title="Stolen", body="x", ip=None)
+        await db.rollback()
+        with pytest.raises(NotFound):
+            await templates.remove(db, outsider, ref, ip=None)
+        await db.rollback()
+
+    # RLS alone: pinned to the foreign tenant, the row does not exist for it at all.
+    async with env.api_session(env.other_tenant_id) as db:
+        with pytest.raises(NotFound):
+            await templates.update(db, outsider, ref, title="Stolen", body="x", ip=None)
+        await db.rollback()
+        with pytest.raises(NotFound):
+            await templates.remove(db, outsider, ref, ip=None)
+
+    # Nothing changed and nothing was deleted.
+    async with env.owner_session(env.tenant_id) as db:
+        row = await db.get(CsReplyTemplate, ref)
+        assert row is not None and row.title == "Shared" and row.body == "Tenant one"
+
+
 async def test_blank_and_oversized_replies_are_rejected(env):
     admin, _ = await env.login("admin")
     assert (await _create(admin, "   ", "body")).status_code == 422

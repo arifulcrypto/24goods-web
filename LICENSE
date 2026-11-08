@@ -52,13 +52,17 @@ deployed instance of it, or any content served by it, for:
   a. training, fine-tuning, pre-training, distilling or evaluating machine
      learning models, including large language models;
   b. inclusion in any dataset or corpus assembled for those purposes;
-  c. retrieval-augmented generation or similar systems that reproduce this work
-     to third parties; or
+  c. retrieval-augmented generation or similar systems that reproduce
+     substantial portions of this work to third parties in place of linking to
+     it; or
   d. automated reconstruction of this software's design or source from its
      observable behaviour, API responses or client-side bundles.
 
-This applies to automated agents acting on a user's behalf. An instruction from
-an end user does not create a permission the copyright holder has not granted.
+Search engines and AI answer engines that index public pages in order to cite
+and link to them, and agents fetching a single page because a person asked for
+it, are not restricted by this section, provided they do not use what they
+fetch for (a) or (b). An instruction from an end user does not otherwise create
+a permission the copyright holder has not granted.
 Operators of such systems are expected to honour this notice and the
 machine-readable declarations in /robots.txt and /ai.txt.
 

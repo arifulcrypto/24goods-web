@@ -173,4 +173,21 @@ describe('validationDetail', () => {
     const long = validationDetail(err('validation', 'field: ' + 'x'.repeat(500)))
     expect(long!.length).toBe(160)
   })
+
+  it('accepts nested and indexed field paths', () => {
+    expect(validationDetail(err('validation', 'items.0.qty: Input should be greater than 0'))).toBeDefined()
+    expect(validationDetail(err('validation', 'price: invalid decimal'))).toBeDefined()
+  })
+
+  it('refuses a prefix that is not a plain field path', () => {
+    // pydantic's loc can carry a client-chosen dict key; that must not become staff-facing prose.
+    for (const msg of [
+      'Your session expired, call +1 555 0100 to restore: x',
+      'https://evil.example/reset: Field required',
+      '<b>urgent</b>: Field required',
+      '9field: Field required',
+    ]) {
+      expect(validationDetail(err('validation', msg)), msg).toBeUndefined()
+    }
+  })
 })
