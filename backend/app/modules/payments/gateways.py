@@ -327,3 +327,17 @@ async def legacy_url_issued(db: AsyncSession, tid: uuid.UUID, no: str) -> bool:
             select(exists().where(LegacyPayUrl.tenant_id == tid, LegacyPayUrl.local_ref == no))
         )
     )
+
+
+async def ensure_still_payable(db: AsyncSession, tid: uuid.UUID, no: str) -> None:
+    """Refuse to hand out a legacy URL for a payable a concurrent cancel already closed.
+
+    The pay flow commits (releasing its row lock) before ``prepare`` and the marker write, so a
+    cancel can complete in between: it finds no marker, queries "unpaid" and cancels. Checking
+    again AFTER the marker commits closes that window -- a cancel that finished first is caught
+    here, and one that starts later sees the marker and queries the URL.
+    """
+    model, col = (Checkout, Checkout.checkout_no) if no.startswith("C") else (Order, Order.order_no)
+    status = await db.scalar(select(model.status).where(col == no, model.tenant_id == tid))
+    if status != "pending_payment":
+        raise InvalidState("This order is no longer awaiting payment")

@@ -561,6 +561,8 @@ async def pay_url(
         await gateways.record_legacy_url(db, tid, no)
         url = res.zpay.build_pay_url(no, title, to_decimal(minor))
     await db.commit()
+    if not prepared:
+        await gateways.ensure_still_payable(db, tid, no)
     if msg is not None:
         await broadcast_order(res, db, order, [msg])
     return url

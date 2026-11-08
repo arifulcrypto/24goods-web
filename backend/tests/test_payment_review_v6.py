@@ -652,3 +652,26 @@ async def test_every_distinct_duplicate_keeps_its_own_staff_alert(env, monkeypat
         "SECOND payment, refund it: trade TRADE-B",
         "SECOND payment, refund it: trade TRADE-C",
     ]
+
+
+async def test_a_cancel_inside_the_pay_window_never_receives_a_url(env, monkeypatch):
+    """Re-audit finding (PR #44): /pay commits and releases its row lock before prepare and the
+    marker write, so a cancel can finish in between -- it sees no marker, queries "unpaid" and
+    cancels. The URL must then never reach the buyer."""
+    from app.modules.payments import gateways
+
+    buyer, _ = await env.login()
+    order = await buy(buyer, await env.product(mode="manual"))
+
+    async def cancel_meanwhile(db, res, **kw):
+        async with env.owner_session() as other:  # a separate connection: the racing cancel
+            await other.execute(
+                text("UPDATE orders SET status = 'cancelled' WHERE order_no = :n"), {"n": kw["no"]}
+            )
+            await other.commit()
+        return None  # no durable provider: the legacy path builds a URL
+
+    monkeypatch.setattr(gateways, "prepare", cancel_meanwhile)
+    r = await buyer.post(f"/api/v1/orders/{order['id']}/pay", json={"channel": "zpay_alipay"})
+    assert r.status_code == 409 and r.json()["error"]["code"] == "invalid_state", r.text
+    assert "pay_url" not in r.text

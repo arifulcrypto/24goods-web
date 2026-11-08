@@ -607,6 +607,8 @@ async def pay_checkout(
         await gateways.record_legacy_url(db, tid, no)
         url = res.zpay.build_pay_url(no, name, to_decimal(minor))
     await db.commit()
+    if not prepared:
+        await gateways.ensure_still_payable(db, tid, no)
     await _announce(res, db, msgs)
     return url
 
