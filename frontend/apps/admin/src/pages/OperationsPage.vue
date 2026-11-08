@@ -27,7 +27,7 @@ const clock=setInterval(()=>{now.value=Date.now()},10000)
 onBeforeUnmount(()=>{clearInterval(timer);clearInterval(clock)})
 </script>
 <template>
-  <div class="operations">
+  <div class="page operations">
     <div class="head"><h1>{{ t('ops.title') }}</h1><el-button :loading="saving" @click="refresh">{{ t('ops.refresh') }}</el-button></div>
     <p>{{ t('ops.scope') }}</p>
     <el-alert v-if="stale" type="warning" :title="t('ops.stale')" :closable="false" />
