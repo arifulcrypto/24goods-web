@@ -513,10 +513,10 @@ export default {
   cs: {
     verify: 'Complete the verification to start chatting',
     bubble: 'Customer service',
+    staffBubble: 'Staff account: open the console inbox',
     staffTitle: 'You are signed in as staff',
     staffText:
       'This browser is signed in to a staff account, so buyer chat is not available. Open the console inbox to answer customers, or sign out to browse as a buyer.',
-    staffBlocked: 'Staff accounts use the console inbox, not buyer chat.',
     connecting: 'Connecting you to support…',
     guestBanner: "You're chatting as guest {id}",
     saveLogin: 'Save login',

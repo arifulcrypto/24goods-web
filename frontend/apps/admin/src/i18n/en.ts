@@ -254,7 +254,6 @@ export default {
     starters: 'Starters',
     shared: 'Shared with the team',
     mine: 'My replies',
-    manage: 'Manage',
     add: 'New reply',
     edit: 'Edit reply',
     name: 'Short name',
@@ -268,7 +267,6 @@ export default {
     deleteConfirm: 'Delete this quick reply?',
     none: 'No saved replies yet.',
     limit: 'Reply limit reached. Delete one first.',
-    insert: 'Insert',
     starterList: [
       { title: 'Greeting', body: 'Hello! Thanks for reaching out. How can I help you today?' },
       { title: 'Checking', body: 'Let me check that for you — one moment please.' },

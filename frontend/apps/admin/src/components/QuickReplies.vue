@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ChatLineSquare, Delete, Edit, Plus } from '@element-plus/icons-vue'
-import type { ReplyTemplate } from '@24goods/shared'
+import { isApiError, type ReplyTemplate } from '@24goods/shared'
 import { api } from '../api'
 import { useAuthStore } from '../stores/auth'
 import { confirmBox, toastError, toastOk } from '../ui'
@@ -65,7 +65,8 @@ async function save() {
     manageOpen.value = false
     toastOk(t('replies.saved'))
   } catch (e) {
-    toastError(e)
+    if (isApiError(e) && e.code === 'template_limit') ElMessage.warning(t('replies.limit'))
+    else toastError(e)
   } finally {
     saving.value = false
   }
@@ -111,6 +112,7 @@ async function remove(row: ReplyTemplate) {
           </template>
         </div>
       </div>
+      <p v-if="!mine.length && !shared.length" class="qr-hint muted">{{ t('replies.none') }}</p>
       <div class="qr-group">
         <div class="qr-label">{{ t('replies.starters') }}</div>
         <div v-for="s in starters" :key="s.title" class="qr-row">
@@ -166,7 +168,7 @@ async function remove(row: ReplyTemplate) {
 .qr-row {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 8px; /* keep delete away from the pick target */
 }
 .qr-pick {
   flex: 1;
@@ -187,5 +189,9 @@ async function remove(row: ReplyTemplate) {
 }
 .qr-pick:hover {
   background: var(--el-fill-color-light);
+}
+.qr-pick:focus-visible {
+  outline: 2px solid var(--el-color-primary);
+  outline-offset: 1px;
 }
 </style>

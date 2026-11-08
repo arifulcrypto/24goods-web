@@ -1,6 +1,5 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import { safeRedirect } from '@24goods/shared'
-import { i18n } from './i18n'
 import { useAuthStore } from './stores/auth'
 import { useSiteStore } from './stores/site'
 
@@ -77,9 +76,11 @@ router.beforeEach(async (to) => {
     return safeRedirect(to.query.redirect, '/me')
   }
   if (to.meta.buyerOnly && auth.isStaff) {
-    // Say which account is in the way, rather than bouncing without explanation.
-    const { showToast } = await import('./ui')
-    showToast(i18n.global.t('cs.staffBlocked'))
+    // Say which account is in the way rather than bouncing without explanation. The dialog is
+    // focus-managed (a toast carries no live region, so it would never be announced) and offers
+    // the console inbox; it is deliberately not awaited, so the redirect resolves immediately.
+    const { interceptStaffSupport } = await import('./lib/support')
+    void interceptStaffSupport()
     return { name: 'me' }
   }
   return true

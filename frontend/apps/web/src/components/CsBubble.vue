@@ -34,7 +34,7 @@ function open() {
 
 <template>
   <div v-if="visible" class="cs-wrap dock" :class="`lift-${lift}`">
-    <button type="button" class="cs-bubble" :class="{ staff }" :aria-label="staff ? t('cs.staffTitle') : t('cs.bubble')" @click="open">
+    <button type="button" class="cs-bubble" :class="{ staff }" :aria-label="staff ? t('cs.staffBubble') : t('cs.bubble')" @click="open">
       <van-icon :name="staff ? 'manager-o' : 'service-o'" size="24" aria-hidden="true" />
       <span v-if="unread && !staff" class="cs-badge">{{ unread }}</span>
     </button>

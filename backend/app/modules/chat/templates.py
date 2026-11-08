@@ -92,7 +92,9 @@ async def create(
         )
     )
     if count > MAX_PER_OWNER:
-        raise Forbidden("The reply template limit is reached; delete one first")
+        raise Forbidden(
+            "The reply template limit is reached; delete one first", code="template_limit"
+        )
     row = CsReplyTemplate(
         tenant_id=staff.tenant_id,
         owner_id=owner_id,

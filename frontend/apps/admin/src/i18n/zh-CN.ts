@@ -255,7 +255,6 @@ const zhCN: AdminMessages = {
     starters: '预设',
     shared: '团队共享',
     mine: '我的回复',
-    manage: '管理',
     add: '新建回复',
     edit: '编辑回复',
     name: '简短名称',
@@ -269,7 +268,6 @@ const zhCN: AdminMessages = {
     deleteConfirm: '删除这条快捷回复？',
     none: '暂无已保存的回复。',
     limit: '已达回复数量上限，请先删除一条。',
-    insert: '填入',
     starterList: [
       { title: '打招呼', body: '您好！感谢联系我们，请问有什么可以帮您？' },
       { title: '正在核实', body: '我帮您核实一下，请稍等。' },

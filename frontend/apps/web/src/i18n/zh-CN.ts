@@ -513,9 +513,9 @@ const zhCN: WebMessages = {
   cs: {
     verify: '请先完成验证再开始对话',
     bubble: '联系客服',
+    staffBubble: '员工账号：打开后台收件箱',
     staffTitle: '你当前使用的是员工账号',
     staffText: '当前浏览器登录的是员工账号，无法使用买家聊天。请前往后台收件箱接待客户，或退出登录后以买家身份浏览。',
-    staffBlocked: '员工账号请使用后台收件箱，而非买家聊天。',
     connecting: '正在为你连接客服…',
     guestBanner: '你正以游客身份 {id} 咨询',
     saveLogin: '保存登录信息',
