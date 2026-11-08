@@ -42,17 +42,56 @@ both findings are fixed, with regressions that fail against the fail-open versio
 2. `asyncio.TimeoutError` in `reconcile.run()` still loses a committed outcome's broadcast/alert,
    because `wait_for` cancels the coroutine before it can hand the outcome back.
 
-**Not established:** full CI green on the final head, and a re-run of the reviews after these
-fixes. No production deploy, key rotation or real payment. The independent pentest before real
-money (M1 gate) still stands.
+**Merged and deployed (2026-11-08 UTC).** The above landed as PR #31 (`b2e7a1b`) with full CI
+green; two follow-up PRs merged on top:
 
-_Last updated 2026-11-08 UTC (deployed-state notes below have not been reverified)._
+- **#37 → `4d079c9`** — container memory was reported as "Unknown / Unknown" because the overview
+  collector read only the cgroup **v2** paths and this host is still on **v1** (older LXD, #6). Now
+  falls back to the v1 hierarchy, treats v1's `LONG_MAX` "unlimited" sentinel as unknown rather
+  than an ~8 EiB budget, and keeps v2 precedence. Verified live in the running container: **161 MB
+  / 192 MB**. Also: the admin Operations page had no horizontal padding because its root carried
+  only `.operations`, not the shared `.page` class.
+- **#41 → `fed2927`** — the repository had **no LICENSE at all**. Adds a proprietary
+  all-rights-reserved LICENSE (prohibited uses, machine-learning use, payment integrity, logging
+  as evidence, good-faith security-research carve-out), `/ai.txt`, `robots.txt` refusal for 20
+  training/answer-synthesis agents (search crawlers deliberately still allowed, with a test), a
+  one-time console copyright notice in both SPAs, and `docs/legal/README.md`.
+- **#42 (open)** — a 422 showed only "Please check your input" while the API was already sending
+  `"<field>: <constraint>"`; `toastError` discarded it. Now appended, for the `validation` code
+  only, so log-oriented prose from other codes cannot reach a toast.
 
-- **Prod** https://shop.kesiv.com (c4, IIJ Japan) runs **v4**; deployed by the owner from another session
-  (`scripts/prod.sh`). This box = dev + demo. Prod needs `APP_SETTINGS_KEY` and the new env vars
-  (BEpusdt, see docs/production.md) before the v5 deploy.
-- **Demo** https://demo.kesiv.com runs `:main` (timer `goods24-demo-update`, manual
-  `/opt/24goods-demo/deploy/demo-update.sh`). Logins: `/opt/24goods-demo/deploy/secrets/demo-credentials.txt`.
+**Deliberately not built:** DevTools detection/blocking, requested by the owner. Everything shipped
+to a browser is already on the visitor's machine and `curl` fetches the bundle without executing
+any defence, so it stops nobody who is actually copying the work while breaking assistive
+technology, hanging some mobile browsers, resembling malware to scanners, and locking staff out of
+diagnosing a customer's payment problem. Reasoning in `docs/legal/README.md` and `notice.ts`.
+
+**Also deliberately not built:** VPN/proxy/VPS and "genuine location" detection (#39). The console's
+existing wording — IP and headers are untrusted hints, location is not inferred — is correct and
+should not be weakened into a verdict staff act on.
+
+**Still not established:** the independent pentest before real money (M1 gate) has not happened,
+and the owner has stated an intent to make a small live USDT transfer anyway. No key rotation. The
+Xiaodou merchant secret and PID should still be treated as exposed (#30).
+
+_Last updated 2026-11-08 UTC._
+
+- **Prod** https://shop.kesiv.com (c4, IIJ Japan) runs **`7f36926`** (v5.2 + #23), verified
+  2026-11-08 via `scripts/prod.sh status`. That is **15 commits behind `main`**, missing migrations
+  `0010_payment_attempts`, `0011_operations_renewals`, `0012_cs_reply_templates`. `0010` matters
+  most: `PaymentAttempt` is the durable attempt binding the USDT reconcile path depends on, so real
+  USDT testing on prod today exercises v5.2, not the current pipeline. **Real BEpusdt v1.24.3 is
+  already running there** (compose profile `usdt`) with the owner's three wallets configured —
+  Arbitrum One and X Layer share `0xe2dc…653c`, TRC20 is `TQkeo…vMu5`. Nothing to configure; the
+  gap is the deploy. c4 has ~1.8 GB RAM free vs this box's ~180 MB.
+- **Demo** https://demo.kesiv.com runs `:main` — updated **manually** via
+  `/opt/24goods-demo/deploy/demo-update.sh`; there is **no** `goods24-demo-update` systemd timer on
+  this host (checked 2026-11-08), so it only moves when invoked. `seed` is additive — no deletes —
+  but it writes an agent status only when none exists, so a stale seeded row persists across
+  deploys (the demo's support agent was left reading "online" until corrected directly in the DB).
+  USDT here is the **simulator** `mockusdt`, by design; real wallets stay on c4 so two services
+  never watch one address set.
+  Logins: `/opt/24goods-demo/deploy/secrets/demo-credentials.txt`.
   Demo config set 2026-11-07: rate limit 120/60 s, Telegram on (owner chat), Alipay + 3 USDT channels on
   (USDT = simulator `mockusdt`; env in `deploy/env/{api,mockusdt}.env`), SEO indexing **off**.
 - **Done 2026-11-07** (all with security-reviewer / payment-auditor / i18n-mobile-reviewer passes, findings fixed):
@@ -277,6 +316,17 @@ Tracking: [#27 payments](https://github.com/arifulcrypto/24goods-web/issues/27),
 - [ ] When an upstream `caddy:2.11-alpine` ships go-jose ≥ v4.1.6: remove the xcaddy stage in `deploy/web.Dockerfile`.
 
 ## Open questions for the owner
+- [ ] **Legal name for `LICENSE`** (#40). It currently says `Kesiv`, taken from the repo's own
+      branding, and `printCopyrightNotice({ owner: 'Kesiv' })` passes the same. Needs the exact
+      legal name of the owning person or company.
+- [ ] **Governing law and selling entity** (#40), blocking the ToS draft. The host is in Japan
+      (IIJ), buyers are international, the owner's jurisdiction is unstated. This determines the
+      Mainland China restriction, statutory withdrawal rights for digital goods, and refund terms.
+      Anthropic's ToS text will **not** be copied; original text in a comparable structure instead.
+      Needs a qualified lawyer before it governs real transactions.
+- [ ] **Approval to deploy `main` to production** (c4), prerequisite for the owner's intended live
+      USDT transfer — prod is 15 commits behind and missing `0010_payment_attempts`. Wants a
+      pre-deploy backup and recorded rollback image digests.
 - [ ] Legal review of payments for mainland users (aggregator + later USDT).
 - [ ] Which hostname of your domain to use for production. For HTTPS on the demo, point `demo.<domain>` at the demo host's IP.
 - [ ] Chatwoot re-evaluation at M2: only if there are ≥3 agents, on a ≥4 GB server.
