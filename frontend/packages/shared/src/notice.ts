@@ -29,7 +29,9 @@ export function printCopyrightNotice(opts: { owner: string; year?: number; repo?
       'Found a security bug? Please tell us before testing — but not on production, not',
       'with other people’s data, and not with real funds. Terms: /ai.txt',
     ].join('\n')
-    const styled = typeof window !== 'undefined' && !!(window as { chrome?: unknown }).chrome
+    // %c is ignored by consoles that do not support it, which would print the literal "%c".
+    // Chromium and Firefox both support it; sniff rather than cast `window` to a shape it lacks.
+    const styled = typeof navigator !== 'undefined' && /Chrome|Chromium|Edg|Firefox/.test(navigator.userAgent)
     if (styled) {
       console.info(`%c${head}%c\n\n${body}`, 'font-weight:700;font-size:13px', 'font-size:12px')
     } else {
