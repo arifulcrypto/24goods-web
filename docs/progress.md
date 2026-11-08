@@ -32,15 +32,22 @@ both findings are fixed, with regressions that fail against the fail-open versio
 - `cancel_group`'s emit is best-effort so a failed broadcast cannot turn the 503 into a 500; a
   teammate's private reply template answers 404 rather than confirming its id.
 
-**Known residual gaps (not introduced here, deliberately not fixed in this PR):**
+**The reviews above were NOT independent** (same session wrote and reviewed). A cold-started
+re-review on Opus 5.5 (2026-11-08) found more on the money path, which `sec/legacy-pay-url-marker`
+fixes (ADR-027) -- **production must not take `main` before that PR merges**:
 
-1. A legacy environment-key pay URL leaves **no durable record**, so "was a legacy URL ever
-   issued?" is inferred from the channel. If a tenant de-configures EPay entirely (env key cleared
-   *and* no `epay_provider_id`), `gateway_ready` is false and cancel proceeds unqueried. The proper
-   fix both reviewers recommend is a durable "legacy URL issued" marker written on the legacy pay
-   path, then gating on that marker instead of the channel.
-2. `asyncio.TimeoutError` in `reconcile.run()` still loses a committed outcome's broadcast/alert,
-   because `wait_for` cancels the coroutine before it can hand the outcome back.
+1. Cancel inferred "could a legacy URL exist?" from the current channel / key / provider history.
+   Fail-open after a channel switch, a provider cutover, or full de-configuration (#32); and a
+   fail-closed false positive -- every EPay cancel 503'd for a tenant on durable providers with no
+   env key. Fixed with a durable `legacy_pay_urls` record (migration 0013, backfilled).
+2. Reconciliation carried committed outcomes only through `Unavailable`; any other exception, or a
+   `wait_for` timeout, lost the broadcast and duplicate alert permanently (#33). Now carried
+   through every exception and collected in a caller-owned sink.
+3. The attempt was marked settled only after the settlement committed, so a crash in between
+   replayed the duplicate audit row and alert. The mark now rides in the settlement's commit.
+4. Merging outcomes kept one duplicate trade, dropping a refund alert when three originals paid.
+
+Not affected: **production** (`7f36926`) predates all of this code -- the defects were never live.
 
 **Merged and deployed (2026-11-08 UTC).** The above landed as PR #31 (`b2e7a1b`) with full CI
 green; two follow-up PRs merged on top:

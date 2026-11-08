@@ -7,6 +7,7 @@ import logging
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from sqlalchemy import inspect, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -37,13 +38,33 @@ class UnresolvedEvidence(Unavailable):
 
 
 async def _carrying(
-    db: AsyncSession, tid: uuid.UUID, exc: Unavailable, outcomes: list[NotifyOutcome]
-) -> Unavailable:
-    """Re-shape a failure so it carries whatever this pass already committed."""
+    db: AsyncSession, tid: uuid.UUID, exc: Exception, outcomes: list[NotifyOutcome]
+) -> Exception:
+    """Re-shape ANY failure so it carries whatever this pass already committed.
+
+    Not only Unavailable: an IntegrityError, a Decimal error or a dropped connection raised after
+    a settlement committed used to escape uncarried, and since that attempt is already 'settled'
+    no later tick revisits it, so its broadcast and duplicate-payment alert were lost for good.
+    An unexpected error becomes UnresolvedEvidence (503, fail closed), logged with its traceback.
+    """
     if not outcomes:
         return exc
-    await db.rollback()  # committed work stays committed; this only clears the aborted statement
-    return UnresolvedEvidence(exc.message, await merge_outcomes(db, tid, outcomes))
+    if not isinstance(exc, Unavailable):
+        log.error("reconciliation failed after a committed settlement", exc_info=exc)
+    try:
+        await db.rollback()  # committed work stays committed; this clears the aborted statement
+        merged = await merge_outcomes(db, tid, outcomes)
+    except Exception:
+        # The session itself is unusable (e.g. the connection died). Nothing more can be done
+        # here; keep the original error rather than masking it with this one.
+        log.error("could not carry committed settlements after %s", type(exc).__name__)
+        return exc
+    message = (
+        exc.message
+        if isinstance(exc, Unavailable)
+        else "Payment evidence could not be fully resolved"
+    )
+    return UnresolvedEvidence(message, merged)
 
 
 async def emit_outcome(res: Resources, db: AsyncSession, outcome: NotifyOutcome) -> list[Order]:
@@ -59,14 +80,37 @@ async def emit_outcome(res: Resources, db: AsyncSession, outcome: NotifyOutcome)
             order,
             [m for m in outcome.messages if m and m.conversation_id == order.conversation_id],
         )
-    notify_tg.outcome_events(res, touched, outcome.dup_trade_no)
+    notify_tg.outcome_events(res, touched, outcome.dup_trade_nos or outcome.dup_trade_no)
     return touched
 
 
+async def _mark_settled(
+    db: AsyncSession, tid: uuid.UUID, where: Any, trade_no: str | None = None
+) -> None:
+    """Mark one original attempt settled, from a FRESH row.
+
+    A fresh select matters: apply_* may roll back, which expires every instance, and touching an
+    expired attribute on an async session triggers implicit IO (MissingGreenlet)."""
+    att = await db.scalar(select(PaymentAttempt).where(where, PaymentAttempt.tenant_id == tid))
+    if att is None:
+        return
+    att.status = "settled"
+    if trade_no:
+        att.data = {**att.data, "confirmed_trade_no": trade_no[:256]}
+    att.checked_at = datetime.now(timezone.utc)
+
+
 async def requery_attempts(
-    db: AsyncSession, res: Resources, tid: uuid.UUID, no: str
+    db: AsyncSession,
+    res: Resources,
+    tid: uuid.UUID,
+    no: str,
+    sink: list[NotifyOutcome] | None = None,
 ) -> tuple[NotifyOutcome | None, bool]:
-    """Returns (settled outcome, has durable EPay history). Failure never implies unpaid."""
+    """Returns (settled outcome, has durable EPay history). Failure never implies unpaid.
+
+    ``sink``, when given, receives each outcome the moment it commits, so a caller that cancels
+    this coroutine (asyncio.wait_for) still holds what was already settled (#33)."""
     refs = list(
         await db.scalars(
             select(PaymentAttempt.gateway_ref)
@@ -120,20 +164,24 @@ async def requery_attempts(
                     "via": "reconciliation",
                 }
                 apply = apply_checkout_payment if no.startswith("C") else apply_order_payment
+                where = PaymentAttempt.gateway_ref == ref
+                # Mark first so the mark rides in apply's own commit. Marking only afterwards left
+                # a window in which a crash or timeout kept the attempt 'ready', and the next tick
+                # re-applied it, replaying the duplicate-payment audit row and staff alert (#33).
+                await _mark_settled(db, tid, where, q.trade_no)
                 result = await apply(db, res.settings, target_id, trade, q.money, raw, None)
-                att = await db.scalar(
-                    select(PaymentAttempt).where(
-                        PaymentAttempt.gateway_ref == ref, PaymentAttempt.tenant_id == tid
-                    )
-                )
-                if att:
-                    att.status = "settled"
-                    att.data = {**att.data, "confirmed_trade_no": q.trade_no[:256]}
-                    att.checked_at = datetime.now(timezone.utc)
-                    await db.commit()
                 outcomes.append(result)
-    except Unavailable as exc:
-        raise await _carrying(db, tid, exc, outcomes) from None
+                if sink is not None:
+                    sink.append(result)
+                # apply rolls back -- and still returns -- on a no-op replay, discarding the early
+                # mark; re-mark from a fresh row so that path behaves exactly as it always did.
+                await _mark_settled(db, tid, where, q.trade_no)
+                await db.commit()
+    except Exception as exc:
+        carried = await _carrying(db, tid, exc, outcomes)
+        if carried is exc:
+            raise
+        raise carried from exc
     if failed:
         raise UnresolvedEvidence(
             "Some original payment queries are unavailable; cancellation is blocked",
@@ -176,23 +224,36 @@ async def run(res: Resources) -> int:
                 remaining = 20 - (time.monotonic() - started)
                 if remaining <= 0:
                     break
+                # Collects every outcome the moment it commits. wait_for CANCELS the coroutine on
+                # timeout, so nothing it was about to return survives -- only what is already in
+                # here. Without it a timeout lost the broadcast and duplicate-payment alert of a
+                # settlement that had committed, permanently, since settled attempts are skipped.
+                sink: list[NotifyOutcome] = []
+                outcome: NotifyOutcome | None = None
                 try:
                     outcome = await asyncio.wait_for(
-                        requery_all(db, res, tid, no), timeout=min(10, remaining)
+                        requery_all(db, res, tid, no, sink), timeout=min(10, remaining)
                     )
-                    if outcome is not None:
+                except Exception as exc:
+                    # Any exception: a non-Unavailable one used to escape and abort the tick for
+                    # every remaining tenant. Expected ones are routine; others get a traceback.
+                    if not isinstance(exc, (Unavailable, asyncio.TimeoutError)):
+                        log.error("reconciliation failed for %s", no, exc_info=exc)
+                    await db.rollback()
+                    if sink:
+                        try:
+                            outcome = await merge_outcomes(db, tid, sink)
+                        except Exception:
+                            log.warning("committed settlement could not be reloaded for %s", no)
+                            await db.rollback()
+                if outcome is not None:
+                    # best effort: the bookkeeping below must still run for this ref
+                    try:
                         await emit_outcome(res, db, outcome)
                         total += 1
-                except (Unavailable, asyncio.TimeoutError) as exc:
-                    settled = getattr(exc, "settled", None)
-                    if settled is not None:
-                        # best effort: the bookkeeping below must still run for this ref
-                        try:
-                            await emit_outcome(res, db, settled)
-                            total += 1
-                        except Exception:
-                            log.warning("committed settlement broadcast skipped for %s", no)
-                    await db.rollback()
+                    except Exception:
+                        log.warning("committed settlement broadcast skipped for %s", no)
+                        await db.rollback()
                 rows = await db.scalars(
                     select(PaymentAttempt).where(
                         PaymentAttempt.tenant_id == tid, PaymentAttempt.local_ref == no
@@ -211,14 +272,18 @@ async def merge_outcomes(
     if not outcomes:
         return None
     order_ids, message_ids = set(), set()
-    duplicate = None
+    # Every distinct duplicate is a separate refund owed: keeping only the last one silently
+    # dropped the staff alert for the others when three or more originals were paid.
+    duplicates: dict[str, None] = {}
     for result in outcomes:
         for obj in result.orders + ([result.order] if result.order is not None else []):
             order_ids.add(inspect(obj).identity[0])
         for obj in result.messages:
             if obj is not None:
                 message_ids.add(inspect(obj).identity[0])
-        duplicate = result.dup_trade_no or duplicate
+        for dup in (*result.dup_trade_nos, result.dup_trade_no):
+            if dup:
+                duplicates[dup] = None
     orders = list(
         await db.scalars(
             select(Order)
@@ -237,11 +302,23 @@ async def merge_outcomes(
         if message_ids
         else []
     )
-    return NotifyOutcome("success", orders[0] if orders else None, messages, orders, duplicate)
+    dups = tuple(duplicates)
+    return NotifyOutcome(
+        "success",
+        orders[0] if orders else None,
+        messages,
+        orders,
+        dups[0] if dups else None,
+        dups,
+    )
 
 
 async def requery_usdt_attempts(
-    db: AsyncSession, res: Resources, tid: uuid.UUID, no: str
+    db: AsyncSession,
+    res: Resources,
+    tid: uuid.UUID,
+    no: str,
+    sink: list[NotifyOutcome] | None = None,
 ) -> tuple[NotifyOutcome | None, bool]:
     rows = list(
         await db.scalars(
@@ -311,31 +388,31 @@ async def requery_usdt_attempts(
                     "via": "original_attempt_requery",
                 }
                 apply = apply_checkout_payment if no.startswith("C") else apply_order_payment
-                outcomes.append(
-                    await apply(
-                        db,
-                        res.settings,
-                        target_id,
-                        info.trade_id,
-                        info.money,
-                        raw,
-                        None,
-                        channel,
-                        hold=hold,
-                    )
+                where = PaymentAttempt.id == ident
+                await _mark_settled(db, tid, where)  # rides in apply's commit; see EPay checker
+                result = await apply(
+                    db,
+                    res.settings,
+                    target_id,
+                    info.trade_id,
+                    info.money,
+                    raw,
+                    None,
+                    channel,
+                    hold=hold,
                 )
-                att = await db.scalar(
-                    select(PaymentAttempt).where(
-                        PaymentAttempt.id == ident, PaymentAttempt.tenant_id == tid
-                    )
-                )
-                att.status = "settled"
-                att.checked_at = datetime.now(timezone.utc)
+                outcomes.append(result)
+                if sink is not None:
+                    sink.append(result)
+                await _mark_settled(db, tid, where)
                 await db.commit()
             elif info.status not in (bepusdt.STATUS_WAITING, bepusdt.STATUS_EXPIRED):
                 unresolved = True
-    except Unavailable as exc:
-        raise await _carrying(db, tid, exc, outcomes) from None
+    except Exception as exc:
+        carried = await _carrying(db, tid, exc, outcomes)
+        if carried is exc:
+            raise
+        raise carried from exc
     if unresolved:
         raise UnresolvedEvidence(
             "Original USDT evidence is unresolved; cancellation is blocked",
@@ -345,16 +422,24 @@ async def requery_usdt_attempts(
 
 
 async def requery_all(
-    db: AsyncSession, res: Resources, tid: uuid.UUID, no: str
+    db: AsyncSession,
+    res: Resources,
+    tid: uuid.UUID,
+    no: str,
+    sink: list[NotifyOutcome] | None = None,
 ) -> NotifyOutcome | None:
     results = []
     failed = False
     for checker in (requery_attempts, requery_usdt_attempts):
         try:
-            result, _ = await checker(db, res, tid, no)
+            result, _ = await checker(db, res, tid, no, sink)
             if result is not None:
                 results.append(result)
-        except Unavailable as exc:
+        except Exception as exc:
+            # Any failure, not only Unavailable: an unexpected error in the EPay checker used to
+            # skip the USDT checker entirely and drop what the EPay one had committed.
+            if not isinstance(exc, Unavailable):
+                log.error("payment re-query failed for %s", no, exc_info=exc)
             # A settlement one checker already committed survives another's unresolved evidence.
             settled = getattr(exc, "settled", None)
             if settled is not None:

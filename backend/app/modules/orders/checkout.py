@@ -600,8 +600,15 @@ async def pay_checkout(
     prepared = await gateways.prepare(
         db, res, tid=tid, no=no, title=name, amount_minor=minor, currency=currency, ip=ip
     )
-    url = prepared or res.zpay.build_pay_url(no, name, to_decimal(minor))
+    if prepared:
+        url = prepared
+    else:
+        # Evidence first, committed below before the URL is returned (issue #32).
+        await gateways.record_legacy_url(db, tid, no)
+        url = res.zpay.build_pay_url(no, name, to_decimal(minor))
     await db.commit()
+    if not prepared:
+        await gateways.ensure_still_payable(db, tid, no)
     await _announce(res, db, msgs)
     return url
 

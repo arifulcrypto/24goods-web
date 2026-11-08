@@ -554,8 +554,15 @@ async def pay_url(
     prepared = await gateways.prepare(
         db, res, tid=tid, no=no, title=title, amount_minor=minor, currency=currency, ip=ip
     )
-    url = prepared or res.zpay.build_pay_url(no, title, to_decimal(minor))
+    if prepared:
+        url = prepared
+    else:
+        # Evidence first, committed below before the URL is returned (issue #32).
+        await gateways.record_legacy_url(db, tid, no)
+        url = res.zpay.build_pay_url(no, title, to_decimal(minor))
     await db.commit()
+    if not prepared:
+        await gateways.ensure_still_payable(db, tid, no)
     if msg is not None:
         await broadcast_order(res, db, order, [msg])
     return url
