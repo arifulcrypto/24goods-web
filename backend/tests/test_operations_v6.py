@@ -15,7 +15,7 @@ from sqlalchemy import func, select, update
 
 from app.models import Outbox
 from app.models.operations import ServiceEntitlement, ServiceReminder, ServiceRenewal
-from app.modules.operations import jobs, service
+from app.modules.operations import jobs, overview, service
 from app.modules.operations.overview import collect
 from app.modules.operations.router import router
 from tests.helpers import buy, notify_params
@@ -312,3 +312,41 @@ async def test_invalid_reminder_configuration_never_sends(monkeypatch, channel):
     with pytest.raises(jobs.ReminderSendError, match="invalid_configuration"):
         await jobs.send_reminder(res, None, row, reminder, owner)
     send.assert_not_awaited()
+
+
+def test_container_memory_falls_back_to_the_cgroup_v1_hierarchy(monkeypatch, tmp_path):
+    """A host still on cgroup v1 (older LXD, issue #6) exposes neither v2 file, which used to
+    report the API's own budget as Unknown / Unknown in the operations overview."""
+    v1 = tmp_path / "memory"
+    v1.mkdir()
+    (v1 / "memory.usage_in_bytes").write_text("146599936\n")
+    (v1 / "memory.limit_in_bytes").write_text("201326592\n")
+    monkeypatch.setattr(
+        overview,
+        "_MEMORY_CURRENT",
+        ("/nonexistent/memory.current", str(v1 / "memory.usage_in_bytes")),
+    )
+    monkeypatch.setattr(
+        overview, "_MEMORY_MAX", ("/nonexistent/memory.max", str(v1 / "memory.limit_in_bytes"))
+    )
+    cgroup = collect(str(tmp_path))["cgroup"]
+    assert cgroup["memory_current"] == 146599936
+    assert cgroup["memory_max"] == 201326592
+
+
+def test_an_unlimited_cgroup_v1_budget_reads_as_unknown_not_as_a_number(monkeypatch, tmp_path):
+    """v1 spells "no limit" as a PAGE_SIZE-aligned LONG_MAX sentinel; rendering that as ~8 EiB
+    would claim a budget the container does not actually have."""
+    unlimited = tmp_path / "memory.limit_in_bytes"
+    unlimited.write_text("9223372036854771712\n")
+    monkeypatch.setattr(overview, "_MEMORY_MAX", ("/nonexistent/memory.max", str(unlimited)))
+    assert collect(str(tmp_path))["cgroup"]["memory_max"] is None
+
+
+def test_cgroup_v2_still_wins_when_both_hierarchies_are_present(monkeypatch, tmp_path):
+    v2 = tmp_path / "memory.current"
+    v2.write_text("111\n")
+    v1 = tmp_path / "memory.usage_in_bytes"
+    v1.write_text("222\n")
+    monkeypatch.setattr(overview, "_MEMORY_CURRENT", (str(v2), str(v1)))
+    assert collect(str(tmp_path))["cgroup"]["memory_current"] == 111
