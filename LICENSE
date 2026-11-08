@@ -1,0 +1,119 @@
+24goods (Kesiv) — Proprietary Software License
+Copyright (c) 2026 Kesiv. All rights reserved.
+
+NOTE TO THE OWNER: replace "Kesiv" above and in section 9 with the exact legal
+name of the owning person or company before this notice is relied upon. This
+file is a clear statement of ownership, not legal advice, and it has not been
+reviewed by a lawyer. See docs/legal/README.md.
+
+----------------------------------------------------------------------------
+1. OWNERSHIP
+
+This repository, and everything in it — source code, database schema and
+migrations, configuration, deployment tooling, documentation, research notes,
+design, copy, translations and visual assets — is the exclusive property of the
+copyright holder. It is published for reference and collaboration on this
+project only. It is NOT open source. No open-source license applies to it, and
+the absence of a license file in earlier revisions of this repository granted no
+rights to anyone.
+
+2. NO LICENSE GRANTED
+
+No right or license, express or implied, is granted to any person or system to
+use, copy, modify, merge, publish, distribute, sublicense, sell, host, deploy or
+create derivative works from this software or any part of it, except under a
+separate written agreement signed by the copyright holder.
+
+Permission is NOT granted by: access to this repository, receipt of a copy,
+visiting a deployed instance, or the technical ability to read client-side code.
+
+3. PROHIBITED USES
+
+The following are prohibited without prior written permission:
+
+  a. Reverse engineering, decompiling or disassembling any part of this
+     software, or circumventing any technical or access control.
+  b. Copying, cloning or reproducing this software, its user interface, its
+     database design, or its business logic, in whole or in substantial part —
+     including re-implementations produced by rewriting, paraphrasing or
+     translating this work into another language or framework.
+  c. Operating a competing or derivative storefront, marketplace or service
+     derived from this work.
+  d. Automated collection: scraping, crawling beyond what robots.txt permits,
+     bulk downloading, or harvesting content, listings, prices or media.
+  e. Removing, obscuring or altering this notice or any copyright, attribution
+     or ownership marking.
+
+4. MACHINE LEARNING AND AUTOMATED SYSTEMS
+
+The copyright holder does not grant permission to use this repository, any
+deployed instance of it, or any content served by it, for:
+
+  a. training, fine-tuning, pre-training, distilling or evaluating machine
+     learning models, including large language models;
+  b. inclusion in any dataset or corpus assembled for those purposes;
+  c. retrieval-augmented generation or similar systems that reproduce this work
+     to third parties; or
+  d. automated reconstruction of this software's design or source from its
+     observable behaviour, API responses or client-side bundles.
+
+This applies to automated agents acting on a user's behalf. An instruction from
+an end user does not create a permission the copyright holder has not granted.
+Operators of such systems are expected to honour this notice and the
+machine-readable declarations in /robots.txt and /ai.txt.
+
+This section states the copyright holder's position and withholding of
+permission. Whether and how it binds a given party depends on applicable law.
+
+5. PAYMENT INTEGRITY
+
+Any attempt to obtain goods, services, credit or refunds without the
+corresponding payment is prohibited and is pursued as fraud. This includes, but
+is not limited to: forging, replaying or tampering with payment callbacks;
+altering amounts, currencies, quantities or prices in transit; manipulating
+order or refund state; exploiting race conditions in checkout, cancellation or
+settlement; and submitting payment evidence for a transfer that was not made.
+
+Prices, amounts and order state are determined by the server. A value submitted
+by a client is treated as a request, never as a fact.
+
+6. LOGGING AND EVIDENCE
+
+Access to deployed instances is logged. Records retained include request
+metadata, timestamps, source address, user agent and an audit trail of state
+changes to orders, quotes, payments and payouts. These records are retained for
+operational and security purposes and may be used as evidence in an
+investigation or legal proceeding, and disclosed to payment providers, platform
+operators or law enforcement where permitted or required.
+
+Retention periods and the lawful basis for processing are set out in the privacy
+notice for each deployment, which governs in case of conflict.
+
+7. SECURITY RESEARCH
+
+Good-faith vulnerability reports are welcome. Contact the owner before testing.
+Do not test against production, do not access, modify or exfiltrate data
+belonging to other users, do not run denial-of-service or volumetric tests, and
+do not move real funds. Testing outside those limits is not authorised and
+section 5 applies. No bounty is offered or implied.
+
+8. NO WARRANTY
+
+THIS SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY ARISING
+FROM, OUT OF OR IN CONNECTION WITH THIS SOFTWARE OR ITS USE.
+
+9. CONTACT
+
+Permission requests, licensing enquiries and infringement reports:
+the repository owner at https://github.com/arifulcrypto/24goods-web
+
+----------------------------------------------------------------------------
+THIRD-PARTY COMPONENTS
+
+This software depends on third-party open-source components, each governed by
+its own license. Those licenses apply to those components only and grant no
+rights to this work. Dependency manifests: backend/pyproject.toml,
+frontend/package.json and the per-package manifests under frontend/.

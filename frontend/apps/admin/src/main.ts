@@ -8,7 +8,9 @@ import { router, handleUnauthorized } from './router'
 import { setUnauthorizedHandler } from './api'
 import { SMART_TEXT_KEY } from '@24goods/shared/chat'
 import { confirmBox, toastOk } from './ui'
+import { printCopyrightNotice } from '@24goods/shared'
 
+printCopyrightNotice({ owner: 'Kesiv' })
 const app = createApp(App)
 app.use(createPinia())
 app.use(i18n)

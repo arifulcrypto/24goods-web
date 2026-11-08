@@ -326,3 +326,37 @@ async def test_template_unavailable_is_503(env, monkeypatch):
 
     monkeypatch.setattr(template, "load_template", none)
     assert (await env.client().get("/")).status_code == 503
+
+
+async def test_robots_refuses_training_agents_but_keeps_search_crawlers(env):
+    """Search crawlers must stay allowed -- being indexable is how buyers arrive -- while the
+    agents that collect for model training get their own Disallow block (LICENSE section 4)."""
+    c = env.client()
+    lines = (await c.get("/robots.txt")).text.splitlines()
+    assert "User-agent: *" in lines and "Allow: /" in lines
+    for agent in ("GPTBot", "ClaudeBot", "CCBot", "Google-Extended", "Bytespider"):
+        assert f"User-agent: {agent}" in lines, agent
+    # Every named agent is followed by a total Disallow, not by the allowlist above it.
+    for i, line in enumerate(lines):
+        if line.startswith("User-agent: ") and line != "User-agent: *":
+            assert lines[i + 1] == "Disallow: /", line
+    for crawler in ("Googlebot", "bingbot", "Baiduspider"):
+        assert f"User-agent: {crawler}" not in lines, crawler
+
+
+async def test_ai_txt_states_the_withheld_permissions(env):
+    c = env.client()
+    r = await c.get("/ai.txt")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/plain")
+    for claim in ("Training: disallowed", "Dataset-inclusion: disallowed", "Reverse-engineering"):
+        assert claim in r.text
+    # An end user's instruction is not a grant, and access is logged: both are load-bearing.
+    assert "does not create that permission" in r.text
+    assert "logged" in r.text
+
+
+async def test_ai_txt_is_silenced_with_the_rest_when_indexing_is_off(env):
+    await set_settings(env, {"seo": {"indexing_enabled": False}})
+    r = await env.client().get("/ai.txt")
+    assert r.headers["x-robots-tag"] == "noindex, nofollow"
