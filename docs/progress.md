@@ -91,7 +91,9 @@ Tracking: [#27 payments](https://github.com/arifulcrypto/24goods-web/issues/27),
 - Recovery: encrypted complete-set maintenance backup, separate vault recovery recipient, writer
   fencing, lock, manifest, atomic completion and verified offsite receipt; simulated failure tests.
   See [operations-v6.md](operations-v6.md). Operator tools include age (new operational dependency).
-- Entry/payment gates, full CI and read-only security/payment/mobile reviews are being integrated.
+- Entry/payment gates are integrated. First security/payment/mobile review found concrete blockers;
+  follow-up patches and regressions are recorded in [review record](reviews/v6-implementation.md).
+  Final-revision CI and re-review are pending.
   No deployment, live provider credential use, real payment or production backup/restore was performed.
   See [implementation matrix](implementation-v6.md) for concrete completion evidence and limits.
 

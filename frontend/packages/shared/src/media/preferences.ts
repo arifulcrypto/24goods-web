@@ -15,6 +15,12 @@ export function lowData(): boolean {
   return !c || c.saveData === true || c.type === 'cellular' || ['slow-2g', '2g', '3g'].includes(c.effectiveType ?? '')
 }
 export function previewImageUrl(url: string | null): string | null {
-  if (!url || !lowData() || !url.startsWith('/api/v1/files/')) return url
-  return `${url}${url.includes('?') ? '&' : '?'}variant=small`
+  if (!url || !lowData()) return url
+  try {
+    const base=globalThis.location?.href ?? 'http://localhost/'
+    const parsed=new URL(url,base)
+    if(parsed.origin!==new URL(base).origin||!parsed.pathname.startsWith('/api/v1/files/'))return url
+    parsed.searchParams.set('variant','small')
+    return parsed.toString()
+  } catch {return url}
 }

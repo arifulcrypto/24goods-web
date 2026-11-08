@@ -269,9 +269,7 @@ async def _settle(
     bad = await requery_mismatch(res, params, trade_no, paid_amount)
     if bad is not None:
         return await to_manual_review(db, order_id, "requery_mismatch", ip, bad)
-    recorded = (
-        (res.zpay.config.instance_id + ":" + trade_no) if res.zpay.config.instance_id else trade_no
-    )
+    recorded = epay.gateway_trade_key(res.zpay.config.instance_id, trade_no)
     return await apply_order_payment(db, res.settings, order_id, recorded, paid_amount, params, ip)
 
 
@@ -294,7 +292,7 @@ async def _settle_checkout(
         db,
         res.settings,
         checkout_id,
-        (res.zpay.config.instance_id + ":" + trade_no) if res.zpay.config.instance_id else trade_no,
+        epay.gateway_trade_key(res.zpay.config.instance_id, trade_no),
         paid_amount,
         params,
         ip,

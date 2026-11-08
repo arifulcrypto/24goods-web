@@ -82,16 +82,29 @@ async def _settle_if_paid(
 ) -> NotifyOutcome | None:
     """Re-query the gateway (no row locks held). If it says paid, settle and return the
     outcome; if it says unpaid / not found, ``None``; if the query fails or is malformed, 503."""
-    if is_usdt(channel):
-        return await _settle_usdt_if_paid(
-            db, res, checkout_id, order_id, out_trade_no, amount_minor, channel or ""
-        )
-    from app.modules.payments.reconcile import requery_attempts
+    from sqlalchemy import exists
+
+    from app.models import PaymentAttempt
+    from app.modules.payments.reconcile import requery_all
 
     tid = db.info["tenant_id"]
-    outcome, managed = await requery_attempts(db, res, tid, out_trade_no)
-    if outcome is not None or managed:
-        return outcome
+    managed = await db.scalar(
+        select(
+            exists().where(
+                PaymentAttempt.tenant_id == tid, PaymentAttempt.local_ref == out_trade_no
+            )
+        )
+    )
+    if managed:
+        outcome = await requery_all(db, res, tid, out_trade_no)
+        if outcome is not None:
+            return outcome
+    if not managed and is_usdt(channel):
+        outcome = await _settle_usdt_if_paid(
+            db, res, checkout_id, order_id, out_trade_no, amount_minor, channel or ""
+        )
+        if outcome is not None:
+            return outcome
     from app.modules.payments.gateways import legacy_allowed
 
     if not await legacy_allowed(db, tid, out_trade_no):
@@ -204,7 +217,15 @@ async def cancel_group(
     # Query the gateway whenever it is configured (not only when a pay URL is known to have
     # been issued): "not found / unpaid" means proceed, a paid answer settles instead.
     group_channel = co.channel if co is not None else orders[0].channel
-    gateway_ready = (
+    from sqlalchemy import exists
+
+    from app.models import PaymentAttempt
+
+    no = co.checkout_no if co is not None else orders[0].order_no
+    has_history = await db.scalar(
+        select(exists().where(PaymentAttempt.tenant_id == tid, PaymentAttempt.local_ref == no))
+    )
+    gateway_ready = has_history or (
         res.bepusdt.configured if is_usdt(group_channel) else await _epay_configured(db, res, tid)
     )
     if gateway_ready:

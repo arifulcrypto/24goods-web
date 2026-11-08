@@ -146,3 +146,5 @@ defineExpose({ scrollToBottom, isNearBottom, preserveScroll, el: scroller })
     </Teleport>
   </div>
 </template>
+
+<style scoped>.gc-pinned{max-width:100%;overflow-wrap:anywhere;padding:8px 12px;border-bottom:1px solid #8885;box-sizing:border-box}</style>

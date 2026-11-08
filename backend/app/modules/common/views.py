@@ -311,7 +311,10 @@ def message_view(
             "type": m.type,
             "text": None,
             "attachment": None,
-            "payload": {"redacted": True, "recalled": bool((m.payload or {}).get("recalled"))},
+            "payload": {
+                "redacted": True,
+                **({"recalled": True} if (m.payload or {}).get("recalled") else {}),
+            },
             "created_at": iso(m.created_at),
         }
     payload = dict(m.payload) if m.payload is not None else None

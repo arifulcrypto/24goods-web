@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.money import to_decimal
 from app.core.resources import Resources
 from app.models import Checkout, Order, PaymentAttempt
+from app.modules.payments import usdt
 from app.modules.payments.channels import is_usdt
 from app.modules.payments.notify import (
     CHECKOUT_PREFIX,
@@ -190,12 +191,19 @@ async def handle_bepusdt_notify(
                 )
                 .limit(1)
             )
-            if att is not None and (
-                att.data.get("address") != info.address
-                or Decimal(att.data.get("actual_amount", "0")) != info.actual_amount
+            original = dict(att.data) if att else await usdt._cached_attempt(res, order_id)
+            if (
+                not original
+                or original.get("trade_id") != trade_id
+                or not original.get("address")
+                or not original.get("actual_amount")
+            ):
+                hold = "missing_receiver_evidence"
+            elif (
+                original["address"] != info.address
+                or bepusdt.decimal_of(original["actual_amount"]) != info.actual_amount
             ):
                 hold = "receiver_mismatch"
-
             if hold is None and actual != order_channel:
                 hold = "channel_mismatch"
             if is_checkout:

@@ -22,6 +22,7 @@ from urllib.parse import urlencode, urlsplit
 import httpx
 
 from app.payments import epay
+from app.payments.bounded import bounded_decimal, bounded_integer, response_bytes
 
 log = logging.getLogger("app.payments.zpay")
 
@@ -62,6 +63,8 @@ def _first_key(data: Mapping[str, Any], *names: str) -> Any:
 
 
 def _as_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
     try:
         return int(str(value).strip())
     except (TypeError, ValueError):
@@ -74,15 +77,20 @@ def parse_query_response(data: Any) -> QueryResult:
         raise ZPayQueryError("unexpected query response shape")
     code = _as_int(data.get("code"))
     if code != 1:
-        return QueryResult(False, False, None, "", str(data.get("out_trade_no") or ""))
+        message = str(data.get("msg", "")).strip().lower().rstrip(".!！。")
+        if code == -1 and message in {"order not found", "not found", "订单不存在"}:
+            return QueryResult(False, False, None, "", str(data.get("out_trade_no") or ""))
+        raise ZPayQueryError("query response did not confirm an order status")
     status = _as_int(_first_key(data, "status", "trade_status"))
     if status is None and str(data.get("trade_status", "")).upper() == "TRADE_SUCCESS":
         status = 1
+    if status not in (0, 1):
+        raise ZPayQueryError("query returned an unknown payment status")
     money_raw = _first_key(data, "money", "total_amount")
     money: Decimal | None
     try:
-        money = Decimal(str(money_raw)) if money_raw is not None else None
-    except InvalidOperation:
+        money = bounded_decimal(str(money_raw)) if money_raw is not None else None
+    except (InvalidOperation, ValueError):
         money = None
     if money is not None and not money.is_finite():
         money = None
@@ -144,24 +152,24 @@ class ZPayClient:
                         safefetch._pinned_url(target),
                         data=params if post else None,
                         params=None if post else params,
-                        headers={"Host": target.host},
+                        headers={"Host": target.host, "Accept-Encoding": "identity"},
                         extensions={"sni_hostname": target.host},
                         timeout=QUERY_TIMEOUT_S,
                     ) as response:
-                        response.raise_for_status()
-                        raw = bytearray()
-                        async for chunk in response.aiter_bytes():
-                            raw.extend(chunk)
-                            if len(raw) > 256 * 1024:
-                                raise ZPayQueryError("gateway response too large")
-                        return json.loads(raw, parse_float=Decimal)
-            response = await (
-                self._http.post(url, data=params) if post else self._http.get(url, params=params)
-            )
-            response.raise_for_status()
-            if len(response.content) > 256 * 1024:
-                raise ZPayQueryError("gateway response too large")
-            return json.loads(response.content, parse_float=Decimal)
+                        raw = await response_bytes(response, 256 * 1024)
+                        return json.loads(
+                            raw, parse_float=bounded_decimal, parse_int=bounded_integer
+                        )
+            async with self._http.stream(
+                "POST" if post else "GET",
+                url,
+                data=params if post else None,
+                params=None if post else params,
+                headers={"Accept-Encoding": "identity"},
+                timeout=QUERY_TIMEOUT_S,
+            ) as response:
+                raw = await response_bytes(response, 256 * 1024)
+                return json.loads(raw, parse_float=bounded_decimal, parse_int=bounded_integer)
         except (httpx.HTTPError, ValueError, safefetch.FetchError):
             raise ZPayQueryError("gateway request failed") from None
 
@@ -213,4 +221,7 @@ class ZPayClient:
         if self.config.instance_id and isinstance(data, dict) and str(data.get("code")) == "1":
             if str(data.get("pid", "")) != self.config.pid or data.get("type") != PAY_TYPE:
                 raise ZPayQueryError("query merchant or method mismatch")
-        return parse_query_response(data)
+        parsed = parse_query_response(data)
+        if parsed.found and parsed.out_trade_no != order_no:
+            raise ZPayQueryError("query order binding mismatch")
+        return parsed

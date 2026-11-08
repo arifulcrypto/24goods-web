@@ -17,7 +17,7 @@ from app.core.deps import (
 )
 from app.core.errors import ApiError
 from app.core.features import require_feature
-from app.core.ratelimit import enforce
+from app.core.ratelimit import enforce, hit
 from app.core.resources import Resources
 from app.core.security import STAFF_ROLES
 from app.core.settings_v5 import section
@@ -123,18 +123,23 @@ async def login(
     try:
         user = await service.login(db, res.redis, res.settings, tenant_id, body, client_ip(request))
     except ApiError:
-        await record_event(
-            db,
-            tenant_id=tenant_id,
-            environment=res.settings.env,
-            family="login",
-            action="auth.login",
-            outcome="denied",
-            reason="authentication_rejected",
-            ip=client_ip(request),
-            user_agent=request.headers.get("user-agent"),
+        sampled, _ = await hit(
+            res.redis, "login:denied-log", str(tenant_id) + ":" + (client_ip(request) or "-"), 1, 60
         )
-        await db.commit()
+        budget, _ = await hit(res.redis, "login:denied-log-budget", str(tenant_id), 8, 60)
+        if sampled and budget:
+            await record_event(
+                db,
+                tenant_id=tenant_id,
+                environment=res.settings.env,
+                family="login",
+                action="auth.login",
+                outcome="denied",
+                reason="authentication_rejected",
+                ip=client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+            )
+            await db.commit()
         raise
     await record_event(
         db,

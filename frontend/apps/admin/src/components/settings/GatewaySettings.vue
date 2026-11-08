@@ -3,16 +3,18 @@ import { onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { client } from '../../api'
 import { useSave } from '../../composables/useSave'
+import { useRead } from '../../composables/useRead'
 interface Gateway { id: string; label: string; gateway: string; merchant_id: string; mode: string; active: boolean; created_at: string }
 const { t } = useI18n()
 const { saving, run } = useSave()
+const reader=useRead()
 const items = ref<Gateway[]>([])
 const editing = ref(false)
 const activating = ref<Gateway | null>(null)
 const password = ref('')
 const ownership = ref(false)
 const form = reactive({ label: '', gateway: 'https://pay.xiaodouap.cn/submit.php', merchant_id: '', secret: '', mode: 'qr' as 'qr' | 'redirect', current_password: '' })
-async function load() { const r = await run(() => client.get<{items: Gateway[]}>('/admin/payment-gateways')); if (r) items.value = r.items }
+async function load() { const r = await reader.run(() => client.get<{items: Gateway[]}>('/admin/payment-gateways')); if (r) items.value = r.items }
 onMounted(load)
 async function create() {
   const r = await run(() => client.post('/admin/payment-gateways', { ...form }))

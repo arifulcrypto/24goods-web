@@ -1,6 +1,7 @@
 import { ref, shallowRef } from 'vue'
 import { ApiError, solvePow, uuid, type ApiClient, type PowChallenge, type PowSolution } from '@24goods/shared'
 export interface Challenge { id:string;action:'payment_initiation'|'site_visit';pow:PowChallenge;turnstile:{required:boolean;site_key:string;action:string};expires_at:number }
+export const siteAccessBlocked=ref(false)
 export const activeChallenge=shallowRef<Challenge|null>(null)
 export const challengeSolving=ref(false)
 export const challengeProgress=ref(0)

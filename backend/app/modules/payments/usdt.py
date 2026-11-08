@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import secretbox
 from app.core.audit import audit
-from app.core.errors import Unavailable
+from app.core.errors import InvalidState, Unavailable
 from app.core.resources import Resources
 from app.models import Checkout, Order, PaymentAttempt
 from app.modules.payments.channels import LABELS, USDT_CHANNELS
@@ -138,7 +138,7 @@ async def start_attempt(
         or target.channel != channel
         or target.amount_minor != amount_minor
     ):
-        raise Unavailable("Order changed before payment reservation")
+        raise InvalidState("Order changed before payment reservation")
     version = str(target.updated_at)
     cur = prior[0] if prior else None
     if (
@@ -243,7 +243,7 @@ async def start_attempt(
     )
     await db.commit()
     if changed:
-        raise Unavailable("Order changed while payment was prepared")
+        raise InvalidState("Order changed while payment was prepared")
     await res.redis.set(attempt_key(no), json.dumps(data), ex=ATTEMPT_KEEP_S)
 
 
@@ -320,4 +320,20 @@ async def routed_resources(
         )
         .limit(1)
     )
-    return replace(res, bepusdt=original_client(res, row)) if row else res
+    if row:
+        return replace(res, bepusdt=original_client(res, row))
+    unresolved = await db.scalars(
+        select(PaymentAttempt)
+        .where(
+            PaymentAttempt.tenant_id == tid,
+            PaymentAttempt.local_ref == no,
+            PaymentAttempt.provider_id.is_(None),
+            PaymentAttempt.status.in_(("preparing", "unknown")),
+        )
+        .limit(10)
+    )
+    for candidate in unresolved:
+        client = original_client(res, candidate)
+        if client.verify_signature(params):
+            return replace(res, bepusdt=client)
+    return res

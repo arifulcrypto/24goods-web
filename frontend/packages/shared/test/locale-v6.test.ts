@@ -27,3 +27,15 @@ describe('image data preferences',()=>{
   vi.stubGlobal('navigator',{connection:{type:'cellular',effectiveType:'4g'}});expect(lowData()).toBe(true)
  })
 })
+
+describe('actual chat URL pipeline',()=>{
+ it('selects a thumbnail after the asset URL is made absolute, without changing other origins',async()=>{
+  const {safeAssetUrl}=await import('../src/api/endpoints')
+  vi.stubGlobal('location',{href:'https://shop.example/chat'})
+  imageQuality.value='low'
+  const absolute=safeAssetUrl('/api/v1/files/example')
+  expect(absolute).toBe('https://shop.example/api/v1/files/example')
+  expect(previewImageUrl(absolute)).toBe('https://shop.example/api/v1/files/example?variant=small')
+  expect(previewImageUrl('https://other.example/api/v1/files/example')).toBe('https://other.example/api/v1/files/example')
+ })
+})

@@ -42,7 +42,7 @@ const zhCN: MessageSchema = {
     details: '详情',
     offlineBanner: '实时连接已暂停，正在每隔几秒自动刷新',
   },
-  errors: {
+  errors: {challenge_required:"请完成新的支付验证后重试。",challenge_invalid:"验证已过期或订单已变更，请刷新并重新验证。",payment_attempt_unknown:"支付结果未知，请勿重复付款。请查询支付状态或联系客服。",site_visit_required:"访问验证已过期，请重新验证。",
     buyer_input_disabled: '此订单未启用附加信息填写。',
     unauthorized: '请重新登录',
     forbidden: '你没有执行此操作的权限',

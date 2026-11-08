@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import audit
 from app.core.config import Settings
-from app.core.money import percent_of
+from app.core.money import MAX_MINOR, percent_of
 from app.models import Checkout, Message, Order, Outbox, Payment, Product
 from app.modules.chat.messages import (
     ensure_open_conversation,
@@ -35,6 +35,8 @@ from app.modules.payments.channels import provider
 from app.modules.payments.ledger import Line, post_txn
 from app.modules.promo import service as promo_svc
 from app.modules.reseller.signup import activate_signup
+from app.payments.bounded import bounded_decimal
+from app.payments.epay import gateway_trade_key
 from app.payments.zpay import CHANNEL
 
 log = logging.getLogger("app.payments.settle")
@@ -54,9 +56,13 @@ class NotifyOutcome:
 
 def exact_minor(amount: Decimal) -> int | None:
     """Minor units of an amount with at most 2 decimals; ``None`` for sub-fen / non-finite."""
-    if not amount.is_finite():
+    try:
+        bounded_decimal(amount)
+    except ValueError:
         return None
     scaled = amount * 100
+    if not 0 < scaled <= MAX_MINOR:
+        return None
     if scaled != scaled.to_integral_value():
         return None
     return int(scaled)
@@ -385,7 +391,7 @@ def _payment_row(
         order_id=order_id,
         checkout_id=checkout_id,
         channel=channel,
-        gateway_trade_no=channel_trade_no[:64],
+        gateway_trade_no=channel_trade_no,
         amount_minor=amount_minor,
         currency=currency,
         raw=safe_params({k: v for k, v in raw.items() if k not in ("sign", "signature")}),
@@ -457,6 +463,7 @@ async def apply_order_payment(
 ) -> NotifyOutcome:
     """Locked transaction for a verified + re-queried payment of one order. ``hold`` (a reason)
     records the Payment but never fulfils: the order goes to manual_review."""
+    trade_no = gateway_trade_key("", trade_no)
     amount_minor = exact_minor(paid_amount)
     if amount_minor is None:
         return await to_manual_review(db, order_id, "bad_amount", ip, {})
@@ -490,6 +497,8 @@ async def apply_order_payment(
                 ip=ip,
                 detail={
                     "trade_no": trade_no[:64],
+                    "upstream_trade_no": raw.get("trade_no", raw.get("trade_id", ""))[:256],
+                    "provider_id": raw.get("provider_id", "")[:64],
                     "paid_minor": amount_minor,
                     "channel": channel,
                     "recorded_trade_no": existing.gateway_trade_no[:64] if existing else None,
@@ -630,6 +639,7 @@ async def apply_checkout_payment(
     Lock order: checkout FOR UPDATE, then member orders ORDER BY id FOR UPDATE. One Payment
     row (``checkout_id``); then the same per-order transition as a single payment.
     """
+    trade_no = gateway_trade_key("", trade_no)
     amount_minor = exact_minor(paid_amount)
     if amount_minor is None:
         return await checkout_to_manual_review(db, checkout_id, "bad_amount", ip, {})
@@ -689,6 +699,8 @@ async def apply_checkout_payment(
                 ip=ip,
                 detail={
                     "trade_no": trade_no[:64],
+                    "upstream_trade_no": raw.get("trade_no", raw.get("trade_id", ""))[:256],
+                    "provider_id": raw.get("provider_id", "")[:64],
                     "paid_minor": amount_minor,
                     "channel": channel,
                     "recorded_trade_no": existing.gateway_trade_no[:64] if existing else None,

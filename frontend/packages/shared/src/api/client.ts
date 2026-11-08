@@ -32,6 +32,7 @@ export interface ApiClientOptions {
    */
   onRateLimited?: (err: ApiError) => void
   fetchImpl?: typeof fetch
+  onError?: (err: ApiError) => void
 }
 
 /** Wraps a toast function into a debounced `onRateLimited` handler (default: once per 3 s). */
@@ -121,6 +122,7 @@ export class ApiClient {
       if (res.status === 401 && !o.skipAuthHandler) this.opts.onUnauthorized?.(err)
       if (err.code === 'too_frequent') this.opts.onRateLimited?.(err)
       reportAccessBlock(err)
+      this.opts.onError?.(err)
       throw err
     }
     if (typeof parsed === 'string') {

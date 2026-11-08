@@ -570,3 +570,14 @@ default_description_i18n, og_image}` (`og_image`: empty, `/path` or `https://` U
   PATCH requires `reason` and supports `expected_version`; activation time must have a timezone.
   Renewal links a separate verified paid `order_id` plus staff `reason`/completion confirmation.
   No automatic charge or customer bulk notification is introduced.
+
+- `POST /security/challenges {action,target?,ref?,channel?}` issues a 180-second bound challenge;
+  actions are `payment_initiation` / `site_visit`, targets `order` / `checkout`. Responses include
+  `id`, self-hosted `pow`, optional Turnstile policy and expiry. Payment refs accept owned order UUID
+  or number / checkout number. All pay paths take `challenge_id,pow,turnstile_token,idempotency_key`
+  when enabled. Clearances bind tenant/session/host/action/version/method/policy; unknown initiation
+  results do not authorize retry. Callback/status/reconciliation/reveal remain challenge-free.
+- `GET /security/site-clearance` returns `{required,cleared}`; POST consumes proof and sets a
+  tenant/host/browser-bound HttpOnly clearance cookie for 30 minutes. Gated catalog/SEO responses
+  are private/no-store and vary by Cookie. Enabling requires purging/draining any pre-existing public
+  CDN caches as an operator step. PoW presets are bounded, and Turnstile difficulty is provider-owned.

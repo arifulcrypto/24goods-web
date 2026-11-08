@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import secretbox
 from app.core.audit import audit
-from app.core.errors import Unavailable, Validation
+from app.core.errors import InvalidState, Unavailable, Validation
 from app.core.money import to_decimal
 from app.core.resources import Resources
 from app.models import Checkout, Order, PaymentAttempt, PaymentGateway, Tenant
@@ -163,7 +163,7 @@ async def prepare(
         or target.channel != "zpay_alipay"
         or (target.expires_at and target.expires_at <= now)
     ):
-        raise Unavailable("Order changed before payment reservation")
+        raise InvalidState("Order changed before payment reservation")
     target_version = str(target.updated_at)
     if att is not None:
         if att.status in ("unknown", "preparing"):
@@ -258,7 +258,7 @@ async def prepare(
     )
     await db.commit()
     if changed:
-        raise Unavailable("Order changed while payment was being prepared")
+        raise InvalidState("Order changed while payment was being prepared")
     return "/pay/epay/" + no
 
 
@@ -281,7 +281,13 @@ async def legacy_allowed(db: AsyncSession, tid: uuid.UUID, no: str) -> bool:
     from sqlalchemy import exists
 
     managed = await db.scalar(
-        select(exists().where(PaymentAttempt.tenant_id == tid, PaymentAttempt.local_ref == no))
+        select(
+            exists().where(
+                PaymentAttempt.tenant_id == tid,
+                PaymentAttempt.local_ref == no,
+                PaymentAttempt.provider_id.is_not(None),
+            )
+        )
     )
     if managed:
         return False

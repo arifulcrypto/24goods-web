@@ -1,5 +1,5 @@
 import { ApiClient, createBuyerApi, createRateLimitNotifier, storefrontHeaders, type ApiError } from '@24goods/shared'
-import { verifiedPay } from './lib/securityChallenge'
+import { siteAccessBlocked, verifiedPay } from './lib/securityChallenge'
 import { currentLocale, i18n } from './i18n'
 import { showFailToast } from './ui'
 
@@ -11,6 +11,7 @@ export function setUnauthorizedHandler(fn: UnauthorizedHandler): void {
 
 export const client = new ApiClient({
   baseUrl: '/api/v1',
+  onError: (e) => { if(e.code === 'site_visit_required') siteAccessBlocked.value=true },
   getLocale: () => currentLocale(),
   // v5 §7: `?store=slug` (remembered in sessionStorage) is sent as X-Storefront on every request
   getHeaders: () => storefrontHeaders(),
