@@ -40,6 +40,24 @@ def _integer(path: str) -> int | None:
         return None
 
 
+# cgroup v2 first, then the v1 hierarchy. A host still on v1 (older LXD, see issue #6) exposes
+# neither v2 file, which otherwise reports the API's own memory budget as "Unknown / Unknown".
+_MEMORY_CURRENT = ("/sys/fs/cgroup/memory.current", "/sys/fs/cgroup/memory/memory.usage_in_bytes")
+_MEMORY_MAX = ("/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes")
+# v1 reports "no limit" as a huge sentinel (PAGE_SIZE-aligned LONG_MAX) rather than v2's "max";
+# anything at or above this is no budget at all, so report it as unknown rather than as a number.
+_NO_LIMIT = 1 << 62
+
+
+def _memory(paths: tuple[str, ...]) -> int | None:
+    """First readable value across the cgroup v2 and v1 paths, ignoring a v1 "unlimited"."""
+    for path in paths:
+        value = _integer(path)
+        if value is not None:
+            return None if value >= _NO_LIMIT else value
+    return None
+
+
 def collect(upload_dir: str) -> dict[str, Any]:
     """Label Linux /proc memory as host-visible; the cgroup is the API's own budget."""
     memory: dict[str, int] | None = None
@@ -101,8 +119,8 @@ def collect(upload_dir: str) -> dict[str, Any]:
             "cpu_seconds": round(time.process_time(), 3),
         },
         "cgroup": {
-            "memory_current": _integer("/sys/fs/cgroup/memory.current"),
-            "memory_max": _integer("/sys/fs/cgroup/memory.max"),
+            "memory_current": _memory(_MEMORY_CURRENT),
+            "memory_max": _memory(_MEMORY_MAX),
         },
         "disk": disk,
         "recovery": recovery,
