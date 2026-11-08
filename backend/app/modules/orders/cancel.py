@@ -9,6 +9,7 @@ query failure -> 503 so the caller retries.
 
 from __future__ import annotations
 
+import logging
 import uuid
 from decimal import Decimal
 
@@ -35,6 +36,8 @@ from app.modules.promo import service as promo_svc
 from app.payments import bepusdt
 from app.payments.bepusdt import BepusdtError
 from app.payments.zpay import ZPayQueryError
+
+log = logging.getLogger(__name__)
 
 
 async def _load_group(
@@ -106,11 +109,15 @@ async def _settle_if_paid(
             return outcome
     from app.modules.payments.gateways import legacy_allowed
 
-    # Draining a legacy environment-key pay URL only makes sense while that key is actually
-    # available: without it no such URL was ever issued, and querying the default gateway would
-    # only turn a USDT-only cancellation into a 503. A legitimate old EPay URL stays drainable
-    # after a switch to USDT, because the key — not the current channel — decides.
+    # A legacy environment-key pay URL leaves no durable record, so the payable's own channel is
+    # the only evidence of whether one can exist: USDT is served by BEpusdt, never by submit.php.
+    # With no usable key such a URL cannot be verified, so an EPay payable fails closed instead of
+    # cancelling over money that may already have arrived; a USDT-only payable cancels normally.
+    # While the key is present the legacy query still runs for USDT too, so an EPay URL issued
+    # before a switch to USDT stays drainable.
     if not (res.settings.zpay_pid and res.settings.zpay_key):
+        if not is_usdt(channel):
+            raise Unavailable("Could not verify the payment status; please try again")
         return None
     if not await legacy_allowed(db, tid, out_trade_no):
         return None
@@ -248,8 +255,12 @@ async def cancel_group(
             # A settlement committed before another original turned out to be unresolved still
             # owes the buyer its broadcast and staff their duplicate-payment alert; the
             # cancellation itself stays closed (503) because the rest is still unverified.
+            # Best effort: a failed broadcast must not replace that 503 with a 500.
             if exc.settled is not None:
-                await emit_outcome(res, db, exc.settled)
+                try:
+                    await emit_outcome(res, db, exc.settled)
+                except Exception:
+                    log.warning("committed settlement broadcast skipped for %s", no)
             raise
         if outcome is not None:
             await emit_outcome(res, db, outcome)

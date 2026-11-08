@@ -19,9 +19,32 @@ implementation inventory. Since that checkpoint, on `feat/issues-25-30-hardening
   `cs_reply_templates`, personal vs admin-only shared); staff browsing the shop are told which
   account is in the way and sent to the console inbox instead of buyer chat (`/chat` is buyer-only).
 
-**Not established:** full CI green on the final head, and the re-run of the read-only
-security/payment/mobile reviews. No production deploy, key rotation or real payment. The
-independent pentest before real money (M1 gate) still stands.
+Read-only security-reviewer and payment-auditor passes were run on those commits; both found the
+first cut of the cancel fix **fail-open** (it cancelled over an unverifiable legacy pay URL) and
+both findings are fixed, with regressions that fail against the fail-open version:
+
+- `cancel.py` now gates on the payable's own channel: with no usable legacy key an EPay payable
+  raises 503 (fail closed) and only a USDT payable cancels. While the key is present the legacy
+  query still runs for USDT, so an EPay URL issued before a switch stays drainable.
+- `reconcile.py` now carries committed outcomes out of **every** post-commit failure (`_carrying`),
+  not only the unresolved/unavailable flags, and no longer re-queries an already-settled original
+  (which replayed the duplicate-payment audit trail and re-broadcast on every tick).
+- `cancel_group`'s emit is best-effort so a failed broadcast cannot turn the 503 into a 500; a
+  teammate's private reply template answers 404 rather than confirming its id.
+
+**Known residual gaps (not introduced here, deliberately not fixed in this PR):**
+
+1. A legacy environment-key pay URL leaves **no durable record**, so "was a legacy URL ever
+   issued?" is inferred from the channel. If a tenant de-configures EPay entirely (env key cleared
+   *and* no `epay_provider_id`), `gateway_ready` is false and cancel proceeds unqueried. The proper
+   fix both reviewers recommend is a durable "legacy URL issued" marker written on the legacy pay
+   path, then gating on that marker instead of the channel.
+2. `asyncio.TimeoutError` in `reconcile.run()` still loses a committed outcome's broadcast/alert,
+   because `wait_for` cancels the coroutine before it can hand the outcome back.
+
+**Not established:** full CI green on the final head, and a re-run of the reviews after these
+fixes. No production deploy, key rotation or real payment. The independent pentest before real
+money (M1 gate) still stands.
 
 _Last updated 2026-11-08 UTC (deployed-state notes below have not been reverified)._
 

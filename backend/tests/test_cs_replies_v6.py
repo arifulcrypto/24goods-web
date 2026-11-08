@@ -45,10 +45,11 @@ async def test_one_agent_cannot_touch_another_agents_reply(env):
     other, _ = await env.login("agent")
     ref = (await _create(agent, "Mine", "Private text")).json()["id"]
 
+    # never listed for them, so it stays absent rather than confirming the id exists
     assert (
         await other.put(f"{TPL}/{ref}", json={"title": "Stolen", "body": "x"})
-    ).status_code == 403
-    assert (await other.delete(f"{TPL}/{ref}")).status_code == 403
+    ).status_code == 404
+    assert (await other.delete(f"{TPL}/{ref}")).status_code == 404
     assert (await agent.delete(f"{TPL}/{ref}")).status_code == 204
     assert (await agent.get(TPL)).json() == []
 

@@ -36,6 +36,16 @@ class UnresolvedEvidence(Unavailable):
         self.settled = settled
 
 
+async def _carrying(
+    db: AsyncSession, tid: uuid.UUID, exc: Unavailable, outcomes: list[NotifyOutcome]
+) -> Unavailable:
+    """Re-shape a failure so it carries whatever this pass already committed."""
+    if not outcomes:
+        return exc
+    await db.rollback()  # committed work stays committed; this only clears the aborted statement
+    return UnresolvedEvidence(exc.message, await merge_outcomes(db, tid, outcomes))
+
+
 async def emit_outcome(res: Resources, db: AsyncSession, outcome: NotifyOutcome) -> list[Order]:
     """Broadcast a committed settlement and raise its staff alerts (duplicate trade included)."""
     from app.core import notify_tg
@@ -64,6 +74,9 @@ async def requery_attempts(
                 PaymentAttempt.tenant_id == tid,
                 PaymentAttempt.local_ref == no,
                 PaymentAttempt.provider_id.is_not(None),
+                # An already-settled original is decided: re-querying it on every retry only
+                # replays the duplicate-payment audit trail and re-broadcasts the same order.
+                PaymentAttempt.status != "settled",
             )
             .order_by(PaymentAttempt.created_at)
             .limit(11)
@@ -71,46 +84,56 @@ async def requery_attempts(
     )
     if len(refs) > 10:
         raise Unavailable("Too many attempts; staff reconciliation is required")
-    outcomes = []
+    outcomes: list[NotifyOutcome] = []
     failed = False
-    for ref in refs:
-        routed, _ = await routed_resources(db, res, tid, ref)
-        await db.rollback()
-        try:
-            q = await routed.zpay.query_order(ref)
-        except ZPayQueryError:
-            failed = True
-            continue
-        if q.found and q.paid:
-            if q.out_trade_no != ref or not q.trade_no or q.money is None:
-                raise Unavailable("Payment query returned inconsistent evidence")
-            trade = epay.gateway_trade_key(routed.zpay.config.instance_id, q.trade_no)
-            model, col = (
-                (Checkout, Checkout.checkout_no) if no.startswith("C") else (Order, Order.order_no)
-            )
-            target_id = await db.scalar(select(model.id).where(col == no, model.tenant_id == tid))
-            if target_id is None:
-                raise Unavailable("Payment target unavailable")
-            raw = {
-                "out_trade_no": ref,
-                "trade_no": q.trade_no,
-                "money": str(q.money),
-                "provider_id": routed.zpay.config.instance_id,
-                "via": "reconciliation",
-            }
-            apply = apply_checkout_payment if no.startswith("C") else apply_order_payment
-            result = await apply(db, res.settings, target_id, trade, q.money, raw, None)
-            att = await db.scalar(
-                select(PaymentAttempt).where(
-                    PaymentAttempt.gateway_ref == ref, PaymentAttempt.tenant_id == tid
+    # Any failure raised after a settlement has committed must still hand that outcome back,
+    # otherwise its broadcast and duplicate-payment alert are lost for good: the attempt is
+    # already 'settled', so no later tick revisits it.
+    try:
+        for ref in refs:
+            routed, _ = await routed_resources(db, res, tid, ref)
+            await db.rollback()
+            try:
+                q = await routed.zpay.query_order(ref)
+            except ZPayQueryError:
+                failed = True
+                continue
+            if q.found and q.paid:
+                if q.out_trade_no != ref or not q.trade_no or q.money is None:
+                    raise Unavailable("Payment query returned inconsistent evidence")
+                trade = epay.gateway_trade_key(routed.zpay.config.instance_id, q.trade_no)
+                model, col = (
+                    (Checkout, Checkout.checkout_no)
+                    if no.startswith("C")
+                    else (Order, Order.order_no)
                 )
-            )
-            if att:
-                att.status = "settled"
-                att.data = {**att.data, "confirmed_trade_no": q.trade_no[:256]}
-                att.checked_at = datetime.now(timezone.utc)
-                await db.commit()
-            outcomes.append(result)
+                target_id = await db.scalar(
+                    select(model.id).where(col == no, model.tenant_id == tid)
+                )
+                if target_id is None:
+                    raise Unavailable("Payment target unavailable")
+                raw = {
+                    "out_trade_no": ref,
+                    "trade_no": q.trade_no,
+                    "money": str(q.money),
+                    "provider_id": routed.zpay.config.instance_id,
+                    "via": "reconciliation",
+                }
+                apply = apply_checkout_payment if no.startswith("C") else apply_order_payment
+                result = await apply(db, res.settings, target_id, trade, q.money, raw, None)
+                att = await db.scalar(
+                    select(PaymentAttempt).where(
+                        PaymentAttempt.gateway_ref == ref, PaymentAttempt.tenant_id == tid
+                    )
+                )
+                if att:
+                    att.status = "settled"
+                    att.data = {**att.data, "confirmed_trade_no": q.trade_no[:256]}
+                    att.checked_at = datetime.now(timezone.utc)
+                    await db.commit()
+                outcomes.append(result)
+    except Unavailable as exc:
+        raise await _carrying(db, tid, exc, outcomes) from None
     if failed:
         raise UnresolvedEvidence(
             "Some original payment queries are unavailable; cancellation is blocked",
@@ -227,6 +250,7 @@ async def requery_usdt_attempts(
                 PaymentAttempt.tenant_id == tid,
                 PaymentAttempt.local_ref == no,
                 PaymentAttempt.provider_id.is_(None),
+                PaymentAttempt.status != "settled",
             )
             .order_by(PaymentAttempt.checked_at.asc().nullsfirst(), PaymentAttempt.created_at)
             .limit(11)
@@ -238,75 +262,80 @@ async def requery_usdt_attempts(
     snapshots = [
         (row.id, dict(row.data), row.channel, usdt.original_client(res, row)) for row in rows
     ]
-    outcomes = []
+    outcomes: list[NotifyOutcome] = []
     unresolved = False
-    for ident, data, channel, client in snapshots:
-        if not data.get("trade_id"):
-            unresolved = True
-            continue
-        await db.rollback()
-        try:
-            info = await client.query_info(data["trade_id"])
-        except bepusdt.BepusdtError:
-            unresolved = True
-            continue
-        if not info.found:
-            # A known issued trade disappearing is not evidence that no transfer occurred.
-            unresolved = True
-            continue
-        if (
-            info.trade_id != data["trade_id"]
-            or info.order_id != no
-            or info.fiat != bepusdt.FIAT
-            or info.money is None
-            or bepusdt.TRADE_TYPE_TO_CHANNEL.get(info.trade_type) != channel
-        ):
-            unresolved = True
-            continue
-        if info.status == bepusdt.STATUS_PAID:
-            model, col = (
-                (Checkout, Checkout.checkout_no) if no.startswith("C") else (Order, Order.order_no)
-            )
-            target = await db.scalar(select(model).where(col == no, model.tenant_id == tid))
-            target_id = target.id if target else None
-            if target_id is None:
-                raise Unavailable("Payment target unavailable")
-            hold = "channel_mismatch" if target.channel not in (None, channel) else None
-            if info.address != data.get("address") or info.actual_amount != bepusdt.decimal_of(
-                data.get("actual_amount")
+    try:
+        for ident, data, channel, client in snapshots:
+            if not data.get("trade_id"):
+                unresolved = True
+                continue
+            await db.rollback()
+            try:
+                info = await client.query_info(data["trade_id"])
+            except bepusdt.BepusdtError:
+                unresolved = True
+                continue
+            if not info.found:
+                # A known issued trade disappearing is not evidence that no transfer occurred.
+                unresolved = True
+                continue
+            if (
+                info.trade_id != data["trade_id"]
+                or info.order_id != no
+                or info.fiat != bepusdt.FIAT
+                or info.money is None
+                or bepusdt.TRADE_TYPE_TO_CHANNEL.get(info.trade_type) != channel
             ):
-                hold = "receiver_mismatch"
-            raw = {
-                "order_id": no,
-                "trade_id": info.trade_id,
-                "amount": str(info.money),
-                "token": info.address,
-                "via": "original_attempt_requery",
-            }
-            apply = apply_checkout_payment if no.startswith("C") else apply_order_payment
-            outcomes.append(
-                await apply(
-                    db,
-                    res.settings,
-                    target_id,
-                    info.trade_id,
-                    info.money,
-                    raw,
-                    None,
-                    channel,
-                    hold=hold,
+                unresolved = True
+                continue
+            if info.status == bepusdt.STATUS_PAID:
+                model, col = (
+                    (Checkout, Checkout.checkout_no)
+                    if no.startswith("C")
+                    else (Order, Order.order_no)
                 )
-            )
-            att = await db.scalar(
-                select(PaymentAttempt).where(
-                    PaymentAttempt.id == ident, PaymentAttempt.tenant_id == tid
+                target = await db.scalar(select(model).where(col == no, model.tenant_id == tid))
+                target_id = target.id if target else None
+                if target_id is None:
+                    raise Unavailable("Payment target unavailable")
+                hold = "channel_mismatch" if target.channel not in (None, channel) else None
+                if info.address != data.get("address") or info.actual_amount != bepusdt.decimal_of(
+                    data.get("actual_amount")
+                ):
+                    hold = "receiver_mismatch"
+                raw = {
+                    "order_id": no,
+                    "trade_id": info.trade_id,
+                    "amount": str(info.money),
+                    "token": info.address,
+                    "via": "original_attempt_requery",
+                }
+                apply = apply_checkout_payment if no.startswith("C") else apply_order_payment
+                outcomes.append(
+                    await apply(
+                        db,
+                        res.settings,
+                        target_id,
+                        info.trade_id,
+                        info.money,
+                        raw,
+                        None,
+                        channel,
+                        hold=hold,
+                    )
                 )
-            )
-            att.status = "settled"
-            att.checked_at = datetime.now(timezone.utc)
-            await db.commit()
-        elif info.status not in (bepusdt.STATUS_WAITING, bepusdt.STATUS_EXPIRED):
-            unresolved = True
+                att = await db.scalar(
+                    select(PaymentAttempt).where(
+                        PaymentAttempt.id == ident, PaymentAttempt.tenant_id == tid
+                    )
+                )
+                att.status = "settled"
+                att.checked_at = datetime.now(timezone.utc)
+                await db.commit()
+            elif info.status not in (bepusdt.STATUS_WAITING, bepusdt.STATUS_EXPIRED):
+                unresolved = True
+    except Unavailable as exc:
+        raise await _carrying(db, tid, exc, outcomes) from None
     if unresolved:
         raise UnresolvedEvidence(
             "Original USDT evidence is unresolved; cancellation is blocked",

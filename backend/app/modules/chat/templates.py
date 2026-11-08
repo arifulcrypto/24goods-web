@@ -55,12 +55,13 @@ async def _owned(db: AsyncSession, staff: User, ref: uuid.UUID) -> CsReplyTempla
     )
     if row is None:
         raise NotFound("Template not found")
-    # A shared template is the tenant's, so only an admin may change it.
+    # A shared template is listed for everyone, so refusing it may say why. Another agent's
+    # private one is never listed, so it stays absent rather than confirming the id exists.
     if row.owner_id is None:
         if staff.role != "admin":
             raise Forbidden("Only an administrator can change a shared reply")
     elif row.owner_id != staff.id:
-        raise Forbidden("This reply belongs to another staff member")
+        raise NotFound("Template not found")
     return row
 
 

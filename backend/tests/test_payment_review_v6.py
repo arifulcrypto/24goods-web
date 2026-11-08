@@ -318,3 +318,85 @@ async def test_requery_all_propagates_a_committed_outcome_through_mixed_evidence
         assert raised.value.settled is not None
         assert raised.value.settled.orders
     assert await env.scalar("SELECT count(*) FROM payments") == 1
+
+
+async def test_epay_order_refuses_to_cancel_when_the_legacy_key_is_gone(env, monkeypatch):
+    """Fail closed: a legacy EPay pay URL leaves no durable record, so with the key cleared it
+    cannot be verified and cancelling could release an order the buyer already paid for.
+
+    The reachable shape is the operator one: the legacy URL is issued, then a durable gateway is
+    configured (so a gateway is still 'ready') and the old environment key is cleared.
+    """
+    admin, _ = await env.login("admin")
+    buyer, _ = await env.login()
+    order = await _prepare(buyer, await env.product(mode="manual"))  # legacy URL, no attempt row
+    assert await env.scalar("SELECT count(*) FROM payment_attempts") == 0
+    await _gateway(env, admin, monkeypatch)  # a gateway stays configured for the tenant
+    monkeypatch.setattr(env.res.settings, "zpay_pid", "")
+    monkeypatch.setattr(env.res.settings, "zpay_key", "")
+
+    result = await buyer.post(f"/api/v1/orders/{order['id']}/cancel", json={})
+    assert result.status_code == 503, result.text
+    assert await _status(buyer, order) == "pending_payment"
+
+
+async def test_a_commit_survives_a_plain_unavailable_raised_afterwards(env, monkeypatch):
+    """Inconsistent evidence on a later original must not discard an earlier settlement."""
+    admin, _ = await env.login("admin")
+    buyer, _ = await env.login()
+    await _gateway(env, admin, monkeypatch)
+
+    async def create(*args):
+        return {"kind": "qr", "payload": "https://qr.alipay.com/fixture"}
+
+    monkeypatch.setattr(ZPayClient, "create_payment", create)
+    order = await _prepare(buyer, await env.product(mode="manual"))
+    await _gateway(env, admin, monkeypatch, "fixture2")
+    assert (
+        await buyer.post(f"/api/v1/orders/{order['id']}/pay", json={"channel": "zpay_alipay"})
+    ).status_code == 200
+    seen: list[str] = []
+
+    async def query(self, no):
+        seen.append(no)
+        if len(seen) == 1:
+            return QueryResult(True, True, Decimal(order["amount"]), secrets.token_hex(16), no)
+        # paid, but the gateway contradicts itself: a plain Unavailable used to drop the commit
+        return QueryResult(True, True, Decimal(order["amount"]), "", no)
+
+    monkeypatch.setattr(ZPayClient, "query_order", query)
+    async with env.api_session() as db:
+        with pytest.raises(UnresolvedEvidence) as raised:
+            await requery_attempts(db, env.res, env.tenant_id, order["order_no"])
+        assert raised.value.settled is not None
+        assert raised.value.settled.orders
+    assert await env.scalar("SELECT count(*) FROM payments") == 1
+
+
+async def test_a_settled_original_is_not_requeried_on_retry(env, monkeypatch):
+    """Retry amplification: a decided original must not replay its audit trail every tick."""
+    admin, _ = await env.login("admin")
+    buyer, _ = await env.login()
+    await _gateway(env, admin, monkeypatch)
+
+    async def create(*args):
+        return {"kind": "qr", "payload": "https://qr.alipay.com/fixture"}
+
+    monkeypatch.setattr(ZPayClient, "create_payment", create)
+    order = await _prepare(buyer, await env.product(mode="manual"))
+    seen: list[str] = []
+
+    async def query(self, no):
+        seen.append(no)
+        return QueryResult(True, True, Decimal(order["amount"]), secrets.token_hex(16), no)
+
+    monkeypatch.setattr(ZPayClient, "query_order", query)
+    async with env.api_session() as db:
+        first, _ = await requery_attempts(db, env.res, env.tenant_id, order["order_no"])
+        assert first is not None
+        after_first = len(seen)
+        again, _ = await requery_attempts(db, env.res, env.tenant_id, order["order_no"])
+    assert len(seen) == after_first, "a settled original was queried again"
+    assert again is None
+    assert await env.scalar("SELECT count(*) FROM payments") == 1
+    assert await env.scalar("SELECT count(*) FROM audit_log WHERE action='payment.duplicate'") == 0
