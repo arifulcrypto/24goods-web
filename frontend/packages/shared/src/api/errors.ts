@@ -156,3 +156,22 @@ export function errorI18nKey(e: unknown): string {
   if (isApiError(e)) return isKnownErrorCode(e.code) ? `errors.${e.code}` : 'errors.unknown'
   return 'errors.unknown'
 }
+
+/**
+ * The server's field detail for a 422, e.g. `secret: String should have at least 16 characters`.
+ *
+ * Only for `validation`: that message is built by the API's RequestValidationError handler as
+ * `<field>: <constraint>` and names nothing a caller cannot already see. Other codes carry prose
+ * meant for logs, so they stay behind their translated key rather than reaching a toast.
+ *
+ * Returns undefined when there is no detail worth adding, so a caller can fall back to the
+ * translated message alone. The text itself is English (it comes from pydantic) and is meant to be
+ * shown *beside* the localized message, never instead of it.
+ */
+export function validationDetail(e: unknown): string | undefined {
+  if (!isApiError(e) || e.code !== 'validation') return undefined
+  const msg = e.message.trim()
+  // The handler sends "Invalid request" when it cannot name a field: nothing to add.
+  if (!msg || msg === 'Invalid request' || !msg.includes(':')) return undefined
+  return msg.slice(0, 160)
+}

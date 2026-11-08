@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { ApiClient, ApiError, buildQuery, errorFromBody, errorI18nKey, safeAssetUrl, safePayUrl, safeRedirect } from '../src'
+import { ApiClient, ApiError, buildQuery, errorFromBody, errorI18nKey, safeAssetUrl, safePayUrl, safeRedirect, validationDetail } from '../src'
 
 function res(status: number, body?: unknown, raw?: string): Response {
   const text = raw ?? (body === undefined ? '' : JSON.stringify(body))
@@ -141,5 +141,36 @@ describe('v4 global 429', () => {
     })
     await expect(c.get('/x')).rejects.toMatchObject({ code: 'too_frequent', status: 429 })
     expect(seen).toEqual(['too_frequent'])
+  })
+})
+
+describe('validationDetail', () => {
+  const err = (code: string, message: string) => new ApiError(code, message, 422)
+
+  it('surfaces the field and constraint the API already sent', () => {
+    expect(validationDetail(err('validation', 'secret: String should have at least 16 characters')))
+      .toBe('secret: String should have at least 16 characters')
+  })
+
+  it('stays silent when the handler could not name a field', () => {
+    // The API sends exactly this when errors()[0] has no usable loc; appending it to the
+    // translated headline would just read "Please check your input — Invalid request".
+    expect(validationDetail(err('validation', 'Invalid request'))).toBeUndefined()
+    expect(validationDetail(err('validation', ''))).toBeUndefined()
+  })
+
+  it('never leaks prose from other error codes', () => {
+    // forbidden/conflict/server_error messages are written for logs, not for a toast; they stay
+    // behind their translated key.
+    for (const code of ['forbidden', 'conflict', 'server_error', 'rate_limited']) {
+      expect(validationDetail(err(code, 'internal detail: do not show this'))).toBeUndefined()
+    }
+  })
+
+  it('ignores non-API errors and caps runaway messages', () => {
+    expect(validationDetail(new Error('boom'))).toBeUndefined()
+    expect(validationDetail(undefined)).toBeUndefined()
+    const long = validationDetail(err('validation', 'field: ' + 'x'.repeat(500)))
+    expect(long!.length).toBe(160)
   })
 })
