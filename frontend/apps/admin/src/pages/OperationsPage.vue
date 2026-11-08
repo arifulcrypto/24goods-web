@@ -17,6 +17,7 @@ const page = ref(1)
 const total = ref(0)
 const stale = computed(() => overviewRead.failed.value || !data.value || now.value-Date.parse(data.value.collected_at)>90000)
 function statusLabel(value:unknown):string{if(value===true)return t('ops.yes');if(value===false)return t('ops.no');const key=`ops.states.${String(value)}`;return te(key)?t(key):t('ops.unknown')}
+function familyLabel(value:string):string{const key=`ops.${value}`;return te(key)?t(key):value}
 async function load() { const r = await overviewRead.run(() => client.get<Overview>('/admin/operations')); if(r) data.value=r }
 async function logs() { const r = await eventsRead.run(() => client.get<{items:Event[];total:number}>('/admin/operations/events',{family:family.value||undefined,page:page.value})); if(r){ items.value=r.items;total.value=r.total } }
 function refresh() { void load(); void logs() }
@@ -45,7 +46,7 @@ onBeforeUnmount(()=>{clearInterval(timer);clearInterval(clock)})
     <el-select v-model="family" :placeholder="t('ops.family')" clearable @change="page=1; logs()"><el-option v-for="f in ['operation','login','security','system','task','payment']" :key="f" :value="f" :label="t(`ops.${f}`)" /></el-select>
     <el-table :data="items" row-key="id">
       <el-table-column prop="occurred_at" :label="t('ops.date')" min-width="180" />
-      <el-table-column prop="family" :label="t('ops.family')" />
+      <el-table-column prop="family" :label="t('ops.family')"><template #default="{row}">{{familyLabel(row.family)}}</template></el-table-column>
       <el-table-column prop="action" :label="t('ops.action')" min-width="150" />
       <el-table-column prop="outcome" :label="t('ops.status')"><template #default="{row}">{{statusLabel(row.outcome)}}</template></el-table-column>
       <el-table-column prop="reason" :label="t('ops.reason')" />

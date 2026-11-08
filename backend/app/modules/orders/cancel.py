@@ -15,7 +15,6 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core import notify_tg
 from app.core.audit import audit
 from app.core.errors import AlreadyPaid, InvalidState, NotFound, Unavailable
 from app.core.resources import Resources
@@ -107,6 +106,12 @@ async def _settle_if_paid(
             return outcome
     from app.modules.payments.gateways import legacy_allowed
 
+    # Draining a legacy environment-key pay URL only makes sense while that key is actually
+    # available: without it no such URL was ever issued, and querying the default gateway would
+    # only turn a USDT-only cancellation into a 503. A legitimate old EPay URL stays drainable
+    # after a switch to USDT, because the key — not the current channel — decides.
+    if not (res.settings.zpay_pid and res.settings.zpay_key):
+        return None
     if not await legacy_allowed(db, tid, out_trade_no):
         return None
     try:
@@ -234,18 +239,20 @@ async def cancel_group(
         oid, cid = order_id, checkout_id
         co_id = co.id if co is not None else None
         single_id = orders[0].id if co is None else None
+        from app.modules.payments.reconcile import UnresolvedEvidence, emit_outcome
+
         await db.rollback()  # never hold row locks across the network call
-        outcome = await _settle_if_paid(db, res, co_id, single_id, no, amount, group_channel)
+        try:
+            outcome = await _settle_if_paid(db, res, co_id, single_id, no, amount, group_channel)
+        except UnresolvedEvidence as exc:
+            # A settlement committed before another original turned out to be unresolved still
+            # owes the buyer its broadcast and staff their duplicate-payment alert; the
+            # cancellation itself stays closed (503) because the rest is still unverified.
+            if exc.settled is not None:
+                await emit_outcome(res, db, exc.settled)
+            raise
         if outcome is not None:
-            touched = outcome.orders or ([outcome.order] if outcome.order else [])
-            for o in touched:
-                await broadcast_order(
-                    res,
-                    db,
-                    o,
-                    [m for m in outcome.messages if m and m.conversation_id == o.conversation_id],
-                )
-            notify_tg.outcome_events(res, touched)
+            await emit_outcome(res, db, outcome)
             raise AlreadyPaid("This order has already been paid")
         co, orders = await _load_group(db, tid, oid, cid)
         st = _status(co, orders)

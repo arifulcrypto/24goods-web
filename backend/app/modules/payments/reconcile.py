@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -19,6 +20,37 @@ from app.modules.payments.gateways import routed_resources
 from app.modules.payments.settle import NotifyOutcome, apply_checkout_payment, apply_order_payment
 from app.payments import bepusdt, epay
 from app.payments.zpay import ZPayQueryError
+
+log = logging.getLogger(__name__)
+
+
+class UnresolvedEvidence(Unavailable):
+    """Some original payment evidence could not be resolved.
+
+    ``settled`` carries the outcomes this pass already committed durably, so a caller can still
+    broadcast them and raise their staff alerts while failing the request itself closed.
+    """
+
+    def __init__(self, message: str = "", settled: NotifyOutcome | None = None) -> None:
+        super().__init__(message)
+        self.settled = settled
+
+
+async def emit_outcome(res: Resources, db: AsyncSession, outcome: NotifyOutcome) -> list[Order]:
+    """Broadcast a committed settlement and raise its staff alerts (duplicate trade included)."""
+    from app.core import notify_tg
+    from app.modules.orders.service import broadcast_order
+
+    touched = outcome.orders or ([outcome.order] if outcome.order is not None else [])
+    for order in touched:
+        await broadcast_order(
+            res,
+            db,
+            order,
+            [m for m in outcome.messages if m and m.conversation_id == order.conversation_id],
+        )
+    notify_tg.outcome_events(res, touched, outcome.dup_trade_no)
+    return touched
 
 
 async def requery_attempts(
@@ -80,7 +112,10 @@ async def requery_attempts(
                 await db.commit()
             outcomes.append(result)
     if failed:
-        raise Unavailable("Some original payment queries are unavailable; cancellation is blocked")
+        raise UnresolvedEvidence(
+            "Some original payment queries are unavailable; cancellation is blocked",
+            await merge_outcomes(db, tid, outcomes),
+        )
     return await merge_outcomes(db, tid, outcomes), bool(refs)
 
 
@@ -123,23 +158,17 @@ async def run(res: Resources) -> int:
                         requery_all(db, res, tid, no), timeout=min(10, remaining)
                     )
                     if outcome is not None:
-                        from app.core import notify_tg
-                        from app.modules.orders.service import broadcast_order
-
-                        for order in outcome.orders:
-                            await broadcast_order(
-                                res,
-                                db,
-                                order,
-                                [
-                                    m
-                                    for m in outcome.messages
-                                    if m and m.conversation_id == order.conversation_id
-                                ],
-                            )
-                        notify_tg.outcome_events(res, outcome.orders, outcome.dup_trade_no)
+                        await emit_outcome(res, db, outcome)
                         total += 1
-                except (Unavailable, asyncio.TimeoutError):
+                except (Unavailable, asyncio.TimeoutError) as exc:
+                    settled = getattr(exc, "settled", None)
+                    if settled is not None:
+                        # best effort: the bookkeeping below must still run for this ref
+                        try:
+                            await emit_outcome(res, db, settled)
+                            total += 1
+                        except Exception:
+                            log.warning("committed settlement broadcast skipped for %s", no)
                     await db.rollback()
                 rows = await db.scalars(
                     select(PaymentAttempt).where(
@@ -279,7 +308,10 @@ async def requery_usdt_attempts(
         elif info.status not in (bepusdt.STATUS_WAITING, bepusdt.STATUS_EXPIRED):
             unresolved = True
     if unresolved:
-        raise Unavailable("Original USDT evidence is unresolved; cancellation is blocked")
+        raise UnresolvedEvidence(
+            "Original USDT evidence is unresolved; cancellation is blocked",
+            await merge_outcomes(db, tid, outcomes),
+        )
     return await merge_outcomes(db, tid, outcomes), bool(rows)
 
 
@@ -293,9 +325,15 @@ async def requery_all(
             result, _ = await checker(db, res, tid, no)
             if result is not None:
                 results.append(result)
-        except Unavailable:
+        except Unavailable as exc:
+            # A settlement one checker already committed survives another's unresolved evidence.
+            settled = getattr(exc, "settled", None)
+            if settled is not None:
+                results.append(settled)
             await db.rollback()
             failed = True
     if failed:
-        raise Unavailable("Some original payment evidence is unresolved")
+        raise UnresolvedEvidence(
+            "Some original payment evidence is unresolved", await merge_outcomes(db, tid, results)
+        )
     return await merge_outcomes(db, tid, results)
