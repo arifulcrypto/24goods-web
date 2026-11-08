@@ -342,6 +342,17 @@ async def test_robots_refuses_training_agents_but_keeps_search_crawlers(env):
             assert lines[i + 1] == "Disallow: /", line
     for crawler in ("Googlebot", "bingbot", "Baiduspider"):
         assert f"User-agent: {crawler}" not in lines, crawler
+    # Owner decision 2026-11-08: AI search indexers cite and link (they send buyers), and
+    # user-triggered fetchers act for a person who asked for the page. Neither is training.
+    for agent in (
+        "OAI-SearchBot",
+        "Claude-SearchBot",
+        "PerplexityBot",
+        "ChatGPT-User",
+        "Claude-User",
+        "Perplexity-User",
+    ):
+        assert f"User-agent: {agent}" not in lines, agent
 
 
 async def test_ai_txt_states_the_withheld_permissions(env):
