@@ -28,6 +28,7 @@ from app.modules import emails, jobs
 from app.modules.admin.blocking import router as admin_blocking_router
 from app.modules.admin.categories import router as admin_categories_router
 from app.modules.admin.importer import router as admin_import_router
+from app.modules.admin.payment_gateways import router as payment_gateways_router
 from app.modules.admin.router import router as admin_router
 from app.modules.admin.settings import router as admin_settings_router
 from app.modules.admin.tokens import router as admin_tokens_router
@@ -43,6 +44,7 @@ from app.modules.me.router import router as me_router
 from app.modules.orders.checkout_router import router as checkout_router
 from app.modules.orders.router import router as orders_router
 from app.modules.orders.service import expire_pending
+from app.modules.payments.epay_page import router as epay_page_router
 from app.modules.payments.router import NOTIFY_BEPUSDT_PATH, NOTIFY_PATH
 from app.modules.payments.router import router as payments_router
 from app.modules.promo.router import admin as promo_admin_router
@@ -76,6 +78,9 @@ async def _job(name: str, coro) -> None:  # type: ignore[no-untyped-def]
 
 
 async def run_jobs_once(res: Resources, *, hourly: bool) -> None:
+    from app.modules.payments.reconcile import run as reconcile_payments
+
+    await _job("payment reconciliation", reconcile_payments(res))
     await _job("order expiry", expire_pending(res.maker, res))
     await _job("auto confirm", jobs.auto_confirm(res.maker, res))
     await _job("order emails", emails.enqueue_order_emails(res.maker))
@@ -101,6 +106,8 @@ async def _expiry_loop(res: Resources) -> None:
 
 def api_router() -> APIRouter:
     r = APIRouter(prefix="/api/v1")
+    r.include_router(payment_gateways_router)
+    r.include_router(epay_page_router)
     for sub in (
         auth_router,
         oauth_router,

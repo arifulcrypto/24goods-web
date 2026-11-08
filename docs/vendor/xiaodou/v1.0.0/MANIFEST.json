@@ -1,0 +1,92 @@
+{
+  "source": "Owner-supplied integration materials; no live merchant credentials included",
+  "version": "1.0.0",
+  "archive_sha256": "0631b52761143e1e78887b3215de5e219a24cba9a64b7996c7a885e9a993e411",
+  "files": [
+    {
+      "path": "skill/SKILL.md",
+      "bytes": 9491,
+      "sha256": "b4d7ff7967433166f75ff8e9f1f5e02393fde7da1d19f24984af7f0d44b95ecc"
+    },
+    {
+      "path": "skill/examples/README.md",
+      "bytes": 2060,
+      "sha256": "a44fa8f01614d97f15d238a21ddd9daafbec37b5238ed8a371599bb7773f6c4e"
+    },
+    {
+      "path": "skill/references/api-workflow.md",
+      "bytes": 12641,
+      "sha256": "cbb2e13b7f4ae312c68f7fdd2b5f75f3f48ef2b4ea61be9eca75d11ed6083d55"
+    },
+    {
+      "path": "skill/references/error-codes.md",
+      "bytes": 5108,
+      "sha256": "2ab8d4bc4ec16a548f45e4cfcbd5982f44eca09f691064f6d6c9a5a2cc4bed46"
+    },
+    {
+      "path": "skill/references/go-live-checklist.md",
+      "bytes": 4766,
+      "sha256": "775b600bd4d0c9b63fe52c69705881c9d60812ce6f043780d1b5ff42f04e7a00"
+    },
+    {
+      "path": "skill/references/key-management.md",
+      "bytes": 4467,
+      "sha256": "c0807a80879c41e8a6d11710fa0a9b0303bfe9e1ae6085e48393b8256fb582b0"
+    },
+    {
+      "path": "skill/references/signature-spec.md",
+      "bytes": 4145,
+      "sha256": "507c075f556336850a267c75626685012281bc0b571758ff856dbb4a7bce3fff"
+    },
+    {
+      "path": "skill/references/terminal-matrix.md",
+      "bytes": 6232,
+      "sha256": "9514c93c8f05e0dc0839d4199d1529a4eb2abb0cb651e19ac25491fbbd2a6e54"
+    },
+    {
+      "path": "skill/references/webhook-verification.md",
+      "bytes": 5665,
+      "sha256": "99260b8bc451abd338763b44b74265c15a62b649370526325078a9e6986cd073"
+    },
+    {
+      "path": "skill/references/wechat-jsapi-setup.md",
+      "bytes": 5334,
+      "sha256": "b77b08853ac24f6bd58d60928a0598bb0ba714e14f4b3276cd75ed7355065923"
+    },
+    {
+      "path": "examples/README.md",
+      "bytes": 7006,
+      "sha256": "0bf72028ba3ee5d6b5b64fda7c294d4e3327f80d25e4b13716c95cb42457a1f2"
+    },
+    {
+      "path": "examples/java/XdSignature.java",
+      "bytes": 10880,
+      "sha256": "21a9788ed544696f348ac4d92c7dbadd4cb9b4a712d51707f4bbb1e87fe5b3a0"
+    },
+    {
+      "path": "examples/node/sign.js",
+      "bytes": 7470,
+      "sha256": "b05ec79fc24559081ae2ca01f8d066552113f60d8e249b88613d410795ebf629"
+    },
+    {
+      "path": "examples/node/verify_response.js",
+      "bytes": 5869,
+      "sha256": "d510aac8dece7630f126493b3bc8c24ca0911c042813baea1af33fe58a9b1716"
+    },
+    {
+      "path": "examples/node/verify_webhook.js",
+      "bytes": 6240,
+      "sha256": "d7b5e55ae457846925423d96a9750115bf0588e773ba86231a1f67e1328eaf4b"
+    },
+    {
+      "path": "examples/php/xd_signature.php",
+      "bytes": 7736,
+      "sha256": "fbd3e8087d6cd80b05996736fcae84a62acf05a951021a44bcb2ece000cf8c22"
+    },
+    {
+      "path": "examples/python/xd_signature.py",
+      "bytes": 6304,
+      "sha256": "f1ae5cf1ec087310e5905e047e15ad7fc6a336f2e2de14b685e6f24f66067e07"
+    }
+  ]
+}

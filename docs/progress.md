@@ -67,6 +67,23 @@ Tracking: [#27 payments](https://github.com/arifulcrypto/24goods-web/issues/27),
 
 ## Current phase: **MVP-0: local demo with mock data** (finishing) → next: **M1 production MVP**
 
+### Active owner-authorized implementation: issues #25–#30
+
+- Feature branch `feat/issues-25-30-hardening`; PR must remain unmerged and no production deploy.
+- #30: owner-supplied Xiaodou v1.0.0 reference package reviewed/imported under
+  `docs/vendor/xiaodou`; English index and integrity manifest; live merchant credentials excluded.
+  Supplied credentials select the MD5 EPay compatibility contract, not the separate native RSA API.
+- Core fixes implemented with targeted regressions: BEpusdt retry HTTP statuses, buyer-input chat
+  references/legacy redaction, bounded SSE revocation/subscriptions, atomic OTP consumption, challenge
+  fail-closed/action/host checks, optional input editing and upload admission. Order-field encryption
+  remains separately tracked by #8; current input configuration is explicit, not snapshotted.
+- EPay implementation: immutable encrypted gateway versions, fresh administrator authentication,
+  explicit merchant-ownership acknowledgement, durable reservations, original-provider notify/query
+  routing, bounded DNS-pinned HTTPS, typed local QR and reconciliation. Alipay is the enabled-method
+  scope supplied by the owner; native RSA and unapproved payment methods are not inferred available.
+- Remaining implementation/review in progress: durable USDT recovery, entry/payment challenge UI,
+  chat/locale/media preferences, operations/backups and service reminders; full CI/review gates pending.
+
 ## Done
 
 - v5 product import backend: `core/safefetch.py` (SSRF-safe, IP-pinned), `catalog/importer/` parsers + gmailbuy/maitg/ka8 adapters, `admin/importer.py` endpoints, offline fixture tests.

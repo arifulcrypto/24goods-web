@@ -92,6 +92,9 @@ async def _security_event(
 async def handle_notify(
     db: AsyncSession, res: Resources, tenant_id: uuid.UUID, params: dict[str, str], ip: str | None
 ) -> NotifyOutcome:
+    from app.modules.payments.gateways import routed_resources
+
+    res, local_ref = await routed_resources(db, res, tenant_id, params.get("out_trade_no", ""))
     zpay = res.zpay
     if not zpay.config.key or not zpay.verify_signature(params):
         await _security_event(
@@ -105,14 +108,20 @@ async def handle_notify(
         return NotifyOutcome(FAIL)
 
     out_trade_no = params.get("out_trade_no", "")
-    is_checkout = out_trade_no.startswith(CHECKOUT_PREFIX)
+    is_checkout = local_ref.startswith(CHECKOUT_PREFIX)
     order: Order | None = None
     checkout: Checkout | None = None
     if is_checkout:
-        checkout = await db.scalar(select(Checkout).where(Checkout.checkout_no == out_trade_no))
+        checkout = await db.scalar(
+            select(Checkout).where(
+                Checkout.checkout_no == local_ref, Checkout.tenant_id == tenant_id
+            )
+        )
         known = checkout is not None
     else:
-        order = await db.scalar(select(Order).where(Order.order_no == out_trade_no))
+        order = await db.scalar(
+            select(Order).where(Order.order_no == local_ref, Order.tenant_id == tenant_id)
+        )
         known = order is not None
     if not known:
         await _security_event(
@@ -128,7 +137,7 @@ async def handle_notify(
     if checkout is not None:
         target_id, target = checkout.id, f"checkout:{checkout.id}"
         expected = epay.ExpectedOrder(
-            out_trade_no=checkout.checkout_no,
+            out_trade_no=out_trade_no,
             merchant_id=zpay.config.pid,
             amount=to_decimal(checkout.amount_minor),
         )
@@ -136,7 +145,7 @@ async def handle_notify(
         assert order is not None
         target_id, target = order.id, f"order:{order.id}"
         expected = epay.ExpectedOrder(
-            out_trade_no=order.order_no,
+            out_trade_no=out_trade_no,
             merchant_id=zpay.config.pid,
             amount=to_decimal(order.amount_minor),
         )
@@ -248,7 +257,10 @@ async def _settle(
     bad = await requery_mismatch(res, params, trade_no, paid_amount)
     if bad is not None:
         return await to_manual_review(db, order_id, "requery_mismatch", ip, bad)
-    return await apply_order_payment(db, res.settings, order_id, trade_no, paid_amount, params, ip)
+    recorded = (
+        (res.zpay.config.instance_id + ":" + trade_no) if res.zpay.config.instance_id else trade_no
+    )
+    return await apply_order_payment(db, res.settings, order_id, recorded, paid_amount, params, ip)
 
 
 async def _settle_checkout(
@@ -267,5 +279,11 @@ async def _settle_checkout(
     if bad is not None:
         return await checkout_to_manual_review(db, checkout_id, "requery_mismatch", ip, bad)
     return await apply_checkout_payment(
-        db, res.settings, checkout_id, trade_no, paid_amount, params, ip
+        db,
+        res.settings,
+        checkout_id,
+        (res.zpay.config.instance_id + ":" + trade_no) if res.zpay.config.instance_id else trade_no,
+        paid_amount,
+        params,
+        ip,
     )

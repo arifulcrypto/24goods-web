@@ -86,6 +86,12 @@ async def _settle_if_paid(
         return await _settle_usdt_if_paid(
             db, res, checkout_id, order_id, out_trade_no, amount_minor, channel or ""
         )
+    from app.modules.payments.reconcile import requery_attempts
+
+    tid = db.info["tenant_id"]
+    outcome, managed = await requery_attempts(db, res, tid, out_trade_no)
+    if outcome is not None or managed:
+        return outcome
     try:
         q = await res.zpay.query_order(out_trade_no)
     except ZPayQueryError:
@@ -178,9 +184,7 @@ async def cancel_group(
     # been issued): "not found / unpaid" means proceed, a paid answer settles instead.
     group_channel = co.channel if co is not None else orders[0].channel
     gateway_ready = (
-        res.bepusdt.configured
-        if is_usdt(group_channel)
-        else bool(res.settings.zpay_pid and res.settings.zpay_key)
+        res.bepusdt.configured if is_usdt(group_channel) else await _epay_configured(db, res, tid)
     )
     if gateway_ready:
         no = co.checkout_no if co is not None else orders[0].order_no
@@ -283,3 +287,9 @@ async def cancel_group(
     for o, m in zip(orders, msgs, strict=True):
         await broadcast_order(res, db, o, [m])
     return co, orders
+
+
+async def _epay_configured(db: AsyncSession, res: Resources, tid: uuid.UUID) -> bool:
+    from app.modules.payments.gateways import configured
+
+    return await configured(db, res, tid)
