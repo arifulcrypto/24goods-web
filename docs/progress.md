@@ -12,8 +12,13 @@ pass; api->BEpusdt 200. Demo also on `a8160cb`.
 
 **Gateway egress (2026-11-09, `feat/egress-sticky-relay`):** ZPay API calls pick the path per gateway
 host in the app — sticky last-success between direct and a configured relay (`APP_ZPAY_RELAYS`),
-fallback only on connect failures; replaces the c4 DNAT + 5-minute DNS timer. Next (owner):
-several EPay gateways with priority/sticky failover + admin test-payment QR (spec v10).
+fallback only on connect failures; replaces the c4 DNAT + 5-minute DNS timer.
+
+**Several EPay gateways (spec v10, `feat/epay-gateway-routing`, migration `0018_gateway_routing`):**
+priority + sticky failover across enabled gateways (`ZPayRefused` / `ZPayUnreachable` fail over,
+ambiguous outcomes do not), admin Settings -> Payment priority list / enabled switch / routing mode
+/ last OK + failure, and a test-payment dialog with a server-rendered QR (`payment_tests`, ledger
+`test_receipts`). See ADR "several EPay gateways" in docs/architecture.md. Not deployed yet.
 
 **Production deployed 2026-11-09 08:22 UTC: `84b4dc0`** (#64, migration 0017). **Xiaodou EPay:** c4's route
 into mainland China is lossy (two-way tests vs a Tencent GZ VPS); API traffic now goes through a
