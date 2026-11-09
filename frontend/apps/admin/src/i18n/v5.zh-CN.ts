@@ -515,6 +515,7 @@ export default {
     done: "提现已更新",
     requestedAt: "申请时间",
     paidHint: "请先完成转账再确认，确认后将记入账本。",
+    disputed: "有未结案的售后工单，已冻结 {amount}；工单结案前不计入该店铺可提现金额。",
     status: {
       requested: "待处理",
       paid: "已打款",

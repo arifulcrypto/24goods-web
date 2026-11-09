@@ -277,6 +277,8 @@ export default {
       quote_withdrawn: 'An offer was withdrawn',
       quote_accepted: 'An offer was accepted',
       order_cancelled: 'Order cancelled',
+      order_refunded: 'The order was refunded',
+      delivery_requeued: 'Delivery was resumed',
       conversation_closed: 'Conversation closed',
       conversation_reopened: 'Conversation reopened',
       deliveredAt: 'Delivered · {time} ({ago})',

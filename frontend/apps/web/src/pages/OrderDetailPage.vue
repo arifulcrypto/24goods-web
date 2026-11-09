@@ -17,6 +17,7 @@ import {
   isApiError,
   safeAssetUrl,
   type AfterSales,
+  type AfterSalesReason,
   type BuyerInputConfig,
   type CheckoutView,
   type Order,
@@ -52,6 +53,7 @@ const confirming = ref(false)
 const secrets = ref<string[]>([])
 const accessCode = ref<string | null>(null)
 const asSheet = ref(false)
+const asReason = ref<AfterSalesReason | undefined>(undefined)
 const now = ref(Date.now())
 const timer = setInterval(() => (now.value = Date.now()), 1000)
 
@@ -129,7 +131,7 @@ const hint = computed(() => {
     case 'expired':
       return t('order.expiredHint')
     case 'refunded':
-      return t('order.refundedHint')
+      return o.refund_reference ? `${t('order.refundedHint')} ${t('order.refundedTo', { ref: o.refund_reference })}` : t('order.refundedHint')
     default:
       return ''
   }
@@ -293,6 +295,18 @@ const serviceInfo = computed(() => {
   return { period, status }
 })
 const canAfterSales = computed(() => !!order.value && canRequestAfterSales(order.value))
+/** v8: a paid, undelivered order can be escalated once the delivery promise lapsed (server re-checks). */
+const notReceivedAt = computed(() => order.value?.not_received_from ?? null)
+const canNotReceived = computed(
+  () => !!notReceivedAt.value && !order.value?.after_sales && new Date(notReceivedAt.value).getTime() <= now.value,
+)
+const notReceivedWait = computed(() =>
+  notReceivedAt.value && !order.value?.after_sales && new Date(notReceivedAt.value).getTime() > now.value ? formatDateTime(notReceivedAt.value, locale.value) : '',
+)
+function openAfterSales(reason?: AfterSalesReason) {
+  asReason.value = reason
+  asSheet.value = true
+}
 const asExpired = computed(
   () => !!order.value && ['delivered', 'completed'].includes(order.value.status) && !canAfterSales.value && !order.value.after_sales,
 )
@@ -453,9 +467,11 @@ function gotCode() {
         <p class="muted small">{{ serviceInfo.status }}</p>
       </section>
 
-      <section v-if="order.after_sales || canAfterSales || asExpired" class="section card pad">
+      <section v-if="order.after_sales || canAfterSales || asExpired || canNotReceived || notReceivedWait" class="section card pad">
         <AfterSalesStatus v-if="order.after_sales" :ticket="order.after_sales" />
-        <van-button v-if="canAfterSales" block round plain class="as-btn" @click="asSheet = true">{{ t('afterSales.request') }}</van-button>
+        <van-button v-if="canAfterSales" block round plain class="as-btn" @click="openAfterSales()">{{ t('afterSales.request') }}</van-button>
+        <van-button v-else-if="canNotReceived" block round plain class="as-btn" @click="openAfterSales('not_received')">{{ t('order.notReceived') }}</van-button>
+        <p v-else-if="notReceivedWait" class="muted small">{{ t('order.notReceivedWait', { time: notReceivedWait }) }}</p>
         <p v-else-if="asExpired" class="muted small">{{ t('afterSales.expired') }}</p>
       </section>
 
@@ -506,7 +522,7 @@ function gotCode() {
         </van-button>
       </div>
       <BuyerInputSheet v-model:show="infoSheet" :config="infoConfig" :initial="order.buyer_input" :busy="infoBusy" @confirm="saveInput" />
-      <AfterSalesSheet v-model:show="asSheet" :order-id="order.id" @created="ticketCreated" />
+      <AfterSalesSheet v-model:show="asSheet" :order-id="order.id" :fixed-reason="asReason" @created="ticketCreated" />
     </template>
   </div>
 </template>

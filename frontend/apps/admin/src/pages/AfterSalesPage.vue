@@ -74,17 +74,18 @@ const images = computed(() => (ticket.value?.attachments ?? []).map((a) => safeA
 const mode = computed(() => ticket.value?.order?.delivery_mode ?? 'manual')
 
 // ---- action dialog (note / delivery text) ----
-const dlg = reactive({ open: false, action: 'reject' as TicketAction, note: '', text: '', error: '' })
+const dlg = reactive({ open: false, action: 'reject' as TicketAction, note: '', text: '', reference: '', error: '' })
 function startAction(a: TicketAction) {
   if (a === 'processing') return void run(a, {})
   dlg.action = a
   dlg.note = ''
   dlg.text = ''
+  dlg.reference = ''
   dlg.error = ''
   dlg.open = true
 }
 async function submitDialog() {
-  const err = validateAction(dlg.action, { note: dlg.note, delivery_text: dlg.text }, mode.value)
+  const err = validateAction(dlg.action, { note: dlg.note, delivery_text: dlg.text, reference: dlg.reference }, mode.value)
   if (err) {
     dlg.error = t(err)
     return
@@ -93,9 +94,9 @@ async function submitDialog() {
     const msg = dlg.action === 'replace' && mode.value === 'auto_card' ? t('afterSales.confirm.replaceAuto') : t(`afterSales.confirm.${dlg.action}`)
     if (!(await confirmBox(msg, t(`afterSales.action.${dlg.action}`)))) return
   }
-  await run(dlg.action, { note: dlg.note.trim() || undefined, delivery_text: dlg.action === 'replace' && mode.value === 'manual' ? dlg.text.trim() : undefined })
+  await run(dlg.action, { note: dlg.note.trim() || undefined, delivery_text: dlg.action === 'replace' && mode.value === 'manual' ? dlg.text.trim() : undefined, reference: dlg.action === 'refund' ? dlg.reference.trim() : undefined })
 }
-async function run(a: TicketAction, body: { note?: string; delivery_text?: string }) {
+async function run(a: TicketAction, body: { note?: string; delivery_text?: string; reference?: string }) {
   const tk = ticket.value
   if (!tk || busy.value) return
   busy.value = a
@@ -191,13 +192,16 @@ function tagType(a: TicketAction) {
           <el-form-item v-if="dlg.action === 'replace' && mode === 'manual'" :label="t('orders.deliverText')" :error="dlg.error">
             <el-input v-model="dlg.text" type="textarea" :rows="5" maxlength="4000" show-word-limit />
           </el-form-item>
+          <el-form-item v-if="dlg.action === 'refund'" :label="t('afterSales.refundReference')" :error="dlg.error">
+            <el-input v-model="dlg.reference" maxlength="200" show-word-limit :placeholder="t('afterSales.refundReferenceHint')" />
+          </el-form-item>
           <el-form-item :label="dlg.action === 'reject' ? t('afterSales.rejectReason') : t('afterSales.note')" :error="dlg.action === 'reject' ? dlg.error : ''">
             <el-input v-model="dlg.note" type="textarea" :rows="3" maxlength="500" show-word-limit />
           </el-form-item>
         </el-form>
         <template #footer>
           <el-button @click="dlg.open = false">{{ t('common.cancel') }}</el-button>
-          <el-button :type="tagType(dlg.action)" :loading="!!busy" @click="submitDialog">{{ t('common.confirm') }}</el-button>
+          <el-button :type="tagType(dlg.action)" :loading="!!busy" @click="submitDialog">{{ dlg.action === 'refund' ? t('afterSales.refundConfirmBtn') : t('common.confirm') }}</el-button>
         </template>
       </el-dialog>
     </el-drawer>

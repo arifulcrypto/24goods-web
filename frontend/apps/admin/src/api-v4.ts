@@ -93,6 +93,10 @@ export function createAdminV4Api(c: ApiClient) {
       get: (id: string) => c.get<AdminOrderDetailV4>(`/admin/orders/${seg(id)}`),
       /** reason is required (§3). */
       close: (id: string, reason: string) => c.post<Order>(`/admin/orders/${seg(id)}/cancel`, { reason }),
+      /** v8: put a held auto-card order back on the delivery queue (admin). */
+      requeueDelivery: (id: string) => c.post<Order>(`/admin/orders/${seg(id)}/requeue-delivery`),
+      /** v8: refund a paid, undelivered order after the money was sent back (admin). */
+      refund: (id: string, b: { reference: string; note?: string }) => c.post<Order>(`/admin/orders/${seg(id)}/refund`, b),
     },
     content: {
       uploadImage: (file: Blob, filename = 'image') => {

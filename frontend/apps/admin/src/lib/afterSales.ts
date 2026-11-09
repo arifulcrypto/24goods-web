@@ -32,13 +32,20 @@ export function needsConfirm(a: TicketAction): boolean {
   return a === 'replace' || a === 'refund' || a === 'reject'
 }
 
+/** The staff's proof that the money went back: 3-200 characters (the server enforces it too). */
+export function isValidRefundReference(v: string | undefined | null): boolean {
+  const n = (v ?? '').trim().length
+  return n >= 3 && n <= 200
+}
+
 /** Body validation per action (returns an i18n error key or null). */
 export function validateAction(
   a: TicketAction,
-  input: { note?: string; delivery_text?: string },
+  input: { note?: string; delivery_text?: string; reference?: string },
   mode: DeliveryMode,
 ): string | null {
   if (a === 'reject' && !input.note?.trim()) return 'afterSales.v.reasonRequired'
+  if (a === 'refund' && !isValidRefundReference(input.reference)) return 'afterSales.v.referenceRequired'
   if (a === 'replace' && mode === 'manual' && !input.delivery_text?.trim()) return 'afterSales.v.deliveryRequired'
   return null
 }

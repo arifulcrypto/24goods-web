@@ -59,6 +59,7 @@ const m = (n: number) => minorMoney(n, cur, locale.value)
           <div><div class="muted small">{{ t('reseller.balAvailable') }}</div><div class="price">{{ m(me.balances.available_minor) }}</div></div>
           <div><div class="muted small">{{ t('reseller.balPending') }}</div><div>{{ m(me.balances.pending_minor) }}</div></div>
           <div><div class="muted small">{{ t('reseller.balPaid') }}</div><div>{{ m(me.balances.paid_minor) }}</div></div>
+          <div v-if="me.balances.disputed_minor"><div class="muted small">{{ t('reseller.balDisputed') }}</div><div>{{ m(me.balances.disputed_minor) }}</div></div>
         </section>
         <section v-if="stats" class="section card pad grid">
           <div><div class="muted small">{{ t('reseller.today') }}</div><div>{{ t('reseller.ordersN', { n: stats.today_orders }) }}</div><div class="muted small">{{ m(stats.today_earnings_minor) }}</div></div>

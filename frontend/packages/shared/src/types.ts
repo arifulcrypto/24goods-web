@@ -248,6 +248,10 @@ export interface Order {
   delivery_eta_hours?: number | null
   /** ISO time (manual orders): paid_at + eta. */
   delivery_deadline?: string | null
+  /** v8: ISO time from which a paid, undelivered order may be reported as not received. */
+  not_received_from?: string | null
+  /** v8: what staff entered when confirming the money was sent back (refunded orders). */
+  refund_reference?: string | null
   /** issue 23: server-computed fee/total per ENABLED channel (pending orders only; else null). */
   channel_totals?: ChannelTotals | null
 }
@@ -473,7 +477,7 @@ export interface ResellerMe {
   contact: string | null
   payout_account: PayoutAccount | null
   signup_order_no: string | null
-  balances: { pending_minor: number; available_minor: number; paid_minor: number }
+  balances: { pending_minor: number; available_minor: number; paid_minor: number; disputed_minor?: number }
 }
 export interface ResellerApplyResult {
   reseller?: ResellerMe

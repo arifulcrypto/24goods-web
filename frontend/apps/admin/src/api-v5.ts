@@ -311,6 +311,8 @@ export interface AdminPayout {
   status: PayoutStatus
   account_snapshot: { method?: string; name?: string; account?: string } | null
   note: string | null
+  /** v8: markup of this reseller held back by open after-sales tickets */
+  disputed_minor?: number
   decided_at: string | null
   created_at: string
 }
