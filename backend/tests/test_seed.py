@@ -33,7 +33,7 @@ async def test_seed_populates_v3_demo_data_idempotently(env, monkeypatch):
         arts = (
             await db.execute(text("SELECT count(*) FROM articles WHERE kind='article'"))
         ).scalar()
-        assert pages == {"help", "rules", "after-sales", "terms", "privacy"} and arts == 3
+        assert pages == {"help", "rules", "after-sales", "terms", "privacy"} and arts == 9
         terms = (
             await db.execute(text("SELECT body_i18n FROM articles WHERE slug='terms'"))
         ).scalar()
@@ -41,6 +41,16 @@ async def test_seed_populates_v3_demo_data_idempotently(env, monkeypatch):
         assert "lawyer" not in terms["en"] and "律师" not in terms["zh-CN"]
         assert "Mainland China" in terms["en"] and "中国大陆" in terms["zh-CN"]
         assert terms["en"].startswith("_Effective date:")
+        # owner 2026-11-09: venue positioning, Singapore law, only brand + law + support email
+        assert "joint or several liability" in terms["en"] and "连带责任" in terms["zh-CN"]
+        assert "laws of the Republic of Singapore" in terms["en"] and "新加坡" in terms["zh-CN"]
+        privacy = (
+            await db.execute(text("SELECT body_i18n FROM articles WHERE slug='privacy'"))
+        ).scalar()
+        for body in (terms, privacy):
+            for word in ("Japan", "日本", "Cloudflare", "Google"):
+                assert word not in body["en"] and word not in body["zh-CN"], word
+            assert body["en"].rstrip().endswith("support@kesiv.com")
         ann = (
             await db.execute(
                 text("SELECT settings->'announcement' FROM tenants WHERE id=:t"), {"t": tid}
@@ -98,7 +108,7 @@ async def test_seed_prod_mode_creates_only_admin_and_content(env, monkeypatch):
         assert users == [("admin@kesiv.com", "admin")]
         for table in ("products", "card_stock", "conversations", "orders"):
             assert (await db.execute(text(f"SELECT count(*) FROM {table}"))).scalar() == 0  # noqa: S608
-        assert (await db.execute(text("SELECT count(*) FROM articles"))).scalar() == 8
+        assert (await db.execute(text("SELECT count(*) FROM articles"))).scalar() == 14
         # admin edits must survive a re-run
         await db.execute(
             text("UPDATE articles SET title_i18n='{\"en\":\"Edited\"}' WHERE slug='help'")
@@ -113,7 +123,7 @@ async def test_seed_prod_mode_creates_only_admin_and_content(env, monkeypatch):
     await seed.run(settings, url)
     async with env.owner_session(tid) as db:
         assert (await db.execute(text("SELECT count(*) FROM users"))).scalar() == 1
-        assert (await db.execute(text("SELECT count(*) FROM articles"))).scalar() == 8
+        assert (await db.execute(text("SELECT count(*) FROM articles"))).scalar() == 14
         assert (
             await db.execute(text("SELECT title_i18n->>'en' FROM articles WHERE slug='help'"))
         ).scalar() == "Edited"

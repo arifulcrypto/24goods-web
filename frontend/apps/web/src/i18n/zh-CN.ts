@@ -323,6 +323,16 @@ const zhCN: WebMessages = {
     views: '{n} 次阅读',
     published: '发布于 {date}',
     updated: '更新于 {date}',
+    guide: '使用指南',
+    guideHint: '购买、付款、发货与订单查询',
+    policies: '规则与政策',
+    categories: {
+      faq: '常见问题',
+      guide: '指南',
+      tutorial: '教程',
+      notice: '公告',
+    },
+    footer: '{brand} · 适用法律：新加坡法律 · {email}',
   },
   cart: {
     manage: '管理',

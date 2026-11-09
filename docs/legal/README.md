@@ -66,7 +66,38 @@ What protects this work is the license, enforceable terms, and the server-side l
 shipped to the browser — the card vault, the notify pipeline and the tenant isolation, which is
 where this project's real value already lives.
 
-## Terms of service and privacy policy (2026-11-09)
+## Policy pages v2 (2026-11-09, owner direction)
+
+Source: `backend/app/devtools/legal_content.py` (Terms, Privacy, After-sales, Platform rules) and
+`backend/app/devtools/help_content.py` (help guide + general help articles), EN + zh-CN.
+
+- **Positioning:** Kesiv is a venue/intermediary (listing, matching, communication, order
+  management, payment collection). The Seller of a listing is responsible for it; Kesiv assumes
+  no joint or several liability for products sold by Sellers. Where Kesiv itself is the Seller,
+  the Seller clauses apply to it in that capacity (keeps the text truthful while the operator also
+  sells).
+- **Governing law: Singapore** (courts of Singapore, exclusive; individual claims only, to the
+  extent permitted). Written to sit with Singapore's Electronic Transactions Act (electronic
+  contracts and records) and the Consumer Protection (Fair Trading) Act: no-return for virtual
+  goods is a change-of-mind exclusion; remedies for non-delivery / not-as-described stay, and
+  non-excludable rights are preserved.
+- **Payments:** described generically ("such as card processors, PayPal, Stripe, local e-wallets
+  and digital-asset payment services"), so adding a gateway needs no policy change.
+- **Privacy:** no hosting location, no vendor names, no technical measures, no single sign-in
+  provider ("third-party sign-in"). Categories, purposes, sharing, transfers, retention, rights.
+- **Disclosure:** each page ends with the brand, the governing law and support@kesiv.com only;
+  the web app shows the same line on Help and Me (hidden on white-label storefronts).
+- **After-sales:** default period one calendar month (matches the month-based default in the
+  subscriptions change); covered / not covered lists; replacement first, then service-period
+  extension, then (pro-rata for subscriptions) refund to the original method.
+
+Still recommended: a Singapore-qualified lawyer's review before relying on the text in a dispute.
+
+Live sites: pages are seeded once and never overwritten. Unedited pages (body identical to the
+previous seed) and missing help articles were updated on demo and prod via the audited admin
+content service; an admin-edited page is left alone.
+
+## Terms of service and privacy policy v1 (2026-11-09, superseded by v2 above)
 
 Source: `backend/app/devtools/legal_content.py` (EN + zh-CN), seeded as the `terms` and `privacy`
 pages. The owner approved replacing the "have a lawyer review this" template banner (#48 §5, #40).

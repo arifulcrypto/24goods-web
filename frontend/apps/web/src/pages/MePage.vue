@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { clearRecent, recentIds, type Locale, type ProductSummary } from '@24goods/shared'
 import { api } from '../api'
 import MiniStrip from '../components/MiniStrip.vue'
+import SiteFooter from '../components/SiteFooter.vue'
 import { useAuthStore } from '../stores/auth'
 import { useConversationsStore } from '../stores/conversations'
 import { useSiteStore } from '../stores/site'
@@ -171,6 +172,8 @@ function secureAccount() {
     <div v-if="auth.user" class="section">
       <van-button block round plain type="danger" @click="logout">{{ t('me.logout') }}</van-button>
     </div>
+
+    <SiteFooter />
 
     <van-popup v-model:show="editShow" position="bottom" round closeable safe-area-inset-bottom teleport="body" class="buy-sheet">
       <form class="sheet" @submit.prevent="saveProfile">
