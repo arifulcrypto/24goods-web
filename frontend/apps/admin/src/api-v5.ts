@@ -177,7 +177,7 @@ export type SiteSectionPatch = Partial<{ [K in keyof SiteSections]: Partial<Site
   Partial<{
     /** null resets that template to its default */
     email_templates: Partial<Record<keyof EmailTemplates, EmailTemplate | null>>
-    announcement: { enabled: boolean; title_i18n: I18nText; body_i18n: I18nText }
+    announcement: { enabled: boolean; display?: 'modal' | 'banner' | 'both'; require_ack?: boolean; title_i18n: I18nText; body_i18n: I18nText }
     after_sales_default_hours: number
     after_sales_default: { unit: 'month' | 'hour'; value: number }
     auto_confirm_hours: { manual: number; auto_card: number }
@@ -350,6 +350,8 @@ export interface OrderV5Fields {
   overdue_manual?: boolean
   delivery_eta_hours?: number | null
   delivery_deadline?: string | null
+  /** v9 §1.3: payment attempts whose outcome is unknown; staff can resolve them. */
+  unresolved_attempts?: { id: string; status: string; created_at: string }[]
 }
 export type AdminOrderV5 = AdminOrder & Partial<OrderV5Fields>
 export type OrderDetailV5 = Order & Partial<OrderV5Fields>

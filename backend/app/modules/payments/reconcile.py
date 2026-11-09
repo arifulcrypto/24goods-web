@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import inspect, or_, select
+from sqlalchemy import and_, inspect, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import tenant_session
@@ -106,8 +106,13 @@ async def requery_attempts(
     tid: uuid.UUID,
     no: str,
     sink: list[NotifyOutcome] | None = None,
+    *,
+    only_failed: bool = False,
 ) -> tuple[NotifyOutcome | None, bool]:
     """Returns (settled outcome, has durable EPay history). Failure never implies unpaid.
+
+    ``only_failed`` is the safety net for attempts closed as failed (gateway unreachable, or
+    released by staff): it re-queries just those, in case money arrived anyway.
 
     ``sink``, when given, receives each outcome the moment it commits, so a caller that cancels
     this coroutine (asyncio.wait_for) still holds what was already settled (#33)."""
@@ -120,7 +125,10 @@ async def requery_attempts(
                 PaymentAttempt.provider_id.is_not(None),
                 # An already-settled original is decided: re-querying it on every retry only
                 # replays the duplicate-payment audit trail and re-broadcasts the same order.
-                PaymentAttempt.status != "settled",
+                # failed = never dispatched (gateway unreachable) or resolved not-paid by staff
+                PaymentAttempt.status == "failed"
+                if only_failed
+                else PaymentAttempt.status.notin_(("settled", "failed")),
             )
             .order_by(PaymentAttempt.created_at)
             .limit(11)
@@ -190,6 +198,67 @@ async def requery_attempts(
     return await merge_outcomes(db, tid, outcomes), bool(refs)
 
 
+RECHECK_WINDOW = timedelta(hours=24)
+RECHECK_EVERY = timedelta(minutes=10)
+RECHECK_REASONS = ("gateway_unreachable", "resolved_not_paid")
+
+
+async def recheck_failed(res: Resources, db: AsyncSession, tid: uuid.UUID, now: datetime) -> int:
+    """Safety net: a failed attempt younger than 24 h is re-queried at most every 10 minutes.
+
+    'Failed' is a conclusion drawn without gateway evidence (never dispatched / staff judgement).
+    A positive re-query settles exactly like a notify: pending -> paid, cancelled/expired ->
+    manual_review. Returns the number of settled payables."""
+    rows = list(
+        await db.execute(
+            select(PaymentAttempt.local_ref, PaymentAttempt.id)
+            .where(
+                PaymentAttempt.tenant_id == tid,
+                PaymentAttempt.status == "failed",
+                PaymentAttempt.provider_id.is_not(None),
+                PaymentAttempt.created_at > now - RECHECK_WINDOW,
+                PaymentAttempt.data["reason"].as_string().in_(RECHECK_REASONS),
+                or_(
+                    PaymentAttempt.checked_at.is_(None),
+                    PaymentAttempt.checked_at < now - RECHECK_EVERY,
+                ),
+            )
+            .order_by(PaymentAttempt.checked_at.asc().nullsfirst())
+            .limit(8)
+        )
+    )
+    settled = 0
+    for no in dict.fromkeys(r[0] for r in rows):
+        outcome: NotifyOutcome | None = None
+        try:
+            outcome, _ = await asyncio.wait_for(
+                requery_attempts(db, res, tid, no, only_failed=True), timeout=10
+            )
+        except Exception as exc:
+            if not isinstance(exc, (Unavailable, asyncio.TimeoutError)):
+                log.error("failed-attempt recheck failed for %s", no, exc_info=exc)
+            await db.rollback()
+            outcome = getattr(exc, "settled", None)
+        if outcome is not None:
+            try:
+                await emit_outcome(res, db, outcome)
+                settled += 1
+            except Exception:
+                log.warning("recheck settlement broadcast skipped for %s", no)
+                await db.rollback()
+        # stamp the (still failed) attempts so the next look is 10 minutes away
+        for row in await db.scalars(
+            select(PaymentAttempt).where(
+                PaymentAttempt.tenant_id == tid,
+                PaymentAttempt.local_ref == no,
+                PaymentAttempt.status == "failed",
+            )
+        ):
+            row.checked_at = datetime.now(timezone.utc)
+        await db.commit()
+    return settled
+
+
 async def run(res: Resources) -> int:
     """At most 20 invoice groups per tenant/tick, backed off per durable attempt."""
     async with tenant_session(res.maker, None) as db:
@@ -199,20 +268,35 @@ async def run(res: Resources) -> int:
     if tids:
         offset = int(await res.redis.incr("sec:reconcile-tenant")) % len(tids)
         tids = tids[offset:] + tids[:offset]
-    cutoff = datetime.now(timezone.utc) - timedelta(minutes=2)
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(minutes=2)
+    slow_cutoff = now - timedelta(hours=1)
     for tid in tids:
         if time.monotonic() - started >= 20:
             break
         async with tenant_session(res.maker, tid) as db:
+            await alert_stale_unknown(res, db, tid, now)
+            total += await recheck_failed(res, db, tid, now)
             refs = list(
                 await db.scalars(
                     select(PaymentAttempt.local_ref)
                     .where(
                         PaymentAttempt.tenant_id == tid,
                         PaymentAttempt.status.in_(("ready", "preparing", "unknown", "superseded")),
+                        # back off: every 2 min for the first hour of an attempt's life, then hourly
                         or_(
-                            PaymentAttempt.checked_at.is_(None), PaymentAttempt.checked_at < cutoff
+                            PaymentAttempt.checked_at.is_(None),
+                            and_(
+                                PaymentAttempt.checked_at < cutoff,
+                                PaymentAttempt.created_at >= slow_cutoff,
+                            ),
+                            and_(
+                                PaymentAttempt.checked_at < slow_cutoff,
+                                PaymentAttempt.created_at < slow_cutoff,
+                            ),
                         ),
+                        # an alerted-out unknown attempt is staff's now; stop polling forever
+                        PaymentAttempt.data["stale_alerted"].as_string().is_(None),
                     )
                     .order_by(
                         PaymentAttempt.checked_at.asc().nullsfirst(), PaymentAttempt.created_at
@@ -264,6 +348,63 @@ async def run(res: Resources) -> int:
                     row.attempts += 1
                 await db.commit()
     return total
+
+
+STALE_UNKNOWN = timedelta(hours=24)
+
+
+async def alert_stale_unknown(
+    res: Resources, db: AsyncSession, tid: uuid.UUID, now: datetime
+) -> int:
+    """One high-severity operation event + staff notification per attempt still ``unknown`` after
+    24 h (instead of re-querying it forever). Flagged in ``data`` so it fires once."""
+    from app.core import notify_tg
+    from app.modules.operations.service import record_event
+
+    rows = list(
+        await db.scalars(
+            select(PaymentAttempt)
+            .where(
+                PaymentAttempt.tenant_id == tid,
+                PaymentAttempt.status == "unknown",
+                PaymentAttempt.created_at < now - STALE_UNKNOWN,
+                PaymentAttempt.data["stale_alerted"].as_string().is_(None),
+            )
+            .order_by(PaymentAttempt.created_at)
+            .limit(20)
+            .with_for_update(skip_locked=True)
+        )
+    )
+    alerts: list[str] = []
+    for att in rows:
+        att.data = {**(att.data or {}), "stale_alerted": now.isoformat()}
+        await record_event(
+            db,
+            tenant_id=tid,
+            environment=res.settings.env,
+            family="payment",
+            action="payment.attempt_stale_unknown",
+            outcome="unknown",
+            reason="unresolved_24h",
+            resource_id=str(att.id),
+            severity="critical",
+        )
+        alerts.append(att.local_ref)
+    if rows:
+        await db.commit()
+        for no in alerts:
+            notify_tg.notify_bg(
+                res,
+                tid,
+                "payment_review",
+                [
+                    f"Payment attempt for {no} has been unresolved for 24 h",
+                    "Check the gateway console",
+                ],
+                link=notify_tg.admin_link(res, "orders"),
+                once=(f"stale_unknown:{no}", 7 * 86400),
+            )
+    return len(rows)
 
 
 async def merge_outcomes(

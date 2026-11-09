@@ -103,6 +103,8 @@ async def test_announcement_version_bumps_on_edit(env):
         "title": "你好",
         "body_html": "<p>请阅读</p>\n",
         "enabled": True,
+        "display": "modal",
+        "require_ack": False,
     }
     assert pub["after_sales_default_hours"] == 48 and pub["support_hours"] == "9-18 点"
     # re-saving identical content does not bump; editing the body does

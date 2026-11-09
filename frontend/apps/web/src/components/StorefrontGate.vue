@@ -5,20 +5,19 @@ import { useRoute } from 'vue-router'
 import { client } from '../api'
 import { completeChallenge, siteAccessBlocked, siteAccessCleared, type Challenge } from '../lib/securityChallenge'
 import { toastError } from '../ui'
+import { gateView } from '../lib/siteGate'
 
 const { t } = useI18n()
 const route = useRoute()
-/** Catalog routes: the whole page is gated data, so the gate replaces the page. */
-const protectedRoute = computed(() => ['home', 'product', 'buy', 'search', 'help', 'article'].includes(String(route.name)))
 const blocked = ref(true)
 const busy = ref(false)
 const failed = ref(false)
 /**
- * Elsewhere (account, cart, chat, orders) only some widgets read gated data and login/order/payment
- * recovery must keep working, so a 428 there shows an inline banner instead (issue 48 §1.2).
+ * Every route is gated (v9 §7). A 428 raised mid-session, after the visitor was cleared, shows a
+ * docked banner instead so in-progress work survives; the next navigation gates the whole page.
  */
-const hitOutside = ref(false)
-const banner = computed(() => blocked.value && hitOutside.value && !protectedRoute.value)
+const midSession = ref(false)
+const view = computed(() => gateView({ blocked: blocked.value, midSession: midSession.value }))
 
 async function check() {
   try {
@@ -38,7 +37,7 @@ async function clear() {
     await client.post('/security/site-clearance', await completeChallenge(ch))
     await check()
     if (!blocked.value) {
-      hitOutside.value = false
+      midSession.value = false
       siteAccessCleared.value++ // views that hit the 428 retry their reads
     }
   } catch (e) {
@@ -48,7 +47,7 @@ async function clear() {
   }
 }
 function visible() {
-  if (!document.hidden && protectedRoute.value) void check()
+  if (!document.hidden) void check()
 }
 onMounted(() => {
   void check()
@@ -57,7 +56,7 @@ onMounted(() => {
 watch(siteAccessBlocked, (blockedByServer) => {
   if (!blockedByServer) return
   blocked.value = true
-  if (!protectedRoute.value) hitOutside.value = true
+  midSession.value = true
   siteAccessBlocked.value = false
   void check()
 })
@@ -69,14 +68,14 @@ onBeforeUnmount(() => {
 watch(
   () => route.fullPath,
   () => {
-    hitOutside.value = false
-    if (protectedRoute.value) void check()
+    midSession.value = false
+    void check()
   },
 )
 </script>
 
 <template>
-  <section v-if="blocked && protectedRoute" class="visit-gate">
+  <section v-if="view === 'gate'" class="visit-gate">
     <h1>{{ t('challenge.visit') }}</h1>
     <p>{{ t('challenge.visitNote') }}</p>
     <van-button v-if="!failed" type="primary" :loading="busy" @click="clear">{{ t('challenge.verify') }}</van-button>
@@ -84,7 +83,7 @@ watch(
   </section>
   <template v-else>
     <!-- docked above the tab bar: a fixed top nav bar would cover an in-flow banner -->
-    <div v-if="banner" class="dock visit-banner" role="alert">
+    <div v-if="view === 'banner'" class="dock visit-banner" role="alert">
       <span>{{ t('challenge.visitBanner') }}</span>
       <van-button size="small" type="primary" round :loading="busy" class="visit-btn" @click="clear">{{ t('challenge.verify') }}</van-button>
     </div>

@@ -89,3 +89,59 @@ export function dismissAnnouncement(version: string | number, s: Store | null = 
     /* ignore */
   }
 }
+
+/** Announcement banner dismissal and acknowledgement, per version (review-v9 §8). */
+export const ANNOUNCE_BANNER_KEY = 'kesiv.announce.banner'
+export const ANNOUNCE_ACK_KEY = 'kesiv.announce.ack'
+function readVersion(key: string, s: Store | null): number {
+  try {
+    const n = Number(s?.getItem(key))
+    return Number.isFinite(n) && n > 0 ? n : 0
+  } catch {
+    return 0
+  }
+}
+function writeVersion(key: string, version: string | number, s: Store | null): void {
+  try {
+    const n = Number(version)
+    if (Number.isFinite(n) && n > readVersion(key, s)) s?.setItem(key, String(n))
+  } catch {
+    /* ignore */
+  }
+}
+export const isAnnouncementBannerDismissed = (version: string | number, s: Store | null = store()): boolean =>
+  readVersion(ANNOUNCE_BANNER_KEY, s) >= Number(version)
+export const dismissAnnouncementBanner = (version: string | number, s: Store | null = store()): void =>
+  writeVersion(ANNOUNCE_BANNER_KEY, version, s)
+export const localAnnouncementAck = (s: Store | null = store()): number => readVersion(ANNOUNCE_ACK_KEY, s)
+export const rememberAnnouncementAck = (version: string | number, s: Store | null = store()): void =>
+  writeVersion(ANNOUNCE_ACK_KEY, version, s)
+
+export interface AnnouncementPlan {
+  /** pop-up shown */
+  modal: boolean
+  /** a close button / overlay dismissal is allowed (false while an acknowledgement is required) */
+  closable: boolean
+  /** dismissible strip on the home page */
+  banner: boolean
+  /** the legacy always-visible collapsible notice bar (display = modal only) */
+  noticeBar: boolean
+}
+/**
+ * What to show for an announcement. `acked` is the highest version this visitor acknowledged
+ * (local storage for guests, the larger of local and server for signed-in users); `dismissed` is
+ * the legacy once-per-version pop-up dismissal.
+ */
+export function announcementPlan(
+  a: { version: string | number; display?: 'modal' | 'banner' | 'both'; require_ack?: boolean },
+  seen: { dismissed: boolean; bannerDismissed: boolean; acked: number },
+): AnnouncementPlan {
+  const display = a.display ?? 'modal'
+  const version = Number(a.version)
+  const banner = display !== 'modal' && !seen.bannerDismissed
+  if (a.require_ack) {
+    // mandatory: a pop-up without a close button until acknowledged, whatever `display` says
+    return { modal: !(seen.acked >= version), closable: false, banner, noticeBar: display === 'modal' }
+  }
+  return { modal: display !== 'banner' && !seen.dismissed, closable: true, banner, noticeBar: display === 'modal' }
+}

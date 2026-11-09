@@ -138,6 +138,9 @@ export function createBuyerApi(c: ApiClient) {
         return c.request<User>('PUT', '/me/avatar', { form: fd })
       },
       removeAvatar: () => c.delete<User>('/me/avatar'),
+      /** v9 §8: highest announcement version this user acknowledged (follows them across devices). */
+      announcementAck: () => c.get<{ version: number }>('/me/announcement-ack'),
+      acknowledgeAnnouncement: (version: number) => c.post<{ version: number }>('/me/announcement-ack', { version }),
     },
     categories: () => c.get<Category[]>('/categories'),
     products: (q: { q?: string; category?: string; page?: number; page_size?: number }) =>
@@ -210,6 +213,8 @@ export function createBuyerApi(c: ApiClient) {
         c.post<{ pay_url: string }>(`/orders/${seg(id)}/pay`, { channel }),
       reveal: (id: string) => c.post<{ secrets: string[]; cards: { id: string; code: string }[] }>(`/orders/${seg(id)}/reveal`),
       confirm: (id: string) => c.post<Order>(`/orders/${seg(id)}/confirm`),
+      /** v9 §6: remind the seller about a paid manual order (30 min cooldown, max 3). */
+      expedite: (id: string) => c.post<Order>(`/orders/${seg(id)}/expedite`),
       afterSales: (id: string, b: AfterSalesInput) => c.post<AfterSales>(`/orders/${seg(id)}/after-sales`, b),
     },
     /** v5.2 §7: data of the USDT pay page (owner only; 404 when no attempt exists). */

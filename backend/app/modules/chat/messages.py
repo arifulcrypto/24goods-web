@@ -70,6 +70,7 @@ SYSTEM_TEXT: dict[str, str] = {
     "manual_review": "This order needs a manual review by our team.",
     "price_changed": "The order price was changed to {amount} {currency}.",
     "order_cancelled": "The order was cancelled.",
+    "delivery_expedite": "The buyer asks the seller to ship this order as soon as possible.",
     "quote_accepted": "Quote accepted. An order was created.",
     "quote_withdrawn": "The quote was withdrawn.",
     "agent_joined": "{name} joined the conversation.",

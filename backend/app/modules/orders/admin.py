@@ -15,7 +15,17 @@ from app.core.errors import InvalidState, NotFound, OutOfStock, Validation
 from app.core.money import MoneyError, fmt, parse_amount
 from app.core.resources import Resources
 from app.core.settings_v5 import section
-from app.models import Attachment, Checkout, Message, Order, OrderEvent, Outbox, Product, User
+from app.models import (
+    Attachment,
+    Checkout,
+    Message,
+    Order,
+    OrderEvent,
+    Outbox,
+    PaymentAttempt,
+    Product,
+    User,
+)
 from app.modules.aftersales import service as aftersales_svc
 from app.modules.catalog.service import escape_like
 from app.modules.chat.messages import post_system
@@ -415,6 +425,29 @@ async def order_detail(
             }
             for o in siblings
         ]
+    refs = [order.order_no]
+    if order.checkout_id is not None:
+        co_no = await db.scalar(
+            select(Checkout.checkout_no).where(
+                Checkout.id == order.checkout_id, Checkout.tenant_id == order.tenant_id
+            )
+        )
+        if co_no:
+            refs.append(co_no)
+    # an attempt whose outcome is unknown blocks pay/cancel until staff resolve it (v9 §1.3)
+    unresolved = await db.scalars(
+        select(PaymentAttempt)
+        .where(
+            PaymentAttempt.tenant_id == order.tenant_id,
+            PaymentAttempt.local_ref.in_(refs),
+            PaymentAttempt.status.in_(("unknown", "preparing")),
+        )
+        .order_by(PaymentAttempt.created_at)
+        .limit(10)
+    )
+    view["unresolved_attempts"] = [
+        {"id": str(a.id), "status": a.status, "created_at": iso(a.created_at)} for a in unresolved
+    ]
     pay = await payment_for_order(db, order)
     view["payment"] = (
         {

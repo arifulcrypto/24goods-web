@@ -579,6 +579,8 @@ async def pay_checkout(
             )
         await usdt_svc.drop_attempt(res, co.checkout_no)
     co.channel = channel
+    for o in orders:  # member orders show the chosen channel while payment is pending (v9 §3)
+        o.channel = channel
     name = orders[0].title if len(orders) == 1 else f"{orders[0].title} +{len(orders) - 1}"
     if usdt:
         no, minor, cur = co.checkout_no, co.amount_minor, co.currency

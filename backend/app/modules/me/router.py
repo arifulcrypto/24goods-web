@@ -4,14 +4,18 @@ import uuid
 
 from fastapi import APIRouter, Depends, File, Request, Response, UploadFile
 from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.audit import audit
 from app.core.deps import client_ip, current_user, get_db, get_res
-from app.core.errors import NotFound
+from app.core.errors import NotFound, Validation
 from app.core.ratelimit import enforce
 from app.core.resources import Resources
 from app.models import User
 from app.modules.common.views import user_view
+from app.modules.content.site import tenant_settings
 from app.modules.me import service
 from app.modules.me.schemas import CredentialsIn, DeleteIn, ProfileIn
 from app.modules.uploads.avatar import avatar_from_upload, avatar_mime
@@ -29,6 +33,49 @@ async def patch_me(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     return user_view(await service.update_profile(db, user, body, client_ip(request)))
+
+
+class AnnouncementAckIn(BaseModel):
+    version: int = Field(ge=1, le=1_000_000)
+
+
+@router.get("/announcement-ack")
+async def get_announcement_ack(user: User = Depends(current_user)) -> dict:
+    return {"version": int(user.announcement_ack or 0)}
+
+
+@router.post("/announcement-ack")
+async def post_announcement_ack(
+    body: AnnouncementAckIn,
+    request: Request,
+    user: User = Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+    res: Resources = Depends(get_res),
+) -> dict:
+    """The buyer confirmed the mandatory announcement ``version`` (follows them across devices).
+    Only the tenant's current or an earlier version can be acknowledged; never decreases."""
+    await enforce(res.redis, "me:announcement-ack", str(user.id), 30, 3600)
+    ts = await tenant_settings(db, user.tenant_id)
+    current = int((ts.get("announcement") or {}).get("version") or 0)
+    if body.version > current:
+        raise Validation("Unknown announcement version")
+    row = await db.scalar(
+        select(User).where(User.id == user.id, User.tenant_id == user.tenant_id).with_for_update()
+    )
+    if row is not None and body.version > int(row.announcement_ack or 0):
+        row.announcement_ack = body.version
+        await audit(
+            db,
+            tenant_id=user.tenant_id,
+            action="announcement.acknowledged",
+            actor_id=user.id,
+            actor_role=user.role,
+            target=f"user:{user.id}",
+            ip=client_ip(request),
+            detail={"version": body.version},
+        )
+        await db.commit()
+    return {"version": int(row.announcement_ack if row else 0)}
 
 
 @router.post("/credentials")

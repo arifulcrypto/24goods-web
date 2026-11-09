@@ -75,9 +75,14 @@ def admin_link(res: Resources, path: str) -> str:
     return f"{res.settings.public_base_url.rstrip('/')}/admin/{path.lstrip('/')}"
 
 
-def build_text(event: str, lines: list[str], link: str | None = None) -> str:
+def build_text(
+    event: str, lines: list[str], link: str | None = None, label: str | None = None
+) -> str:
     """HTML message: bold label, escaped body lines, optional link."""
-    parts = [f"<b>{html.escape(LABELS.get(event, event))}</b>", *(html.escape(x) for x in lines)]
+    parts = [
+        f"<b>{html.escape(label or LABELS.get(event, event))}</b>",
+        *(html.escape(x) for x in lines),
+    ]
     if link:
         parts.append(html.escape(link))
     return "\n".join(parts)
@@ -144,8 +149,9 @@ def notify_bg(
     *,
     link: str | None = None,
     once: tuple[str, int] | None = None,
+    label: str | None = None,
 ) -> None:
-    spawn(notify(res, tenant_id, event, build_text(event, lines, link), once=once))
+    spawn(notify(res, tenant_id, event, build_text(event, lines, link, label), once=once))
 
 
 async def send_test(res: Resources, tenant_id: uuid.UUID) -> tuple[bool, str | None]:
@@ -181,6 +187,7 @@ def order_event(
     event: str,
     extra: list[str] | None = None,
     once_suffix: str = "",
+    label: str | None = None,
 ) -> None:
     """Notify about one order (plain attributes only: safe to call after commit)."""
     notify_bg(
@@ -190,6 +197,7 @@ def order_event(
         [*order_lines(order), *(extra or [])],
         link=admin_link(res, "orders"),
         once=(f"{event}:{order.id}{once_suffix}", 7 * 86400),
+        label=label,
     )
 
 
@@ -221,8 +229,18 @@ def outcome_events(
 def _outcome_events(res: Resources, orders: list[Any]) -> None:
     for o in orders:
         if o.status == "paid":
-            mode = "manual delivery" if o.delivery_mode == "manual" else "auto delivery"
-            order_event(res, o, "order_paid", [mode] if o.kind == "goods" else [o.kind])
+            if o.delivery_mode == "manual" and o.kind == "goods":
+                # one notice, marked urgent: staff must ship by hand (no second alert)
+                order_event(
+                    res,
+                    o,
+                    "order_paid",
+                    ["manual delivery: ship now"],
+                    label="URGENT: manual order paid",
+                )
+            else:
+                mode = "manual delivery" if o.delivery_mode == "manual" else "auto delivery"
+                order_event(res, o, "order_paid", [mode] if o.kind == "goods" else [o.kind])
             if o.delivery_mode != "manual" and o.product_id is not None:
                 spawn(low_stock_check(res, o.tenant_id, o.product_id, o.qty, o.title))
         elif o.status == "manual_review":

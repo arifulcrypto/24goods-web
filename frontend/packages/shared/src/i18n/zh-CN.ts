@@ -69,6 +69,7 @@ const zhCN: MessageSchema = {
     ip_blocked: '访问被拒绝',
     fee_channel_mismatch: '手续费已变化，请重试',
     channel_unavailable: '该支付方式暂不可用，请选择其他方式',
+    channel_unreachable: '该支付方式当前暂不可用，请选择其他支付方式。',
     too_many_unpaid: '未支付订单过多，请先支付或取消一个，或等待其过期',
     buyer_input_too_long: '下单信息过长，请精简后重试',
     pay_via_checkout: '该订单属于合并结算',
@@ -268,6 +269,7 @@ const zhCN: MessageSchema = {
     },
     system: {
       price_changed: '价格已修改为 {amount}',
+      delivery_expedite: '买家请求卖家尽快发货',
       delivered: '订单已发货',
       paid: '已收到付款',
       agent_joined: '{name} 加入了会话',

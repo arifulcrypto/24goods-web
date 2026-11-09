@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import ForeignKey, String, Text
+from sqlalchemy import ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, created_at, updated_at, uuid_pk
@@ -25,6 +25,7 @@ class User(Base):
     handle: Mapped[str | None] = mapped_column(String(16))
     google_sub: Mapped[str | None] = mapped_column(String(64))
     avatar_key: Mapped[str | None] = mapped_column(String(32))
+    announcement_ack: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     last_login_at: Mapped[datetime | None]
     suspended_at: Mapped[datetime | None]
     suspended_until: Mapped[datetime | None]

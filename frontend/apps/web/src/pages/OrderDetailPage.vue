@@ -153,13 +153,20 @@ const channelLabel = computed(() => {
   return te(`order.channels.${c}`) ? t(`order.channels.${c}`) : c
 })
 
+/** v9 §1: the chosen method could not be reached; nothing was charged, the buyer picks another. */
+const unreachable = ref(false)
+const noteUnreachable = (e: unknown) => {
+  unreachable.value = isApiError(e) && e.code === 'channel_unreachable'
+}
 async function pay() {
   const o = order.value
   if (!o || paying.value) return
   paying.value = true
+  unreachable.value = false
   try {
     await payOrder(o)
-  } catch {
+  } catch (e) {
+    noteUnreachable(e)
     void fetchOrder(true)
   } finally {
     paying.value = false
@@ -169,15 +176,34 @@ async function payTogether() {
   const no = order.value?.checkout_no
   if (!no || paying.value) return
   paying.value = true
+  unreachable.value = false
   try {
     await payCheckout(no)
-  } catch {
+  } catch (e) {
+    noteUnreachable(e)
     void fetchOrder(true)
   } finally {
     paying.value = false
   }
 }
 const cancelling = ref(false)
+// ---- v9 §6: remind the seller about a paid manual order (server: 30 min cooldown, max 3) ----
+const expediting = ref(false)
+const canExpedite = computed(() => order.value?.status === 'paid' && order.value.delivery_mode === 'manual')
+async function expedite() {
+  const o = order.value
+  if (!o || expediting.value) return
+  expediting.value = true
+  try {
+    order.value = await api.orders.expedite(o.id)
+    showSuccessToast(t('order.expedite.sent'))
+  } catch (e) {
+    if (isApiError(e) && (e.status === 429 || e.code === 'expedite_limit')) showToast(t('order.expedite.limit'))
+    else toastError(e)
+  } finally {
+    expediting.value = false
+  }
+}
 async function cancelIt() {
   const o = order.value
   if (!o || cancelling.value) return
@@ -348,6 +374,11 @@ function gotCode() {
         <div v-else-if="hint" class="status-sub">{{ hint }}</div>
       </section>
 
+      <section v-if="canExpedite" class="section card pad expedite">
+        <van-button block round plain type="primary" :loading="expediting" @click="expedite">{{ t('order.expedite.button') }}</van-button>
+        <p class="muted small">{{ t('order.expedite.hint') }}</p>
+      </section>
+
       <section v-if="stepIndex >= 0" class="section card steps">
         <van-steps :active="stepIndex">
           <van-step>{{ t('order.steps.placed') }}</van-step>
@@ -368,6 +399,9 @@ function gotCode() {
           <span v-if="order.quote_id" class="muted small">{{ t('order.fromQuote') }}</span>
         </div>
         <PayChannelPicker v-if="order.status === 'pending_payment'" />
+        <p v-if="unreachable && order.status === 'pending_payment'" class="reach-note" role="alert">
+          {{ t('errors.channel_unreachable') }}
+        </p>
         <FeeLines
           v-if="order.subtotal && order.fee"
           class="o-fees"
@@ -528,6 +562,17 @@ function gotCode() {
 </template>
 
 <style scoped>
+.reach-note {
+  margin: 8px 0 0;
+  padding: 8px 12px;
+  font-size: 13px;
+  border-radius: var(--radius-m);
+  background: var(--c-accent-soft);
+  color: var(--c-accent-ink);
+}
+.expedite .muted {
+  margin: 8px 0 0;
+}
 .page {
   min-height: 100vh;
   padding-bottom: calc(var(--safe-bottom) + 16px);

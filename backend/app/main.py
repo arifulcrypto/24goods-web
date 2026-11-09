@@ -30,6 +30,7 @@ from app.modules.admin.blocking import router as admin_blocking_router
 from app.modules.admin.categories import router as admin_categories_router
 from app.modules.admin.importer import router as admin_import_router
 from app.modules.admin.payment_gateways import router as payment_gateways_router
+from app.modules.admin.payment_ops import router as payment_ops_router
 from app.modules.admin.router import router as admin_router
 from app.modules.admin.settings import router as admin_settings_router
 from app.modules.admin.tokens import router as admin_tokens_router
@@ -130,6 +131,7 @@ async def _expiry_loop(res: Resources) -> None:
 def api_router() -> APIRouter:
     r = APIRouter(prefix="/api/v1")
     r.include_router(payment_gateways_router)
+    r.include_router(payment_ops_router)
     r.include_router(epay_page_router)
     r.include_router(operations_router)
     for sub in (
