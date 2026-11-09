@@ -4,6 +4,16 @@ Update this file in every PR. Phases are defined in [review-v2.md §8](review-v2
 
 ## Current state — hand-off (read this first in a new session)
 
+**Production deployed 2026-11-09 01:30 UTC: `a8160cb`** (#50 + #51, owner-approved) from `e1fb9e7`;
+no migrations. Pre-deploy backup with the installed v1 script, sha256-verified off-host copy in
+`/root/kesiv-backups/predeploy-20261109T012730Z/`, `pg_restore --list` OK (40 tables). Rollback:
+retag `ghcr.io/arifulcrypto/goods24-{api,web}:rollback-e1fb9e7` to `:main` and `up -d`. Smoke all
+pass; api->BEpusdt 200. Demo also on `a8160cb`.
+
+**Legal text (2026-11-09, `docs/legal-terms-privacy`):** real Terms of service + Privacy policy
+replace the template banner (#48 §5, #40); see `docs/legal/README.md` for the approach and the
+open governing-law decision.
+
 **CI/local speed-up (2026-11-09, `ci/faster-pipeline`).** Measured on its own PR run: backend tests 616 s -> 107 s. Before: ~16 min, backend pytest
 616 s on the critical path, then image builds waited on it (web 119 s, mostly a single-threaded
 xcaddy compile), then E2E. Changes:

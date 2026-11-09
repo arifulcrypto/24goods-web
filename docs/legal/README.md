@@ -65,3 +65,24 @@ from diagnosing a customer's payment problem.
 What protects this work is the license, enforceable terms, and the server-side logic that is never
 shipped to the browser — the card vault, the notify pipeline and the tenant isolation, which is
 where this project's real value already lives.
+
+## Terms of service and privacy policy (2026-11-09)
+
+Source: `backend/app/devtools/legal_content.py` (EN + zh-CN), seeded as the `terms` and `privacy`
+pages. The owner approved replacing the "have a lawyer review this" template banner (#48 §5, #40).
+The text favours the operator and sellers within what consumer law allows: delivery is final once
+made (immediate-delivery consent), after-sales is the single remedy channel, chargebacks without
+using it carry consequences, crypto payment errors sit with the sender, liability is capped at
+the order price, and logs/chat/delivery records are evidence. Clauses that cannot be contracted
+out of are expressly preserved, because an overreaching clause tends to be struck down whole.
+
+The privacy policy lists only what the code does. Keep it in step: buyer order information and
+manual delivery text are stored in plaintext today (#8), and backups are not yet encrypted (#28).
+Update the policy when those land.
+
+Open owner decision: §17 names "the place where the Operator is established" as governing law
+and venue. Replace it with a specific jurisdiction once the operating entity is fixed. A local
+lawyer's review is still recommended before relying on the text in a dispute.
+
+Live sites: pages are seeded once and never overwritten, so a change to this file needs the page
+edited in Admin -> Articles (or the same PATCH via the admin API) on each deployment.

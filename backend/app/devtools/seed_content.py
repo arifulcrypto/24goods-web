@@ -4,8 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-TEMPLATE_EN = "> **Template — have it reviewed by a lawyer before launch.**\n\n"
-TEMPLATE_ZH = "> **模板 — 上线前请务必由律师审阅。**\n\n"
+from app.devtools.legal_content import PRIVACY_EN, PRIVACY_ZH, TERMS_EN, TERMS_ZH
 
 PAGES: list[dict[str, Any]] = [
     {
@@ -101,51 +100,12 @@ PAGES: list[dict[str, Any]] = [
     {
         "slug": "terms",
         "title": {"en": "Terms of service", "zh-CN": "服务条款"},
-        "body": {
-            "en": TEMPLATE_EN
-            + (
-                "## 1. Service\n\nWe operate a marketplace for virtual goods and digital "
-                "services.\n\n## 2. Accounts\n\nYou are responsible for activity under your "
-                "account, including instant accounts.\n\n## 3. Payments and refunds\n\n"
-                "Payments are processed by third-party providers. Refunds follow the "
-                "after-sales policy.\n\n## 4. Prohibited use\n\nFraud, resale of stolen goods "
-                "and abuse of the service are prohibited.\n\n## 5. Liability\n\nTo the extent "
-                "permitted by law, our liability is limited to the price paid."
-            ),
-            "zh-CN": TEMPLATE_ZH
-            + (
-                "## 1. 服务内容\n\n本平台提供虚拟商品与数字服务交易。\n\n## 2. 账号\n\n您需对账号下的"
-                "所有行为负责，包括临时账号。\n\n## 3. 支付与退款\n\n支付由第三方服务商处理，退款依据"
-                "售后政策。\n\n## 4. 禁止行为\n\n禁止欺诈、销售来源不明商品及滥用服务。\n\n## 5. 责任"
-                "限制\n\n在法律允许的范围内，我们的责任以您支付的价款为限。"
-            ),
-        },
+        "body": {"en": TERMS_EN, "zh-CN": TERMS_ZH},
     },
     {
         "slug": "privacy",
         "title": {"en": "Privacy policy", "zh-CN": "隐私政策"},
-        "body": {
-            "en": TEMPLATE_EN
-            + (
-                "## What we collect\n\nAccount identifiers (email or generated handle), order "
-                "history, chat messages and technical logs needed to run the service.\n\n"
-                "## What we do not do\n\nWe never store card codes in plaintext and we do not "
-                "load third-party trackers or CDNs in the storefront.\n\n## Your choices\n\n"
-                "You can edit your profile or delete your account in **Me**. Deleting removes "
-                "personal data: your chat messages are redacted, files you uploaded are deleted and "
-                "after-sales descriptions are cleared. Orders are kept in anonymised form for "
-                "accounting. Security audit logs, which include IP addresses, are retained "
-                "for fraud prevention and legal compliance."
-            ),
-            "zh-CN": TEMPLATE_ZH
-            + (
-                "## 我们收集的信息\n\n账号标识（邮箱或系统生成的账号名）、订单记录、聊天内容，以及运营所需"
-                "的技术日志。\n\n## 我们不会做的事\n\n卡密绝不以明文存储，商城前端不加载任何第三方追踪或 "
-                "CDN。\n\n## 您的选择\n\n您可在 **我的** 中修改资料或删除账号。删除后个人信息将被清除，订单"
-                "以匿名形式保留用于记账。您的聊天内容将被清除，上传的文件将被删除，售后描述也会被清空。"
-                "包含 IP 地址的安全审计日志将因防欺诈与合规需要而继续保留。"
-            ),
-        },
+        "body": {"en": PRIVACY_EN, "zh-CN": PRIVACY_ZH},
     },
 ]
 
