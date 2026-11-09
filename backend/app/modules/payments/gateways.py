@@ -219,8 +219,10 @@ async def prepare(
             select(PaymentAttempt)
             .where(PaymentAttempt.id == att_id, PaymentAttempt.tenant_id == tid)
             .with_for_update()
+            .execution_options(populate_existing=True)  # see a release committed meanwhile
         )
-        if current:
+        # only while still ours: staff may have released the attempt meanwhile (keep that record)
+        if current and current.status == "preparing":
             current.status = "failed"
             current.data = {"reason": "gateway_unreachable"}
             await audit(
@@ -238,8 +240,9 @@ async def prepare(
             select(PaymentAttempt)
             .where(PaymentAttempt.id == att_id, PaymentAttempt.tenant_id == tid)
             .with_for_update()
+            .execution_options(populate_existing=True)  # see a release committed meanwhile
         )
-        if current:
+        if current and current.status == "preparing":
             current.status = "unknown"
             await audit(
                 db,
@@ -256,9 +259,15 @@ async def prepare(
         select(PaymentAttempt)
         .where(PaymentAttempt.id == att_id, PaymentAttempt.tenant_id == tid)
         .with_for_update()
+        .execution_options(populate_existing=True)  # see a release committed meanwhile
     )
     if current is None:
         raise Unavailable("Payment attempt unavailable")
+    if current.status != "preparing":
+        # staff released (or another path settled) it while the gateway call was in flight: the
+        # result is not recorded and the pay URL is never handed out
+        await db.rollback()
+        raise ChannelUnreachable()
     target = await db.scalar(
         select(model)
         .where(col == no, model.tenant_id == tid)

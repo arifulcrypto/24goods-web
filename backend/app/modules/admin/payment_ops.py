@@ -37,6 +37,7 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 CONNECT_TIMEOUT_S = 5.0
 HEALTH_WINDOW = timedelta(minutes=30)
 TEST_TTL_S = 24 * 3600
+PREPARING_GRACE = timedelta(minutes=2)
 
 
 async def tcp_connect_ms(host: str, port: int) -> int:
@@ -144,6 +145,8 @@ async def resolve_attempt(
         raise NotFound("Payment attempt not found")
     if att.status not in ("unknown", "preparing"):
         raise InvalidState("Only an attempt with an unknown outcome can be resolved")
+    if att.status == "preparing" and datetime.now(timezone.utc) - att.created_at < PREPARING_GRACE:
+        raise InvalidState("This attempt is still being prepared; wait a moment and retry")
     before = {"status": att.status}
     att.status = "failed"
     att.data = {

@@ -172,7 +172,9 @@ async def test_admin_resolve_unknown_attempt(env, monkeypatch):
 
 
 # -------------------------------------------------------------------------------- §1.4 reconcile
-async def _unknown_attempt(env, *, created_ago: timedelta, checked_ago: timedelta | None):
+async def _unknown_attempt(
+    env, *, created_ago: timedelta, checked_ago: timedelta | None, status: str = "unknown"
+):
     async with env.owner_session() as db:
         now = datetime.now(timezone.utc)
         await db.execute(
@@ -180,10 +182,11 @@ async def _unknown_attempt(env, *, created_ago: timedelta, checked_ago: timedelt
                 "INSERT INTO payment_attempts (id, tenant_id, local_ref, gateway_ref, provider_id,"
                 " channel, amount_minor, currency, status, data, attempts, created_at, updated_at,"
                 " checked_at) VALUES (:id, :t, :ref, :gref, :pid, 'zpay_alipay', 100, 'CNY',"
-                " 'unknown', '{}'::jsonb, 0, :c, :c, :k)"
+                " :st, '{}'::jsonb, 0, :c, :c, :k)"
             ),
             {
                 "id": uuid.uuid4(),
+                "st": status,
                 "t": env.tenant_id,
                 "ref": "G" + uuid.uuid4().hex[:12].upper(),
                 "gref": uuid.uuid4().hex,
@@ -402,7 +405,7 @@ async def test_expedite_limits_and_isolation(env):
     await _age_expedites(env, 31)
     # three reminders is the cap per order, whatever the cooldown
     assert await env.scalar("SELECT count(*) FROM order_events WHERE reason='expedite'") == 3
-    assert (await buyer.post(url)).status_code == 429
+    assert (await buyer.post(url)).status_code == 409
     other, _ = await env.login()
     assert (await other.post(url)).status_code == 404
     foreign, _ = await env.login(tenant_id=env.other_tenant_id)

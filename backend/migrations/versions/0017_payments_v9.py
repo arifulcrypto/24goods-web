@@ -20,16 +20,38 @@ branch_labels = None
 depends_on = None
 
 
+BACKFILL = [
+    # orders/checkouts are FORCE RLS: the owner sees nothing without a pinned tenant, so lift FORCE
+    # for this cross-tenant statement only (as 0013/0015 do) and restore it in `finally`.
+    "ALTER TABLE orders NO FORCE ROW LEVEL SECURITY",
+    "ALTER TABLE checkouts NO FORCE ROW LEVEL SECURITY",
+]
+BACKFILL_SQL = """
+    UPDATE orders o SET channel = c.channel
+    FROM checkouts c
+    WHERE o.checkout_id = c.id AND o.tenant_id = c.tenant_id
+      AND c.status = 'pending_payment' AND o.status = 'pending_payment'
+      AND c.channel IS NOT NULL AND o.channel IS DISTINCT FROM c.channel
+"""
+RESTORE = [
+    "ALTER TABLE orders FORCE ROW LEVEL SECURITY",
+    "ALTER TABLE checkouts FORCE ROW LEVEL SECURITY",
+]
+
+
+def backfill(execute) -> None:  # type: ignore[no-untyped-def]
+    """Run the member-channel backfill through ``execute`` (op.execute or a test connection)."""
+    for stmt in BACKFILL:
+        execute(stmt)
+    try:
+        execute(BACKFILL_SQL)
+    finally:
+        for stmt in RESTORE:
+            execute(stmt)
+
+
 def upgrade() -> None:
-    op.execute(
-        """
-        UPDATE orders o SET channel = c.channel
-        FROM checkouts c
-        WHERE o.checkout_id = c.id AND o.tenant_id = c.tenant_id
-          AND c.status = 'pending_payment' AND o.status = 'pending_payment'
-          AND c.channel IS NOT NULL AND o.channel IS DISTINCT FROM c.channel
-        """
-    )
+    backfill(op.execute)
     op.execute("ALTER TABLE users ADD COLUMN announcement_ack integer NOT NULL DEFAULT 0")
 
 

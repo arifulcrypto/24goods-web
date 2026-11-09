@@ -13,12 +13,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import notify_tg
 from app.core.audit import audit
-from app.core.errors import InvalidState, RateLimited
+from app.core.errors import ApiError, InvalidState, RateLimited
 from app.core.resources import Resources
 from app.models import Message, Order, OrderEvent, User
 from app.modules.chat.messages import post_system
 from app.modules.orders import service
 from app.modules.orders.events import add_event
+
+
+class Conflict(ApiError):
+    """Reminder limit reached"""
+
+    status, code = 409, "expedite_limit"
+
 
 REASON = "expedite"
 COOLDOWN = timedelta(minutes=30)
@@ -54,7 +61,7 @@ async def expedite(
         )
     ).one()
     if n >= MAX_PER_ORDER:
-        raise RateLimited(86400, "The seller has already been reminded the maximum number of times")
+        raise Conflict("The seller has already been reminded the maximum number of times")
     now = datetime.now(timezone.utc)
     if last is not None and now - last < COOLDOWN:
         raise RateLimited(int((COOLDOWN - (now - last)).total_seconds()) + 1)

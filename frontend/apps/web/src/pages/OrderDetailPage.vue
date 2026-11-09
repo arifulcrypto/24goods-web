@@ -198,7 +198,7 @@ async function expedite() {
     order.value = await api.orders.expedite(o.id)
     showSuccessToast(t('order.expedite.sent'))
   } catch (e) {
-    if (isApiError(e) && e.status === 429) showToast(t('order.expedite.limit'))
+    if (isApiError(e) && (e.status === 429 || e.code === 'expedite_limit')) showToast(t('order.expedite.limit'))
     else toastError(e)
   } finally {
     expediting.value = false
