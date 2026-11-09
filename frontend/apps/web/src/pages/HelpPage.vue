@@ -1,26 +1,45 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { formatDateTime, formatNumber, goBack, type ArticleSummary } from '@24goods/shared'
 import { api } from '../api'
 import { toastError } from '../ui'
+import SiteFooter from '../components/SiteFooter.vue'
 
-const { t, locale } = useI18n()
+const { t, te, locale } = useI18n()
 const router = useRouter()
 const items = ref<ArticleSummary[]>([])
 const loading = ref(true)
 
-onMounted(async () => {
+let seq = 0
+async function load() {
+  const mine = ++seq
   try {
     const r = await api.articles.list({ page: 1, page_size: 100 })
-    items.value = r.items
+    if (mine === seq) items.value = r.items
   } catch (e) {
-    toastError(e)
+    if (mine === seq) toastError(e)
   } finally {
-    loading.value = false
+    if (mine === seq) loading.value = false
   }
-})
+}
+onMounted(load)
+// Titles and bodies come back in the request locale.
+watch(locale, load)
+
+/** Category slugs are stored raw ("faq", "tutorial"); show a translated label when we know it. */
+function catLabel(name: string): string {
+  const key = `help.categories.${name}`
+  return te(key) ? t(key) : name
+}
+
+const policies = [
+  { to: '/a/rules', key: 'me.rules', icon: 'description-o' },
+  { to: '/a/after-sales', key: 'me.afterSalesPolicy', icon: 'shield-o' },
+  { to: '/a/terms', key: 'me.terms', icon: 'notes-o' },
+  { to: '/a/privacy', key: 'me.privacy', icon: 'eye-o' },
+]
 
 const groups = computed(() => {
   const sorted = [...items.value].sort((a, b) => Number(b.pinned) - Number(a.pinned) || Date.parse(b.published_at ?? '') - Date.parse(a.published_at ?? ''))
@@ -33,10 +52,13 @@ const groups = computed(() => {
 <template>
   <div class="page">
     <van-nav-bar :title="t('help.title')" class="dock-top" left-arrow fixed placeholder safe-area-inset-top @click-left="goBack(router, '/')" />
+    <section class="section card">
+      <van-cell :title="t('help.guide')" :label="t('help.guideHint')" icon="guide-o" is-link to="/a/help" />
+    </section>
     <div v-if="loading" class="section card pad"><div class="skeleton" style="height: 18px" /></div>
     <van-empty v-else-if="!items.length" image="default" :description="t('help.empty')" />
     <section v-for="g in groups" :key="g.name" class="section">
-      <h2 v-if="g.name" class="cat">{{ g.name }}</h2>
+      <h2 v-if="g.name" class="cat">{{ catLabel(g.name) }}</h2>
       <div class="card list">
         <RouterLink v-for="a in g.list" :key="a.slug" :to="`/a/${encodeURIComponent(a.slug)}`" class="item">
           <span class="ititle">
@@ -46,6 +68,13 @@ const groups = computed(() => {
         </RouterLink>
       </div>
     </section>
+    <section class="section">
+      <h2 class="cat">{{ t('help.policies') }}</h2>
+      <div class="card">
+        <van-cell v-for="p in policies" :key="p.to" :title="t(p.key)" :icon="p.icon" is-link :to="p.to" />
+      </div>
+    </section>
+    <SiteFooter />
   </div>
 </template>
 

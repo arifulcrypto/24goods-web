@@ -4,98 +4,34 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.devtools.legal_content import PRIVACY_EN, PRIVACY_ZH, TERMS_EN, TERMS_ZH
+from app.devtools.help_content import ARTICLES as HELP_ARTICLES
+from app.devtools.help_content import HELP_EN, HELP_ZH
+from app.devtools.legal_content import (
+    AFTER_SALES_EN,
+    AFTER_SALES_ZH,
+    PRIVACY_EN,
+    PRIVACY_ZH,
+    RULES_EN,
+    RULES_ZH,
+    TERMS_EN,
+    TERMS_ZH,
+)
 
 PAGES: list[dict[str, Any]] = [
     {
         "slug": "help",
-        "title": {"en": "Help center", "zh-CN": "帮助中心"},
-        "body": {
-            "en": (
-                "## How buying works\n\n"
-                "1. Pick a product and tap **Buy**. You do not need to register: choose "
-                "**Continue without registering** and we create an instant account for you.\n"
-                "2. Pay with Alipay. Orders that are not paid within 30 minutes expire.\n"
-                "3. **Instant** products are delivered automatically in seconds. **Manual** "
-                "products are delivered by our support team, usually within 30 minutes.\n\n"
-                "## Lost your login?\n\n"
-                "Use **Order lookup** with your order number and the 10-character access code "
-                "shown when you placed the order. Save it: it is the only way to recover an "
-                "order without an account.\n\n"
-                "## Need help?\n\n"
-                "Open the chat from **Me → Contact online customer service**."
-            ),
-            "zh-CN": (
-                "## 如何购买\n\n"
-                "1. 选择商品并点击 **立即购买**。无需注册：选择 **无需注册，直接购买**，我们会为您创建"
-                "临时账号。\n"
-                "2. 使用支付宝付款。30 分钟内未付款的订单会自动失效。\n"
-                "3. **自动发货** 商品付款后数秒内送达；**人工发货** 商品由客服处理，通常 30 分钟内完成。\n\n"
-                "## 忘记登录信息？\n\n"
-                "在 **订单查询** 中输入订单号和下单时显示的 10 位提取码即可找回订单。请务必保存提取码。\n\n"
-                "## 需要帮助？\n\n"
-                "在 **我的 → 联系在线客服** 中打开对话。"
-            ),
-        },
+        "title": {"en": "Help guide", "zh-CN": "使用指南"},
+        "body": {"en": HELP_EN, "zh-CN": HELP_ZH},
     },
     {
         "slug": "rules",
         "title": {"en": "Platform rules", "zh-CN": "平台规则"},
-        "body": {
-            "en": (
-                "## Buyer rules\n\n"
-                "- Read the product description, delivery format and after-sales terms before "
-                "paying.\n"
-                "- Digital goods are delivered once. Keep your codes private; we cannot recover "
-                "codes you shared.\n"
-                "- Use goods for lawful purposes only.\n\n"
-                "## What we do\n\n"
-                "- Stock is checked at purchase; we never sell the same code twice.\n"
-                "- Prices come from our servers. An agent-negotiated price is shown on the order "
-                "before you pay."
-            ),
-            "zh-CN": (
-                "## 买家须知\n\n"
-                "- 付款前请阅读商品描述、发货格式与售后条款。\n"
-                "- 数字商品仅发货一次，请妥善保管，已泄露的卡密无法找回。\n"
-                "- 请仅将商品用于合法用途。\n\n"
-                "## 平台承诺\n\n"
-                "- 购买时校验库存，同一卡密绝不重复出售。\n"
-                "- 价格以服务器为准，客服议价后的价格会在付款前显示在订单上。"
-            ),
-        },
+        "body": {"en": RULES_EN, "zh-CN": RULES_ZH},
     },
     {
         "slug": "after-sales",
         "title": {"en": "After-sales policy", "zh-CN": "售后政策"},
-        "body": {
-            "en": (
-                "## Window\n\n"
-                "Each product shows its after-sales period (default **28 days**, some accounts "
-                "**24 hours** from delivery). The deadline is printed on your order.\n\n"
-                "## How to request\n\n"
-                "Open the order and tap **Request after-sales**. Choose a reason, describe the "
-                "problem and attach up to 4 screenshots. One request can be open per order.\n\n"
-                "## Outcomes\n\n"
-                "- **Replacement** of the code or account.\n"
-                "- **Refund** to your original payment method.\n"
-                "- **Rejection** with a reason, for example when a code was already used.\n\n"
-                "Orders are completed automatically after delivery unless an after-sales request "
-                "is open."
-            ),
-            "zh-CN": (
-                "## 售后期限\n\n"
-                "每个商品都标明售后期限（默认 **28 天**，部分账号为发货后 **24 小时**），截止时间显示在订单上。\n\n"
-                "## 如何申请\n\n"
-                "打开订单并点击 **申请售后**，选择原因、描述问题并上传最多 4 张截图。每个订单同一时间只能有"
-                "一个进行中的申请。\n\n"
-                "## 处理结果\n\n"
-                "- **换货**：更换卡密或账号。\n"
-                "- **退款**：退回原支付方式。\n"
-                "- **驳回**：并说明原因，例如卡密已被使用。\n\n"
-                "发货后订单会自动确认收货，售后申请处理期间自动确认会暂停。"
-            ),
-        },
+        "body": {"en": AFTER_SALES_EN, "zh-CN": AFTER_SALES_ZH},
     },
     {
         "slug": "terms",
@@ -187,6 +123,8 @@ ARTICLES: list[dict[str, Any]] = [
         },
     },
 ]
+
+ARTICLES += HELP_ARTICLES
 
 ANNOUNCEMENT = {
     "version": 1,

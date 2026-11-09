@@ -7,6 +7,8 @@ export const BRAND = {
   /** Chinese name shown next to / instead of the wordmark in zh-CN. */
   nameZh: '客思维',
   domain: 'kesiv.com',
+  /** Shown in the site footer and the policy pages. */
+  supportEmail: 'support@kesiv.com',
   tagline: {
     en: 'Accounts, gift cards & digital services — delivered fast',
     'zh-CN': '账号 · 卡密 · 数字服务，快速交付',

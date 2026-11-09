@@ -323,6 +323,16 @@ export default {
     views: '{n} views',
     published: 'Published {date}',
     updated: 'Updated {date}',
+    guide: 'Help guide',
+    guideHint: 'Buying, payment, delivery and order lookup',
+    policies: 'Rules & policies',
+    categories: {
+      faq: 'FAQ',
+      guide: 'Guides',
+      tutorial: 'Tutorials',
+      notice: 'Notices',
+    },
+    footer: '{brand} · Governing law: Singapore · {email}',
   },
   cart: {
     manage: 'Manage',

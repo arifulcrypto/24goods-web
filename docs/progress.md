@@ -10,6 +10,14 @@ no migrations. Pre-deploy backup with the installed v1 script, sha256-verified o
 retag `ghcr.io/arifulcrypto/goods24-{api,web}:rollback-e1fb9e7` to `:main` and `up -d`. Smoke all
 pass; api->BEpusdt 200. Demo also on `a8160cb`.
 
+**Policy pages v2 + help center (2026-11-09, `docs/legal-help-sg`):** Terms / Privacy /
+After-sales / Platform rules rewritten (venue positioning, Singapore law, generic payment and
+sign-in wording, no hosting/vendor details; footer = brand + law + support@kesiv.com), help guide
+rewritten and 6 general help articles added (EN + zh-CN); Help page translates category names,
+reloads on language change, links the policies; site footer on Help/Me. Prod Caddy answers
+plain-HTTP hits on :8088 with a 308 to https (was a 400 from Cloudflare for `http://shop.kesiv.com`).
+See `docs/legal/README.md`.
+
 **Legal text (2026-11-09, `docs/legal-terms-privacy`):** real Terms of service + Privacy policy
 replace the template banner (#48 §5, #40); see `docs/legal/README.md` for the approach and the
 open governing-law decision.
