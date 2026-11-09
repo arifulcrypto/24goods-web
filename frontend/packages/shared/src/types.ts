@@ -16,6 +16,8 @@ export interface User {
   email_verified?: boolean
   /** v3: login handle `u-xxxxxxx` of instant accounts (usable as the login id). `email` is blank for them. */
   handle?: string | null
+  /** v8b: same-origin avatar URL (authenticated), null = show the initial. */
+  avatar_url?: string | null
 }
 
 export type DeliveryMode = 'auto_card' | 'manual'
@@ -126,7 +128,7 @@ export interface Message {
   id: number
   conversation_id: string
   client_msg_id: string | null
-  sender: { id: string | null; role: SenderRole; display_name: string }
+  sender: { id: string | null; role: SenderRole; display_name: string; avatar_url?: string | null }
   type: MessageType
   text: string | null
   attachment: Attachment | null
@@ -177,7 +179,7 @@ export interface SystemPayload {
 
 export interface Conversation {
   id: string
-  buyer: { id: string; display_name: string }
+  buyer: { id: string; display_name: string; avatar_url?: string | null }
   product: ProductCardPayload | null
   status: 'open' | 'closed'
   assigned_agent: { id: string; display_name: string } | null

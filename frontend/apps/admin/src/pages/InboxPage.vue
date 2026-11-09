@@ -141,6 +141,8 @@ async function afterIncoming(force: boolean) {
 }
 
 // ---------------- realtime ----------------
+// Buyer messages and new order cards (every order is visible to CS) raise the unread badge.
+const countsAsUnread = (m: { sender: { role: string }; type: string }) => m.sender.role === 'buyer' || m.type === 'order_card'
 const offs = [
   rt.on('conversation', (c) => upsert(c)),
   rt.on('message', (e) => {
@@ -155,9 +157,9 @@ const offs = [
         ...c,
         last_message: e.message,
         updated_at: e.message.created_at,
-        unread: isActive || e.message.sender.role !== 'buyer' ? c.unread : c.unread + 1,
+        unread: isActive || !countsAsUnread(e.message) ? c.unread : c.unread + 1,
       })
-    } else if (e.message.sender.role === 'buyer') {
+    } else if (countsAsUnread(e.message)) {
       refreshSoon()
     }
   }),
@@ -340,6 +342,8 @@ function openProduct(id: string) {
         </div>
         <ChatMessageList
       :self-id="auth.user?.id"
+      :self-name="auth.user?.display_name"
+      :self-avatar="auth.user?.avatar_url"
       @action="messageAction"
           ref="msgList"
           :items="chat.items.value"

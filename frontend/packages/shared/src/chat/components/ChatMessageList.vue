@@ -17,6 +17,9 @@ const props = defineProps<{
   busyQuoteId?: string | null
   /** Show a "View order" button next to order-number chips (buyer app). */
   selfId?: string
+  /** Own display name / avatar for pending (not yet echoed) messages. */
+  selfName?: string
+  selfAvatar?: string | null
   viewOrder?: boolean
 }>()
 const emit = defineEmits<{
@@ -112,6 +115,8 @@ defineExpose({ scrollToBottom, isNearBottom, preserveScroll, el: scroller })
       <ChatMessage
         :item="it"
         :self-id="selfId"
+        :self-name="selfName"
+        :self-avatar="selfAvatar"
         @action="(a, id) => emit('action', a, id)"
         :mode="mode"
         :busy-quote-id="busyQuoteId"

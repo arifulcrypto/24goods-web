@@ -70,6 +70,9 @@ export default {
     statusMessage: 'Status message (shown to buyers)',
     statusMessagePlaceholder: 'e.g. Back in 10 minutes',
     update: 'Update',
+    avatarChange: 'Change photo',
+    avatarRemove: 'Remove photo',
+    avatarType: 'Please choose an image file (max 2 MB).',
     statusUpdated: 'Status updated',
     logout: 'Sign out',
     role: {
@@ -407,7 +410,7 @@ export default {
   },
   notify: {
     title: 'Alerts',
-    when: 'Alerts fire for new buyer messages, newly paid manual orders and new after-sales tickets, when this tab is in the background or another conversation is open.',
+    when: 'Alerts fire for new buyer messages, order events and new after-sales tickets, when this tab is in the background or another conversation is open.',
     sound: 'Sound',
     desktop: 'Desktop notifications',
     denied: 'Notifications are blocked in this browser. Allow them in the site settings, then toggle again.',
@@ -415,6 +418,9 @@ export default {
     newMessage: 'New message from {name}',
     paidManual: 'Paid order {no} needs delivery',
     newTicket: 'New after-sales ticket · {no}',
+    orders: 'Order alerts',
+    orderKind: { created: 'New order', paid: 'Payment received', cancelled: 'Order cancelled', expired: 'Order expired (off by default)' },
+    order: { created: 'New order #{no} · {title}', paid: 'Paid #{no} · {amount}', cancelled: 'Cancelled #{no}', expired: 'Expired #{no}' },
   },
   delivery: {
     title: 'Delivery presentation',

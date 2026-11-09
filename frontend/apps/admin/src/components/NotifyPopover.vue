@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Bell, MuteNotification } from '@element-plus/icons-vue'
 import { beep, ensureNotificationPermission, notificationPermission, type PermissionState } from '../notify'
+import { ORDER_ALERT_KINDS, type OrderAlertKind } from '../lib/notifyPolicy'
 import { usePrefsStore } from '../stores/prefs'
 
 const { t } = useI18n()
@@ -17,6 +18,9 @@ async function toggleDesktop(v: boolean | string | number) {
   } else {
     prefs.notify = false
   }
+}
+function toggleOrder(k: OrderAlertKind, v: boolean | string | number) {
+  prefs.orderAlerts = { ...prefs.orderAlerts, [k]: v === true }
 }
 function toggleSound(v: boolean | string | number) {
   prefs.sound = v === true
@@ -42,6 +46,11 @@ function toggleSound(v: boolean | string | number) {
         <label for="np-desktop">{{ t('notify.desktop') }}</label>
         <el-switch id="np-desktop" :model-value="prefs.notify && perm === 'granted'" :disabled="perm === 'denied' || perm === 'unsupported'" @update:model-value="toggleDesktop" />
       </div>
+      <h4 class="np-h2">{{ t('notify.orders') }}</h4>
+      <div v-for="k in ORDER_ALERT_KINDS" :key="k" class="np-row">
+        <label :for="`np-order-${k}`">{{ t(`notify.orderKind.${k}`) }}</label>
+        <el-switch :id="`np-order-${k}`" :model-value="prefs.orderAlerts[k]" @update:model-value="(v: boolean | string | number) => toggleOrder(k, v)" />
+      </div>
       <el-alert v-if="perm === 'denied'" type="warning" :closable="false" show-icon :title="t('notify.denied')" />
       <el-alert v-else-if="perm === 'unsupported'" type="info" :closable="false" show-icon :title="t('notify.unsupported')" />
     </div>
@@ -52,6 +61,10 @@ function toggleSound(v: boolean | string | number) {
 .np-h {
   margin: 0 0 4px;
   font-size: 14px;
+}
+.np-h2 {
+  margin: 8px 0 0;
+  font-size: 13px;
 }
 .np-sub {
   margin: 0 0 8px;

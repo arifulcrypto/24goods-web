@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { imageQuality, compressUploads, setMediaPreference } from '@24goods/shared'
+import { imageQuality, compressUploads, safeAssetUrl, setMediaPreference } from '@24goods/shared'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
@@ -24,6 +24,7 @@ import {
 } from '@element-plus/icons-vue'
 import { LogoMark } from '@24goods/shared/ui'
 import NotifyPopover from '../components/NotifyPopover.vue'
+import StaffAvatarControl from '../components/StaffAvatarControl.vue'
 import { useCsNotifications } from '../composables/useCsNotifications'
 import { useDeskStore } from '../stores/desk'
 import AgentStatusSelect from '../components/AgentStatusSelect.vue'
@@ -188,7 +189,7 @@ async function logout() {
           </el-dropdown>
           <el-dropdown trigger="click">
             <el-button text class="user-btn">
-              <el-avatar :size="26" class="avatar">{{ (auth.user?.display_name || '?').charAt(0).toUpperCase() }}</el-avatar>
+              <el-avatar :size="26" class="avatar" :src="safeAssetUrl(auth.user?.avatar_url) ?? undefined">{{ (auth.user?.display_name || '?').charAt(0).toUpperCase() }}</el-avatar>
               <span class="user-name">{{ auth.user?.display_name }}</span>
             </el-button>
             <template #dropdown>
@@ -197,6 +198,7 @@ async function logout() {
                   <div class="user-email">{{ auth.user?.email }}</div>
                   <el-tag size="small">{{ t(`top.role.${auth.user?.role ?? 'agent'}`) }}</el-tag>
                 </div>
+                <StaffAvatarControl />
               </div>
               <el-dropdown-menu>
                 <el-dropdown-item @click="openShop">{{ t('top.openShop') }}</el-dropdown-item>
