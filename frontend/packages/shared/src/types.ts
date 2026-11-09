@@ -732,3 +732,47 @@ export interface EpayPaymentView {
   redirect_url: string | null
   qr_svg: string | null
 }
+
+// review-v10: EPay gateway routing + test payments (admin)
+export type GatewayRoutingMode = 'sticky' | 'priority'
+export interface PaymentGatewayAdmin {
+  id: string
+  label: string
+  gateway: string
+  merchant_id: string
+  mode: string
+  active: boolean
+  enabled: boolean
+  priority: number
+  in_use: boolean
+  last_ok_at: string | null
+  last_fail_at: string | null
+  last_fail_reason: string | null
+  created_at: string
+}
+export interface PaymentGatewayList {
+  routing_mode: GatewayRoutingMode
+  /** ids in the order the next payment will try them */
+  candidates: string[]
+  items: PaymentGatewayAdmin[]
+}
+export type TestPaymentStatus = 'pending' | 'paid' | 'expired' | 'failed'
+export interface TestPaymentView {
+  id: string
+  gateway_id: string
+  gateway_label: string | null
+  out_trade_no: string
+  amount: string
+  currency: string
+  status: TestPaymentStatus
+  qr_content: string | null
+  qr_svg: string | null
+  redirect_url: string | null
+  reason: string | null
+  message: string | null
+  seconds_left: number
+  expires_at: string | null
+  created_at: string
+  paid_at: string | null
+  trade_no: string | null
+}

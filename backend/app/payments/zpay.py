@@ -41,6 +41,16 @@ class ZPayUnreachable(ZPayQueryError):
     the order. The original exception stays reachable via ``__cause__``."""
 
 
+class ZPayRefused(ZPayQueryError):
+    """``mapi.php`` answered with a well-formed JSON ``code != 1``: the gateway explicitly declined
+    to create the payment, so no order exists there and another gateway may be tried.
+    ``gateway_message`` is truncated and has the merchant key redacted."""
+
+    def __init__(self, gateway_message: str = "") -> None:
+        super().__init__("gateway refused payment")
+        self.gateway_message = gateway_message
+
+
 def _never_dispatched(exc: BaseException) -> bool:
     from app.core import safefetch
 
@@ -260,8 +270,16 @@ class ZPayClient:
         data = await asyncio.wait_for(
             self._json("/mapi.php", params, post=True, connect_s=CREATE_CONNECT_S), CREATE_TIMEOUT_S
         )
-        if not isinstance(data, dict) or str(data.get("code")) != "1":
+        if not isinstance(data, dict) or "code" not in data:
             raise ZPayQueryError("gateway refused payment")
+        code = _as_int(data.get("code"))
+        if code is None:  # non-numeric / boolean / fractional: not a well-formed refusal
+            raise ZPayQueryError("gateway refused payment")
+        if code != 1:
+            msg = str(data.get("msg") or "")[:200]
+            if self.config.key:
+                msg = msg.replace(self.config.key, "***")
+            raise ZPayRefused(msg)
         qr, redirect = str(data.get("qrcode") or ""), str(data.get("payurl") or "")
         value, kind = (qr, "qr") if qr else (redirect, "redirect")
         parsed = urlsplit(value)

@@ -27,6 +27,7 @@ from app.core.resources import Resources
 from app.models import PaymentAttempt, PaymentGateway, User
 from app.modules.admin.payment_gateways import session_admin
 from app.modules.operations.service import record_event
+from app.modules.payments import gateway_tests as test_payments
 from app.modules.payments.gateways import client_for
 from app.payments import bepusdt
 from app.payments.zpay import ZPayQueryError, ZPayUnreachable
@@ -326,3 +327,50 @@ async def health(
         last = await _last_test(res, admin.tenant_id, "bepusdt")
         usdt = {"status": derive_health(last, [], 0, datetime.now(timezone.utc)), "last_test": last}
     return {"gateways": items, "bepusdt": usdt}
+
+
+# ------------------------------------------------------------------------------ test payment
+class TestPaymentIn(BaseModel):
+    amount: str = Field(default="0.01", max_length=16)
+
+
+@router.post("/payment-gateways/{ref}/test-payment")
+async def create_test_payment(
+    ref: uuid.UUID,
+    request: Request,
+    body: TestPaymentIn | None = None,
+    admin: User = Depends(session_admin),
+    db: AsyncSession = Depends(get_db),
+    res: Resources = Depends(get_res),
+) -> dict:
+    """A real payment (0.01-10.00 CNY) at this gateway to verify it end to end by scanning the QR.
+    Not linked to any order; the received amount is booked to ``test_receipts``."""
+    await enforce(res.redis, "gateway:test-payment", str(admin.id), 10, 3600)
+    minor = test_payments.parse_amount((body or TestPaymentIn()).amount)
+    return await test_payments.create(
+        db,
+        res,
+        tid=admin.tenant_id,
+        admin_id=admin.id,
+        admin_role=admin.role,
+        gateway_id=ref,
+        amount_minor=minor,
+        ip=client_ip(request),
+    )
+
+
+@router.get("/payment-gateways/test-payments")
+async def list_test_payments(
+    admin: User = Depends(session_admin), db: AsyncSession = Depends(get_db)
+) -> dict:
+    return {"items": await test_payments.list_recent(db, admin.tenant_id)}
+
+
+@router.get("/payment-gateways/test-payments/{test_id}")
+async def get_test_payment(
+    test_id: uuid.UUID,
+    admin: User = Depends(session_admin),
+    db: AsyncSession = Depends(get_db),
+    res: Resources = Depends(get_res),
+) -> dict:
+    return await test_payments.refresh(db, res, tid=admin.tenant_id, test_id=test_id)

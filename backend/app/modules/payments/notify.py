@@ -104,8 +104,11 @@ async def _security_event(
 async def handle_notify(
     db: AsyncSession, res: Resources, tenant_id: uuid.UUID, params: dict[str, str], ip: str | None
 ) -> NotifyOutcome:
+    from app.modules.payments.gateway_tests import handle_test_notify, is_test_ref
     from app.modules.payments.gateways import routed_resources
 
+    if is_test_ref(params.get("out_trade_no", "")):
+        return await handle_test_notify(db, res, tenant_id, params, ip)  # never an order
     res, local_ref = await routed_resources(db, res, tenant_id, params.get("out_trade_no", ""))
     zpay = res.zpay
     if not zpay.config.key or not zpay.verify_signature(params):
