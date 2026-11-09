@@ -326,6 +326,7 @@ Tracking: [#27 payments](https://github.com/arifulcrypto/24goods-web/issues/27),
 
 ## Done
 
+- v8b (#58 §3-§5, `docs/review-v8b-cs.md`): every order attaches/creates the buyer's CS conversation (order card + system messages for all orders), staff alerts for order created/paid/cancelled/expired with per-agent toggles, payment-method tag in the order drawer, user and staff avatars (`PUT/DELETE /me/avatar`, `GET /avatars/{id}`, migration `0016_user_avatars`).
 - v5 product import backend: `core/safefetch.py` (SSRF-safe, IP-pinned), `catalog/importer/` parsers + gmailbuy/maitg/ka8 adapters, `admin/importer.py` endpoints, offline fixture tests.
 
 ### 2026-11-05: M0 bootstrap
