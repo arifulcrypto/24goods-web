@@ -30,6 +30,7 @@ import CloseOrderDialog from './CloseOrderDialog.vue'
 import { buildBuyerTemplate, clockTime, htmlToText } from '../lib/orderText'
 import OrderStatusTag from './OrderStatusTag.vue'
 import { confirmBox, toastError, toastOk } from '../ui'
+import { client } from '../api'
 
 type AdminOrderDetail = AdminOrderDetailBase & Partial<OrderV5Fields>
 const props = defineProps<{ orderId: string | null }>()
@@ -53,6 +54,33 @@ const autoConfirm = computed(() => {
   if (o.after_sales && (o.after_sales.status === 'open' || o.after_sales.status === 'processing')) return t('orders.autoConfirmPaused')
   return formatCountdown(o.auto_confirm_at, now.value) ?? t('orders.autoConfirmDue')
 })
+// ---- v9 §1.3: staff resolve an attempt whose outcome is unknown ("no charge exists") ----
+const resolveDlg = ref(false)
+const resolveId = ref('')
+const resolveNote = ref('')
+const resolveBusy = ref(false)
+function openResolve(id: string) {
+  resolveId.value = id
+  resolveNote.value = ''
+  resolveDlg.value = true
+}
+async function submitResolve() {
+  if (resolveBusy.value || resolveNote.value.trim().length < 10) return
+  resolveBusy.value = true
+  try {
+    await client.post(`/admin/payment-attempts/${encodeURIComponent(resolveId.value)}/resolve`, {
+      outcome: 'not_paid',
+      note: resolveNote.value.trim(),
+    })
+    resolveDlg.value = false
+    toastOk(t('orders.unknownAttempt.done'))
+    if (order.value) await load(order.value.id)
+  } catch (e) {
+    toastError(e)
+  } finally {
+    resolveBusy.value = false
+  }
+}
 async function copyDelivery() {
   const text = order.value?.manual_delivery?.text
   if (text) toastCopy(await copyText(text))
@@ -351,6 +379,27 @@ defineExpose({ reload: () => props.orderId && load(props.orderId) })
           <el-button v-if="canRefund" type="danger" plain @click="openRefund">{{ t('orders.refund') }}</el-button>
           <el-button v-if="canClose" type="danger" plain @click="closeDlg = true">{{ t('orders.close') }}</el-button>
         </div>
+
+        <el-alert
+          v-for="u in order.unresolved_attempts ?? []"
+          :key="u.id"
+          class="gap"
+          type="warning"
+          show-icon
+          :closable="false"
+          :title="t('orders.unknownAttempt.title')"
+          :description="t('orders.unknownAttempt.body')"
+        >
+          <el-button size="small" type="warning" plain @click="openResolve(u.id)">{{ t('orders.unknownAttempt.action') }}</el-button>
+        </el-alert>
+        <el-dialog v-model="resolveDlg" :title="t('orders.unknownAttempt.dialog')" width="min(92vw, 480px)" append-to-body>
+          <p class="muted small">{{ t('orders.unknownAttempt.confirm') }}</p>
+          <el-input v-model="resolveNote" type="textarea" :rows="3" maxlength="500" show-word-limit :placeholder="t('orders.unknownAttempt.note')" />
+          <template #footer>
+            <el-button @click="resolveDlg = false">{{ t('common.cancel') }}</el-button>
+            <el-button type="warning" :disabled="resolveNote.trim().length < 10" :loading="resolveBusy" @click="submitResolve">{{ t('orders.unknownAttempt.submit') }}</el-button>
+          </template>
+        </el-dialog>
 
         <el-descriptions :column="1" border size="small" class="desc">
           <el-descriptions-item :label="t('orders.col.title')">{{ order.title }}</el-descriptions-item>

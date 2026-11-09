@@ -70,6 +70,16 @@ export function createSeenSet(max = 500) {
   }
 }
 
+// ---- urgent alerts (review-v9 §6) ----
+/** A freshly paid MANUAL goods order needs hand delivery: that one alert is marked urgent. */
+export function isUrgentPaid(kind: OrderAlertKind | null, o: { delivery_mode?: string; kind?: string }): boolean {
+  return kind === 'paid' && o.delivery_mode === 'manual' && (o.kind === undefined || o.kind === 'goods')
+}
+/** The buyer's "Remind seller to ship" posts this system message into the order conversation. */
+export function isExpediteMessage(m: { type?: string; payload?: unknown }): boolean {
+  return m.type === 'system' && !!m.payload && (m.payload as { event?: unknown }).event === 'delivery_expedite'
+}
+
 // ---- order lifecycle alerts (review-v8b §4) ----
 export type OrderAlertKind = 'created' | 'paid' | 'cancelled' | 'expired'
 export type OrderAlertPrefs = Record<OrderAlertKind, boolean>

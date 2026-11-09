@@ -350,6 +350,8 @@ export interface OrderV5Fields {
   overdue_manual?: boolean
   delivery_eta_hours?: number | null
   delivery_deadline?: string | null
+  /** v9 §1.3: payment attempts whose outcome is unknown; staff can resolve them. */
+  unresolved_attempts?: { id: string; status: string; created_at: string }[]
 }
 export type AdminOrderV5 = AdminOrder & Partial<OrderV5Fields>
 export type OrderDetailV5 = Order & Partial<OrderV5Fields>

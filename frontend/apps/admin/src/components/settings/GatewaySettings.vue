@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { client } from '../../api'
 import { useSave } from '../../composables/useSave'
 import { useRead } from '../../composables/useRead'
+import { toastError } from '../../ui'
 interface Gateway { id: string; label: string; gateway: string; merchant_id: string; mode: string; active: boolean; created_at: string }
 const { t } = useI18n()
 const { saving, run } = useSave()
@@ -14,8 +15,29 @@ const activating = ref<Gateway | null>(null)
 const password = ref('')
 const ownership = ref(false)
 const form = reactive({ label: '', gateway: 'https://pay.xiaodouap.cn/submit.php', merchant_id: '', secret: '', mode: 'qr' as 'qr' | 'redirect', current_password: '' })
-async function load() { const r = await reader.run(() => client.get<{items: Gateway[]}>('/admin/payment-gateways')); if (r) items.value = r.items }
+type Health = { status: 'healthy' | 'degraded' | 'unreachable'; last_test: { ok: boolean; at: string; latency_ms: number | null } | null }
+const health = ref<Record<string, Health>>({})
+const usdt = ref<Health | null>(null)
+const testing = ref('')
+const testMsg = ref<Record<string, string>>({})
+async function loadHealth() {
+  try {
+    const r = await client.get<{ gateways: Record<string, Health>; bepusdt: Health | null }>('/admin/payment-gateways-health')
+    health.value = r.gateways
+    usdt.value = r.bepusdt
+  } catch { /* advisory */ }
+}
+async function load() { const r = await reader.run(() => client.get<{items: Gateway[]}>('/admin/payment-gateways')); if (r) items.value = r.items; await loadHealth() }
 onMounted(load)
+interface TestResult { ok: boolean; reachable: boolean; latency_ms?: number; message?: string }
+async function runTest(id: string) {
+  testing.value = id
+  try {
+    const r = await client.post<TestResult>(`/admin/payment-gateways/${encodeURIComponent(id)}/test`, {})
+    testMsg.value[id] = r.ok ? t('gateways.tested', { ms: r.latency_ms ?? 0, msg: r.message ?? '' }) : t('gateways.testFailed')
+    await loadHealth()
+  } catch (e) { toastError(e) } finally { testing.value = '' }
+}
 async function create() {
   const r = await run(() => client.post('/admin/payment-gateways', { ...form }))
   // Clear authentication material on every submission, including errors.
@@ -43,8 +65,20 @@ function close() { form.secret = ''; form.current_password = ''; editing.value =
       <el-table-column :label="t('gateways.pid')"><template #default="{ row }">••{{ row.merchant_id.slice(-4) }}</template></el-table-column>
       <el-table-column prop="created_at" :label="t('gateways.created')" min-width="160" />
       <el-table-column :label="t('gateways.status')"><template #default="{ row }">{{ row.active ? t('gateways.active') : t('gateways.retained') }}</template></el-table-column>
-      <el-table-column :label="t('gateways.actions')"><template #default="{ row }"><el-button v-if="!row.active" :disabled="saving" @click="activate(row as Gateway)">{{ t('gateways.activate') }}</el-button></template></el-table-column>
+      <el-table-column :label="t('gateways.health.title')" min-width="140"><template #default="{ row }">
+        <el-tag :type="health[row.id]?.status === 'healthy' ? 'success' : health[row.id]?.status === 'degraded' ? 'warning' : health[row.id]?.status === 'unreachable' ? 'danger' : 'info'" effect="plain">{{ t(`gateways.health.${health[row.id]?.status ?? 'unknown'}`) }}</el-tag>
+        <div v-if="testMsg[row.id]" class="muted small">{{ testMsg[row.id] }}</div>
+      </template></el-table-column>
+      <el-table-column :label="t('gateways.actions')" min-width="180"><template #default="{ row }">
+        <el-button size="small" :loading="testing === row.id" @click="runTest(row.id)">{{ t('gateways.test') }}</el-button>
+        <el-button v-if="!row.active" size="small" :disabled="saving" @click="activate(row as Gateway)">{{ t('gateways.activate') }}</el-button>
+      </template></el-table-column>
     </el-table>
+    <p class="muted small">{{ t('gateways.testNote') }}</p>
+    <p v-if="usdt" class="muted small">{{ t('gateways.usdtTitle') }}:
+      <el-tag size="small" :type="usdt.status === 'healthy' ? 'success' : 'danger'" effect="plain">{{ t(`gateways.health.${usdt.status}`) }}</el-tag>
+      <el-button size="small" :loading="testing === 'bepusdt'" @click="runTest('bepusdt')">{{ t('gateways.test') }}</el-button>
+    </p>
     <el-button @click="editing = true">{{ t('gateways.add') }}</el-button>
     <el-dialog :model-value="editing" :title="t('gateways.add')" width="min(92vw, 600px)" @close="close">
       <el-form label-position="top" @submit.prevent="create">
