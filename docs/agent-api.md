@@ -30,7 +30,7 @@ H=(-H "Authorization: Bearer $KESIV_API_TOKEN")
 | Scope | Allows |
 |---|---|
 | `products:read` | list/get products, list categories |
-| `products:write` | create/update/bulk/archive/restore products (price, floor price, status, redeem link, stock), product images, import from URL / pasted text. Can change buyer-visible prices and links: grant with care |
+| `products:write` | create/update/bulk/archive/restore products (price, floor price, status, redeem link, stock, cost_minor, source_url), product images, import from URL / pasted text. Can change buyer-visible prices and links: grant with care |
 | `cards:import` | `POST /admin/products/{id}/cards/import` only. Card secrets are never returned (counts only); listing, finding, voiding or replacing cards is not available to tokens |
 | `orders:read` | `GET /admin/orders`, `GET /admin/orders/{id}` |
 | `chat` | list conversations, read messages, send text/image as staff |
@@ -53,7 +53,8 @@ curl -sS "${H[@]}" -H 'Content-Type: application/json' "$KESIV_BASE_URL/api/v1/a
   "title_i18n": {"en": "ChatGPT Plus 1 month", "zh-CN": "ChatGPT Plus 1个月"},
   "description_i18n": {"en": "Delivered within 24h"},
   "price": "19.90", "delivery_mode": "manual", "category": "ai_tools",
-  "status": "draft", "manual_stock": 5
+  "status": "draft", "manual_stock": 5,
+  "cost_minor": 1500, "source_url": "https://supplier.example.com/item/1"
 }'
 ```
 
