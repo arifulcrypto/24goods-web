@@ -415,6 +415,7 @@ async def _content(db: AsyncSession, tid: uuid.UUID, admin: User, *, demo: bool 
             **(tenant.settings or {}),
             "announcement": ann,
             "support_hours": SUPPORT_HOURS,
+            "after_sales_default": {"unit": "month", "value": 1},
         }
     await db.commit()
 

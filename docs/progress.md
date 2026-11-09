@@ -10,6 +10,17 @@ no migrations. Pre-deploy backup with the installed v1 script, sha256-verified o
 retag `ghcr.io/arifulcrypto/goods24-{api,web}:rollback-e1fb9e7` to `:main` and `up -d`. Smoke all
 pass; api->BEpusdt 200. Demo also on `a8160cb`.
 
+**Subscriptions v7 (2026-11-09, `feat/subscriptions`, spec `docs/review-v7-subscriptions.md`):**
+products can be marked as subscriptions (`products.subscription`); after-sales defaults to one
+calendar month (`products.after_sales_months`, tenant `after_sales_default {unit,value}`; legacy hours
+still honoured); job `sync_subscriptions` turns delivered subscription orders into services (new or
+renewed, audited as `system`); Services page shows order no./product/buyer/source/days left,
+renewal candidates and a date picker instead of pasted UUIDs; buyers see their service period on
+the order. Migration `0014_subscriptions` (additive). Not built: buyer self-service renew, recurring
+charge. Follow-up (security review): a refunded *renewal* order does not yet shorten the
+service — staff adjust the due date by hand; with two open services for one buyer+product the job
+skips the order and logs it for staff.
+
 **Policy pages v2 + help center (2026-11-09, `docs/legal-help-sg`):** Terms / Privacy /
 After-sales / Platform rules rewritten (venue positioning, Singapore law, generic payment and
 sign-in wording, no hosting/vendor details; footer = brand + law + support@kesiv.com), help guide

@@ -62,6 +62,8 @@ def _summary(p: Product) -> dict[str, Any]:
         "status": p.status,
         "delivery_mode": p.delivery_mode,
         "after_sales_hours": p.after_sales_hours,
+        "after_sales_months": p.after_sales_months,
+        "subscription": p.subscription,
         "manual_stock": p.manual_stock,
         "redeem_url": p.redeem_url,
         "archived_at": p.archived_at.isoformat() if p.archived_at else None,
@@ -124,6 +126,8 @@ async def create(db: AsyncSession, body: ProductIn, admin: User, ip: str | None)
         usage_i18n=body.usage_i18n,
         usage_html_i18n=render_i18n(body.usage_i18n),
         after_sales_hours=body.after_sales_hours,
+        after_sales_months=body.after_sales_months if body.after_sales_hours is None else None,
+        subscription=body.subscription.model_dump() if body.subscription else None,
         group_sort=body.group_sort,
         delivery_eta_hours=body.delivery_eta_hours,
         cost_minor=body.cost_minor,
@@ -207,6 +211,18 @@ async def patch(
     ):
         if key in data:
             setattr(p, key, data[key])
+    # setting one after-sales unit clears the other; both at once is ambiguous
+    if data.get("after_sales_hours") is not None and data.get("after_sales_months") is not None:
+        raise Validation("set either after_sales_hours or after_sales_months, not both")
+    if data.get("after_sales_hours") is not None:
+        p.after_sales_months = None
+    elif data.get("after_sales_months") is not None:
+        p.after_sales_hours = None
+    if "after_sales_months" in data:
+        p.after_sales_months = data["after_sales_months"]
+    if "subscription" in data:  # explicit null = not a subscription
+        sb = body.subscription
+        p.subscription = sb.model_dump() if sb is not None else None
     if "buyer_input" in data:  # explicit null clears the popup
         bi = body.buyer_input
         p.buyer_input = bi.model_dump() if bi is not None else None

@@ -67,7 +67,9 @@ async def get_order(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     order = await service.get_owned(db, ref, user)
-    return await service.one_view(db, order, user.id, lang)
+    view = await service.one_view(db, order, user.id, lang)
+    await service.attach_service(db, user, [view])
+    return view
 
 
 @router.post("/{ref}/access-code", response_model=None)

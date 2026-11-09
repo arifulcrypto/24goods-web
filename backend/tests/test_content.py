@@ -71,7 +71,8 @@ async def test_site_defaults(env):
     assert r.status_code == 200
     s = r.json()
     assert s["brand"] == "Kesiv" and s["announcement"] is None and s["pages"] == []
-    assert s["after_sales_default_hours"] == 672 and s["support_hours"] == ""
+    assert s["after_sales_default_hours"] == 720 and s["after_sales_default"]["unit"] == "month"
+    assert s["support_hours"] == ""
 
 
 async def test_announcement_version_bumps_on_edit(env):
@@ -288,7 +289,7 @@ async def test_product_delivery_fields_roundtrip(env):
     # no override -> site default (and a tenant override flows through)
     r = await admin.patch(f"/api/v1/admin/products/{p['id']}", json={"after_sales_hours": None})
     assert r.json()["after_sales_hours"] is None
-    assert (await pub.get(f"/api/v1/products/{p['id']}")).json()["after_sales_hours"] == 672
+    assert (await pub.get(f"/api/v1/products/{p['id']}")).json()["after_sales_hours"] == 720
     await admin.put("/api/v1/admin/site", json={"after_sales_default_hours": 100})
     assert (await pub.get(f"/api/v1/products/{p['id']}")).json()["after_sales_hours"] == 100
     r = await admin.patch(f"/api/v1/admin/products/{p['id']}", json={"after_sales_hours": 0})

@@ -107,6 +107,16 @@ class BuyerInputConfig(BaseModel):
         return _i18n(v, max_len=1000, required=False)
 
 
+class SubscriptionConfig(BaseModel):
+    """Monthly (or fixed-length) billed service; drives sync_subscriptions + reminders."""
+
+    period_policy: Literal["calendar_month", "fixed_days"] = "calendar_month"
+    period_days: int = Field(30, ge=1, le=366)
+    grace_days: int = Field(0, ge=0, le=30)
+    email_reminders: bool = True
+    telegram_reminders: bool = True
+
+
 class ProductIn(BaseModel):
     title_i18n: dict[str, str]
     description_i18n: dict[str, str] = Field(default_factory=dict)
@@ -122,6 +132,8 @@ class ProductIn(BaseModel):
     redeem_url: str | None = None
     usage_i18n: dict[str, str] = Field(default_factory=dict)
     after_sales_hours: int | None = Field(None, ge=0, le=8760)
+    after_sales_months: int | None = Field(None, ge=1, le=12)
+    subscription: SubscriptionConfig | None = None
     group_sort: int = Field(0, ge=-1000, le=1000)
     buyer_input: BuyerInputConfig | None = None
     # v5 (staff-only fields except the ETA): manual delivery promise, import/middleman data
@@ -186,6 +198,8 @@ class ProductPatch(BaseModel):
     redeem_url: str | None = None
     usage_i18n: dict[str, str] | None = None
     after_sales_hours: int | None = Field(None, ge=0, le=8760)
+    after_sales_months: int | None = Field(None, ge=1, le=12)
+    subscription: SubscriptionConfig | None = None
     group_sort: int | None = Field(None, ge=-1000, le=1000)
     buyer_input: BuyerInputConfig | None = None  # explicit null clears the popup
     delivery_eta_hours: int | None = Field(None, ge=1, le=720)  # explicit null = tenant default

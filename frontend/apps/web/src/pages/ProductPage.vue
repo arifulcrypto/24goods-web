@@ -5,7 +5,6 @@ import { useI18n } from 'vue-i18n'
 import { ProductThumb, SafeHtml } from '@24goods/shared/ui'
 import {
   addRecent,
-  afterSalesBadge,
   formatLabels,
   formatNumber,
   goBack,
@@ -24,6 +23,7 @@ import MiniStrip from '../components/MiniStrip.vue'
 import { cleanSrc, rememberSrc } from '../lib/attribution'
 import { openSupport as support } from '../lib/support'
 import { useCartStore } from '../stores/cart'
+import { afterSalesLabel } from '../lib/afterSales'
 import { isSoldOut } from '../lib/stock'
 import { useSiteStore } from '../stores/site'
 import { showImagePreview, showSuccessToast, showToast, toastError } from '../ui'
@@ -84,7 +84,7 @@ const images = computed(() => {
 const price = computed(() => (product.value ? moneyParts(product.value.price, product.value.currency, locale.value) : null))
 const isAuto = computed(() => product.value?.delivery_mode === 'auto_card')
 const soldOut = computed(() => (product.value ? isSoldOut(product.value) : false))
-const as = computed(() => afterSalesBadge(product.value?.after_sales_hours))
+const as = computed(() => afterSalesLabel(product.value?.after_sales_hours, product.value?.after_sales_months))
 const labels = computed(() => formatLabels(product.value?.delivery_format, product.value?.delivery_separator))
 const redeem = computed(() => safeLinkUrl(product.value?.redeem_url))
 
@@ -187,7 +187,7 @@ function back() {
             {{ soldOut ? t('product.outOfStock') : isAuto || product.stock >= 10 ? t('product.stock', { n: product.stock }) : t('product.onlyLeft', { n: product.stock }) }}
           </span>
         </div>
-        <div v-if="as" class="facts"><span class="badge-as">{{ t(as.unit === 'h' ? 'product.afterSalesH' : 'product.afterSalesD', { n: as.n }) }}</span></div>
+        <div v-if="as" class="facts"><span class="badge-as">{{ t(as.key, { n: as.n }) }}</span></div>
         <div v-else-if="product.after_sales_hours === 0" class="facts muted small">{{ t('delivery.noAfterSales') }}</div>
         <p v-if="labels.length" class="fmt">
           <strong>{{ t('product.deliveryFormat') }}</strong> {{ labels.join(' · ') }}

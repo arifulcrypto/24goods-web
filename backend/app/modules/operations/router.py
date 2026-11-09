@@ -6,15 +6,15 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Request
-from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import func, select
+from fastapi import APIRouter, Depends, Query, Request
+from pydantic import BaseModel, Field, field_validator, model_validator
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import Page, client_ip, get_db, get_page, get_res, require_admin, require_staff
 from app.core.errors import Forbidden
 from app.core.resources import Resources
-from app.models import Tenant, User
+from app.models import Order, Tenant, User
 from app.models.operations import OperationEvent, ServiceEntitlement
 from app.modules.operations import service
 from app.modules.operations.overview import overview
@@ -40,10 +40,14 @@ async def session_admin(
 
 
 class ServiceIn(BaseModel):
-    buyer_id: uuid.UUID
-    order_id: uuid.UUID
-    owner_id: uuid.UUID
-    label: str = Field(min_length=1, max_length=120)
+    """Either ``order_no`` or ``buyer_id`` + ``order_id``; owner defaults to the caller and
+    label/policy to the order's product (subscription settings when present)."""
+
+    order_no: str | None = Field(None, min_length=1, max_length=16)
+    buyer_id: uuid.UUID | None = None
+    order_id: uuid.UUID | None = None
+    owner_id: uuid.UUID | None = None
+    label: str | None = Field(None, min_length=1, max_length=120)
     timezone: str = Field("UTC", max_length=64)
     period_policy: Literal["calendar_month", "fixed_days"] = "calendar_month"
     period_days: int = Field(30, ge=1, le=366)
@@ -53,11 +57,19 @@ class ServiceIn(BaseModel):
 
     @field_validator("label")
     @classmethod
-    def clean_label(cls, value: str) -> str:
+    def clean_label(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         value = value.strip()
         if not value or any(ord(c) < 32 for c in value):
             raise ValueError("A plain service label is required")
         return value
+
+    @model_validator(mode="after")
+    def need_order(self) -> ServiceIn:
+        if not self.order_no and not (self.buyer_id and self.order_id):
+            raise ValueError("order_no, or buyer_id and order_id, is required")
+        return self
 
 
 class ServicePatch(BaseModel):
@@ -149,11 +161,30 @@ async def services(
     status: Literal["pending", "active", "cancelled"] | None = None,
     due: Literal["upcoming", "overdue"] | None = None,
     mine: bool = False,
+    q: str | None = Query(None, max_length=120),
     page: Page = Depends(get_page),
     staff: User = Depends(session_staff),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     query = select(ServiceEntitlement).where(ServiceEntitlement.tenant_id == staff.tenant_id)
+    if q and q.strip():
+        term = q.strip()
+        query = query.where(
+            or_(
+                ServiceEntitlement.order_id.in_(
+                    select(Order.id).where(
+                        Order.tenant_id == staff.tenant_id,
+                        Order.order_no.icontains(term, autoescape=True),
+                    )
+                ),
+                ServiceEntitlement.buyer_id.in_(
+                    select(User.id).where(
+                        User.tenant_id == staff.tenant_id,
+                        User.email.icontains(term, autoescape=True),
+                    )
+                ),
+            )
+        )
     if status:
         query = query.where(ServiceEntitlement.status == status)
     if mine:
@@ -175,7 +206,7 @@ async def services(
         .offset(page.offset)
         .limit(page.page_size)
     )
-    return page.wrap([service.view(row) for row in rows], total)
+    return page.wrap(await service.enriched_views(db, staff.tenant_id, list(rows)), total)
 
 
 @router.post("/admin/services", status_code=201)
@@ -192,7 +223,17 @@ async def create(
 async def detail(
     ident: uuid.UUID, staff: User = Depends(session_staff), db: AsyncSession = Depends(get_db)
 ) -> dict:
-    return service.view(await service.owned(db, staff.tenant_id, ident))
+    return await service.detail_view(
+        db, staff.tenant_id, await service.owned(db, staff.tenant_id, ident)
+    )
+
+
+@router.get("/admin/services/{ident}/renewal-candidates")
+async def renewal_candidates(
+    ident: uuid.UUID, staff: User = Depends(session_staff), db: AsyncSession = Depends(get_db)
+) -> dict:
+    row = await service.owned(db, staff.tenant_id, ident)
+    return {"items": await service.renewal_candidates(db, staff.tenant_id, row)}
 
 
 @router.patch("/admin/services/{ident}")

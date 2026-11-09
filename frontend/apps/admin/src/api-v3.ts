@@ -23,13 +23,23 @@ import { buildCardQuery } from './lib/cards'
 import type { TicketAction, TicketReason, TicketStatus } from './lib/afterSales'
 
 // ---------------- products (§5) ----------------
+export interface ProductSubscription {
+  period_policy: 'calendar_month' | 'fixed_days'
+  period_days: number
+  grace_days: number
+  email_reminders: boolean
+  telegram_reminders: boolean
+}
 export interface ProductDeliveryFields {
   delivery_format: string | null
   delivery_separator: string | null
   redeem_url: string | null
   usage_i18n: I18nText
-  /** null = site default (672 h); 0 = no after-sales. */
+  /** null = site default; 0 = no after-sales. Setting hours clears months and vice versa. */
   after_sales_hours: number | null
+  after_sales_months: number | null
+  /** null = not a subscription (review-v7). */
+  subscription: ProductSubscription | null
 }
 export type AdminProductV3 = AdminProduct & Partial<ProductDeliveryFields>
 export type AdminProductInputV3 = AdminProductInput & Partial<ProductDeliveryFields>
@@ -155,6 +165,8 @@ export interface SiteAnnouncement {
 export interface AdminSiteSettings {
   announcement: SiteAnnouncement | null
   after_sales_default_hours: number
+  /** v7: month-based default (the legacy hours field stays for old clients). */
+  after_sales_default?: { unit: 'month' | 'hour'; value: number }
   auto_confirm_hours: { manual: number; auto_card: number }
   support_hours: I18nText
   /** Built-in fallbacks used when a value was never set. */

@@ -8,23 +8,43 @@ The delivery worker must not consume this topic.
 from __future__ import annotations
 
 import asyncio
+import logging
 import time as monotonic_time
 import uuid
 from datetime import datetime, time, timedelta, timezone
 
-from sqlalchemy import delete, func, select, text
+from sqlalchemy import delete, exists, func, select, text
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.exc import IntegrityError
 
 from app.core import mailer, notify_tg, secretbox, suspend
 from app.core.db import tenant_session
 from app.core.resources import Resources
+from app.core.security import STAFF_ROLES
 from app.core.settings_v5 import section
-from app.models import Outbox, Tenant, User
-from app.models.operations import OperationEvent, ServiceEntitlement, ServiceReminder
+from app.models import Order, OrderEvent, Outbox, Product, Tenant, User
+from app.models.operations import (
+    OperationEvent,
+    ServiceEntitlement,
+    ServiceReminder,
+    ServiceRenewal,
+)
 from app.modules.content.site import tenant_settings
-from app.modules.operations.service import record_event, utcnow, zone
+from app.modules.operations.service import (
+    periods_end,
+    record_event,
+    snapshot,
+    system_changed,
+    utcnow,
+    zone,
+)
+
+log = logging.getLogger("app.operations")
 
 TOPIC = "service.reminder"
+SUBSCRIPTION_WINDOW = timedelta(days=45)
+SUBSCRIPTION_BATCH = 50
+AUTO = "auto_subscription"
 BATCH = 20
 MAX_ATTEMPTS = 5
 LEASE = timedelta(minutes=5)
@@ -331,5 +351,175 @@ async def purge_events(res: Resources) -> int:
                 )
             )
             count += result.rowcount or 0
+            await db.commit()
+    return count
+
+
+async def _delivery_owner(db, tid: uuid.UUID, order: Order) -> uuid.UUID | None:  # type: ignore[no-untyped-def]
+    """The staff user who delivered the order (if recorded and still active staff), else the
+    tenant's earliest active admin."""
+    actor = await db.scalar(
+        select(OrderEvent.actor_id)
+        .join(User, User.id == OrderEvent.actor_id)
+        .where(
+            OrderEvent.tenant_id == tid,
+            OrderEvent.order_id == order.id,
+            OrderEvent.to_status == "delivered",
+            OrderEvent.actor_kind == "user",
+            User.tenant_id == tid,
+            User.status == "active",
+            User.role.in_(STAFF_ROLES),
+        )
+        .order_by(OrderEvent.id.desc())
+        .limit(1)
+    )
+    if actor is not None:
+        return actor
+    return await db.scalar(
+        select(User.id)
+        .where(User.tenant_id == tid, User.role == "admin", User.status == "active")
+        .order_by(User.created_at, User.id)
+        .limit(1)
+    )
+
+
+async def _apply_subscription(db, tid: uuid.UUID, order: Order, product: Product) -> str | None:  # type: ignore[no-untyped-def]
+    """Create or extend the service for one delivered subscription order (caller holds a
+    savepoint). Returns ``renewed``/``created`` or None when it must be skipped."""
+    cfg = product.subscription or {}
+    qty = max(1, order.qty)
+    start = order.delivered_at
+    existing = list(
+        await db.scalars(
+            select(ServiceEntitlement)
+            .where(
+                ServiceEntitlement.tenant_id == tid,
+                ServiceEntitlement.buyer_id == order.buyer_id,
+                ServiceEntitlement.product_id == product.id,
+                ServiceEntitlement.status != "cancelled",
+            )
+            .with_for_update()
+        )
+    )
+    if len(existing) > 1:
+        # Ambiguous (e.g. a manual and an auto service for the same product): never guess which
+        # one to extend and never add a third. Staff link it from the Services page.
+        n = len(existing)
+        log.warning("subscription order %s skipped: %d open services match", order.id, n)
+        return None
+    if len(existing) == 1:
+        row = existing[0]
+        before = snapshot(row)
+        base = max(row.ends_at, start) if row.ends_at else start
+        if row.starts_at is None:
+            row.starts_at = start
+        row.ends_at = periods_end(base, row.period_policy, row.period_days, row.timezone, qty)
+        row.version += 1
+        row.status = "active"
+        db.add(
+            ServiceRenewal(
+                tenant_id=tid,
+                entitlement_id=row.id,
+                order_id=order.id,
+                confirmed_by=row.owner_id,
+                period_version=row.version,
+                starts_at=base,
+                ends_at=row.ends_at,
+            )
+        )
+        await db.flush()
+        await system_changed(db, row, "service.renewed", before, AUTO)
+        return "renewed"
+    owner = await _delivery_owner(db, tid, order)
+    if owner is None:
+        log.warning("subscription order skipped: no active staff owner order=%s", order.id)
+        return None
+    policy = cfg.get("period_policy", "calendar_month")
+    days = int(cfg.get("period_days", 30))
+    row = ServiceEntitlement(
+        tenant_id=tid,
+        buyer_id=order.buyer_id,
+        order_id=order.id,
+        owner_id=owner,
+        product_id=product.id,
+        source="auto",
+        label=((product.title_i18n.get("en") or order.title or "Subscription").strip())[:120],
+        status="active",
+        timezone="UTC",
+        period_policy=policy,
+        period_days=days,
+        grace_days=int(cfg.get("grace_days", 0)),
+        email_reminders=bool(cfg.get("email_reminders", True)),
+        telegram_reminders=bool(cfg.get("telegram_reminders", True)),
+        starts_at=start,
+        ends_at=periods_end(start, policy, days, "UTC", qty),
+        version=1,
+    )
+    db.add(row)
+    await db.flush()
+    await system_changed(db, row, "service.created", None, AUTO)
+    return "created"
+
+
+async def sync_subscriptions(res: Resources) -> int:
+    """Turn delivered subscription orders into services (new or renewed) and cancel auto
+    services whose source order was refunded/cancelled. Idempotent: the unique
+    (tenant, order) constraints on services/renewals back every step."""
+    count = 0
+    now = utcnow()
+    for tid in await tenant_ids(res):
+        async with tenant_session(res.maker, tid) as db:
+            used_src = exists().where(
+                ServiceEntitlement.tenant_id == tid, ServiceEntitlement.order_id == Order.id
+            )
+            used_ren = exists().where(
+                ServiceRenewal.tenant_id == tid, ServiceRenewal.order_id == Order.id
+            )
+            pairs = (
+                await db.execute(
+                    select(Order, Product)
+                    .join(Product, Product.id == Order.product_id)
+                    .where(
+                        Order.tenant_id == tid,
+                        Product.tenant_id == tid,
+                        Product.subscription.is_not(None),
+                        Order.status.in_(("delivered", "completed")),
+                        Order.delivered_at >= now - SUBSCRIPTION_WINDOW,
+                        ~used_src,
+                        ~used_ren,
+                    )
+                    .order_by(Order.delivered_at, Order.id)
+                    .limit(SUBSCRIPTION_BATCH)
+                )
+            ).all()
+            for order, product in pairs:
+                try:
+                    async with db.begin_nested():
+                        if await _apply_subscription(db, tid, order, product):
+                            count += 1
+                except IntegrityError:
+                    log.info("subscription order already applied order=%s", order.id)
+            doomed = (
+                await db.execute(
+                    select(ServiceEntitlement)
+                    .join(Order, Order.id == ServiceEntitlement.order_id)
+                    .where(
+                        ServiceEntitlement.tenant_id == tid,
+                        Order.tenant_id == tid,
+                        ServiceEntitlement.source == "auto",
+                        ServiceEntitlement.status != "cancelled",
+                        Order.status.in_(("refunded", "cancelled")),
+                    )
+                    .order_by(ServiceEntitlement.id)
+                    .limit(SUBSCRIPTION_BATCH)
+                    .with_for_update(of=ServiceEntitlement)
+                )
+            ).scalars()
+            for row in list(doomed):
+                before = snapshot(row)
+                row.status = "cancelled"
+                row.version += 1
+                await system_changed(db, row, "service.cancelled", before, "source_order_void")
+                count += 1
             await db.commit()
     return count

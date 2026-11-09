@@ -18,7 +18,7 @@ const USDT = ['usdt_arbitrum', 'usdt_xlayer', 'usdt_trc20'] as const
 const usdt = reactive<Record<string, { on: boolean; pct: number }>>(
   Object.fromEntries(USDT.map((id) => [id, { on: false, pct: 0 }])),
 )
-const f = reactive({ on: true, pct: permilleToPercent(DEFAULT_SURCHARGE_PERMILLE), as_hours: 672, manual: 72, auto_card: 24, eta: 24, note_en: '', note_zh: '' })
+const f = reactive({ on: true, pct: permilleToPercent(DEFAULT_SURCHARGE_PERMILLE), as_unit: 'month' as 'month' | 'hour', as_value: 1, manual: 72, auto_card: 24, eta: 24, note_en: '', note_zh: '' })
 watch(
   () => props.site,
   (s) => {
@@ -30,7 +30,8 @@ watch(
     other.value = rest
     f.on = zpay_alipay?.enabled ?? true
     f.pct = permilleToPercent(zpay_alipay?.surcharge_permille ?? DEFAULT_SURCHARGE_PERMILLE)
-    f.as_hours = s.after_sales_default_hours
+    f.as_unit = s.after_sales_default?.unit ?? 'hour'
+    f.as_value = s.after_sales_default?.value ?? s.after_sales_default_hours
     f.manual = s.auto_confirm_hours.manual
     f.auto_card = s.auto_confirm_hours.auto_card
     f.eta = s.delivery?.manual_eta_hours ?? 24
@@ -51,7 +52,7 @@ async function save() {
     if (!Number.isInteger(p) || p < 0 || p > MAX_SURCHARGE_PERMILLE) e[id] = t('site.v.fee')
     usdtCfg[id] = { enabled: usdt[id].on, surcharge_permille: p }
   }
-  if (!okHours(f.as_hours, 8760)) e.as = t('delivery.hoursInvalid')
+  if (f.as_unit === 'month' ? !(okHours(f.as_value, 12) && f.as_value >= 1) : !okHours(f.as_value, 8760)) e.as = t(f.as_unit === 'month' ? 'delivery.invalid.months' : 'delivery.hoursInvalid')
   if (!okHours(f.manual, 720) || !okHours(f.auto_card, 720) || f.manual < 1 || f.auto_card < 1) e.ac = t('site.v.autoConfirm')
   if (!okHours(f.eta, 720) || f.eta < 1) e.eta = t('v5.payment.etaInvalid')
   errors.value = e
@@ -59,7 +60,7 @@ async function save() {
   const r = await run(() =>
     apiV5.site.put({
       payments: { channels: { ...other.value, ...usdtCfg, zpay_alipay: { enabled: f.on, surcharge_permille: pm } } },
-      after_sales_default_hours: f.as_hours,
+      after_sales_default: { unit: f.as_unit, value: f.as_value },
       auto_confirm_hours: { manual: f.manual, auto_card: f.auto_card },
       delivery: { manual_eta_hours: f.eta, manual_note_i18n: { en: f.note_en.trim(), 'zh-CN': f.note_zh.trim() } },
     }),
@@ -100,8 +101,11 @@ async function save() {
     <section class="panel block">
       <h2 class="h2">{{ t('site.defaults') }}</h2>
       <el-form-item :label="t('site.afterSalesHours')" :error="errors.as">
-        <el-input-number v-model="f.as_hours" :min="0" :max="8760" />
-        <span class="unit muted">{{ t('site.hours') }} ({{ Math.round((f.as_hours / 24) * 10) / 10 }} {{ t('site.days') }})</span>
+        <el-input-number v-model="f.as_value" :min="f.as_unit === 'month' ? 1 : 0" :max="f.as_unit === 'month' ? 12 : 8760" />
+        <el-select v-model="f.as_unit" :aria-label="t('site.afterSalesUnit')" style="width: 120px; margin-left: 8px" @change="f.as_value = f.as_unit === 'month' ? 1 : 24">
+          <el-option value="month" :label="t('site.months')" />
+          <el-option value="hour" :label="t('site.hours')" />
+        </el-select>
       </el-form-item>
       <el-form-item :label="t('site.autoConfirmManual')" :error="errors.ac"><el-input-number v-model="f.manual" :min="1" :max="720" /><span class="unit muted">{{ t('site.hours') }}</span></el-form-item>
       <el-form-item :label="t('site.autoConfirmAuto')"><el-input-number v-model="f.auto_card" :min="1" :max="720" /><span class="unit muted">{{ t('site.hours') }}</span></el-form-item>

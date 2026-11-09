@@ -276,6 +276,22 @@ function previewAttachment(url: string) {
 function back() {
   goBack(router, '/orders')
 }
+const serviceInfo = computed(() => {
+  const s = order.value?.service
+  if (!s) return null
+  const period =
+    s.starts_at && s.ends_at
+      ? t('order.servicePeriod', { start: formatDateTime(s.starts_at, locale.value), end: formatDateTime(s.ends_at, locale.value) })
+      : null
+  let status: string
+  if (s.status === 'cancelled') status = t('order.serviceCancelled')
+  else if (s.status === 'pending' || !s.ends_at) status = t('order.servicePending')
+  else {
+    const days = Math.ceil((new Date(s.ends_at).getTime() - now.value) / 86400000)
+    status = days > 0 ? t(days === 1 ? 'order.serviceDayLeft1' : 'order.serviceDaysLeft', { n: days }) : t('order.serviceExpired')
+  }
+  return { period, status }
+})
 const canAfterSales = computed(() => !!order.value && canRequestAfterSales(order.value))
 const asExpired = computed(
   () => !!order.value && ['delivered', 'completed'].includes(order.value.status) && !canAfterSales.value && !order.value.after_sales,
@@ -431,6 +447,12 @@ function gotCode() {
         </template>
       </section>
 
+      <section v-if="serviceInfo" class="section card pad">
+        <h3 class="svc-title">{{ t('order.serviceTitle') }}</h3>
+        <p v-if="serviceInfo.period" class="svc-period">{{ serviceInfo.period }}</p>
+        <p class="muted small">{{ serviceInfo.status }}</p>
+      </section>
+
       <section v-if="order.after_sales || canAfterSales || asExpired" class="section card pad">
         <AfterSalesStatus v-if="order.after_sales" :ticket="order.after_sales" />
         <van-button v-if="canAfterSales" block round plain class="as-btn" @click="asSheet = true">{{ t('afterSales.request') }}</van-button>
@@ -548,6 +570,14 @@ function gotCode() {
 }
 .price.big {
   font-size: 20px;
+}
+.svc-title {
+  margin: 0 0 6px;
+  font-size: 15px;
+}
+.svc-period {
+  margin: 0 0 4px;
+  font-weight: 600;
 }
 .small {
   font-size: 12px;

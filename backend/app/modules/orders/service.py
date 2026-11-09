@@ -432,7 +432,20 @@ async def list_own(db: AsyncSession, user: User, page: Page, lang: str = "en") -
             .limit(page.page_size)
         )
     )
-    return page.wrap(await order_views(db, rows, owner_id=user.id, lang=lang), int(total))
+    views = await order_views(db, rows, owner_id=user.id, lang=lang)
+    await attach_service(db, user, views)
+    return page.wrap(views, int(total))
+
+
+async def attach_service(db: AsyncSession, user: User, views: list[dict[str, Any]]) -> None:
+    """Fill ``service`` on the buyer's own order views (source or renewal order of a service)."""
+    from app.modules.operations.service import buyer_service_map
+
+    found = await buyer_service_map(
+        db, user.tenant_id, user.id, [uuid.UUID(v["id"]) for v in views]
+    )
+    for v in views:
+        v["service"] = found.get(uuid.UUID(v["id"]))
 
 
 async def check_channel(db: AsyncSession, tenant_id: uuid.UUID, channel: str) -> int:

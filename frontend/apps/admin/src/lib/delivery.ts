@@ -125,3 +125,36 @@ export function afterSalesPresetFor(hours: number | null | undefined): AfterSale
   const h = hours ?? null
   return AFTER_SALES_PRESETS.find((p) => p.hours === h)?.key ?? 'custom'
 }
+
+/** v7 after-sales control: site default | hours | days | months. */
+export type AfterSalesUnit = 'default' | 'hours' | 'days' | 'months'
+export const AFTER_SALES_UNITS: AfterSalesUnit[] = ['default', 'hours', 'days', 'months']
+
+export function afterSalesToForm(
+  hours: number | null | undefined,
+  months: number | null | undefined,
+): { unit: AfterSalesUnit; value: number } {
+  if (months != null) return { unit: 'months', value: months }
+  if (hours == null) return { unit: 'default', value: 1 }
+  if (hours > 0 && hours % 24 === 0) return { unit: 'days', value: hours / 24 }
+  return { unit: 'hours', value: hours }
+}
+
+/** Setting one unit clears the other (the server enforces the same rule). */
+export function afterSalesFromForm(
+  unit: AfterSalesUnit,
+  value: number,
+): { after_sales_hours: number | null; after_sales_months: number | null } {
+  if (unit === 'hours') return { after_sales_hours: value, after_sales_months: null }
+  if (unit === 'days') return { after_sales_hours: value * 24, after_sales_months: null }
+  if (unit === 'months') return { after_sales_hours: null, after_sales_months: value }
+  return { after_sales_hours: null, after_sales_months: null }
+}
+
+export function afterSalesValid(unit: AfterSalesUnit, value: number): boolean {
+  if (!Number.isInteger(value)) return unit === 'default'
+  if (unit === 'hours') return value >= 0 && value <= 8760
+  if (unit === 'days') return value >= 1 && value <= 365
+  if (unit === 'months') return value >= 1 && value <= 12
+  return true
+}
