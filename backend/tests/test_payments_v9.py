@@ -465,3 +465,31 @@ async def test_announcement_ack_follows_user_and_is_tenant_scoped(env):
 
 
 _ = (QueryResult,)
+
+
+async def test_gateway_json_on_404_is_parsed_not_a_transport_error():
+    """Xiaodou (prod, 2026-11-09): unknown out_trade_no -> HTTP 404 {"code":-1,"msg":"订单不存在"};
+    bad signature -> 400 JSON. Not-found must parse as found=False; other 4xx JSON must not
+    confirm anything; a 404 without JSON stays a request failure."""
+    cfg = ZPayConfig("p", "k" * 16, "https://g.example", "https://g.example", "n", "r")
+    bodies = {
+        "NF": (404, {"code": -1, "msg": "订单不存在"}),
+        "SIG": (400, {"code": -1, "msg": "签名校验失败"}),
+    }
+
+    def handler(request):
+        ref = request.url.params.get("out_trade_no", "")
+        if ref in bodies:
+            status, body = bodies[ref]
+            return httpx.Response(status, json=body)
+        return httpx.Response(404, text="<html>not here</html>")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        client = ZPayClient(cfg, http)
+        q = await client.query_order("NF")
+        assert q.found is False and q.paid is False
+        assert (await client.probe_order("NF"))["code"] == "-1"
+        with pytest.raises(ZPayQueryError):
+            await client.query_order("SIG")
+        with pytest.raises(ZPayQueryError):
+            await client.query_order("HTML404")

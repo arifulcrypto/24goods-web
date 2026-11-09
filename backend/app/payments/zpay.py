@@ -123,6 +123,11 @@ def parse_query_response(data: Any) -> QueryResult:
 
 
 QUERY_TIMEOUT_S = 3.0
+# Xiaodou answers an unknown out_trade_no with HTTP 404 + {"code":-1,"msg":"订单不存在"}
+# and a bad signature with 400 + JSON. Parse those bodies (parse_query_response / create_payment
+# decide what they mean; nothing here can mark a payment paid) instead of treating them as
+# transport failures.
+_JSON_ERROR_STATUSES = frozenset({400, 404})
 # connect fails first (before the overall wait_for) so a dead host is told apart from a slow one
 _TIMEOUT = httpx.Timeout(QUERY_TIMEOUT_S, connect=QUERY_TIMEOUT_S * 0.7)
 
@@ -177,7 +182,9 @@ class ZPayClient:
                         extensions={"sni_hostname": target.host},
                         timeout=_TIMEOUT,
                     ) as response:
-                        raw = await response_bytes(response, 256 * 1024)
+                        raw = await response_bytes(
+                            response, 256 * 1024, body_statuses=_JSON_ERROR_STATUSES
+                        )
                         return json.loads(
                             raw, parse_float=bounded_decimal, parse_int=bounded_integer
                         )
@@ -189,7 +196,7 @@ class ZPayClient:
                 headers={"Accept-Encoding": "identity"},
                 timeout=_TIMEOUT,
             ) as response:
-                raw = await response_bytes(response, 256 * 1024)
+                raw = await response_bytes(response, 256 * 1024, body_statuses=_JSON_ERROR_STATUSES)
                 return json.loads(raw, parse_float=bounded_decimal, parse_int=bounded_integer)
         except (httpx.HTTPError, ValueError, safefetch.FetchError) as exc:
             if _never_dispatched(exc):

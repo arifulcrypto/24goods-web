@@ -10,6 +10,11 @@ no migrations. Pre-deploy backup with the installed v1 script, sha256-verified o
 retag `ghcr.io/arifulcrypto/goods24-{api,web}:rollback-e1fb9e7` to `:main` and `up -d`. Smoke all
 pass; api->BEpusdt 200. Demo also on `a8160cb`.
 
+**Production deployed 2026-11-09 08:22 UTC: `84b4dc0`** (#64, migration 0017). **Xiaodou EPay:** c4's route
+into mainland China is lossy (two-way tests vs a Tencent GZ VPS); API traffic now goes through a
+TLS-passthrough relay on the dev box (docs/production.md "Xiaodou EPay relay"); the ZPay client
+now parses Xiaodou's 4xx JSON replies (404 = order not found) instead of failing them.
+
 **#58 quick items (2026-11-09, `fix/issue-58-quick`):** policy pages name no governing-law
 jurisdiction (owner: no Singapore for now) and carry no contact address; `SiteFooter`
 ("Kesiv · Contact: support@kesiv.com") is the single place, now also on article pages. USDT order
