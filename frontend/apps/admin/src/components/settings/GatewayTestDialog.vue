@@ -72,7 +72,8 @@ onBeforeUnmount(stop)
         <dt>{{ t('gwRouting.outTradeNo') }}</dt><dd><code>{{ view.out_trade_no }}</code></dd>
         <template v-if="phase === 'waiting'"><dt>{{ t('gwRouting.expiresIn') }}</dt><dd>{{ formatCountdown(left) }}</dd></template>
       </dl>
-      <el-alert v-if="phase === 'waiting'" :title="t('gwRouting.waiting')" type="info" :closable="false" show-icon />
+      <el-alert v-if="phase === 'waiting' && !qr && view.reason" :title="t(`gwRouting.reasons.${view.reason}`)" type="warning" :closable="false" show-icon />
+      <el-alert v-else-if="phase === 'waiting'" :title="t('gwRouting.waiting')" type="info" :closable="false" show-icon />
       <el-alert v-else-if="phase === 'paid'" :title="t('gwRouting.paid')" type="success" :closable="false" show-icon />
       <el-alert v-else-if="phase === 'expired'" :title="t('gwRouting.expired')" type="warning" :closable="false" show-icon />
       <el-alert v-else :title="t(`gwRouting.reasons.${view.reason ?? 'gateway_unknown'}`)" :description="view.message ?? ''" type="error" :closable="false" show-icon />

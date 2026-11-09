@@ -140,7 +140,7 @@ async def test_long_provider_trade_ids_remain_distinct_and_idempotent(env, monke
 async def test_recovery_checks_second_paid_original_after_first_settles(env, monkeypatch):
     admin, _ = await env.login("admin")
     buyer, _ = await env.login()
-    await _gateway(env, admin, monkeypatch)
+    first_ref, _ = await _gateway(env, admin, monkeypatch)
 
     async def create(*args):
         return {"kind": "qr", "payload": "https://qr.alipay.com/fixture"}
@@ -148,6 +148,8 @@ async def test_recovery_checks_second_paid_original_after_first_settles(env, mon
     monkeypatch.setattr(ZPayClient, "create_payment", create)
     order = await _prepare(buyer, await env.product(mode="manual"))
     await _gateway(env, admin, monkeypatch, "fixture2")
+    # the first gateway is retired (v10: a ready attempt is reused while its gateway is enabled)
+    await admin.patch(f"/api/v1/admin/payment-gateways/{first_ref}", json={"enabled": False})
     assert (
         await buyer.post(f"/api/v1/orders/{order['id']}/pay", json={"channel": "zpay_alipay"})
     ).status_code == 200
@@ -259,7 +261,7 @@ async def test_committed_settlement_survives_an_unresolved_original(env, monkeyp
     original is unavailable; its outcome travels with the failure so alerts still fire."""
     admin, _ = await env.login("admin")
     buyer, _ = await env.login()
-    await _gateway(env, admin, monkeypatch)
+    first_ref, _ = await _gateway(env, admin, monkeypatch)
 
     async def create(*args):
         return {"kind": "qr", "payload": "https://qr.alipay.com/fixture"}
@@ -267,6 +269,8 @@ async def test_committed_settlement_survives_an_unresolved_original(env, monkeyp
     monkeypatch.setattr(ZPayClient, "create_payment", create)
     order = await _prepare(buyer, await env.product(mode="manual"))
     await _gateway(env, admin, monkeypatch, "fixture2")
+    # the first gateway is retired (v10: a ready attempt is reused while its gateway is enabled)
+    await admin.patch(f"/api/v1/admin/payment-gateways/{first_ref}", json={"enabled": False})
     assert (
         await buyer.post(f"/api/v1/orders/{order['id']}/pay", json={"channel": "zpay_alipay"})
     ).status_code == 200
@@ -293,7 +297,7 @@ async def test_requery_all_propagates_a_committed_outcome_through_mixed_evidence
     """requery_all must report what it committed even while the rest stays unresolved."""
     admin, _ = await env.login("admin")
     buyer, _ = await env.login()
-    await _gateway(env, admin, monkeypatch)
+    first_ref, _ = await _gateway(env, admin, monkeypatch)
 
     async def create(*args):
         return {"kind": "qr", "payload": "https://qr.alipay.com/fixture"}
@@ -301,6 +305,8 @@ async def test_requery_all_propagates_a_committed_outcome_through_mixed_evidence
     monkeypatch.setattr(ZPayClient, "create_payment", create)
     order = await _prepare(buyer, await env.product(mode="manual"))
     await _gateway(env, admin, monkeypatch, "fixture2")
+    # the first gateway is retired (v10: a ready attempt is reused while its gateway is enabled)
+    await admin.patch(f"/api/v1/admin/payment-gateways/{first_ref}", json={"enabled": False})
     assert (
         await buyer.post(f"/api/v1/orders/{order['id']}/pay", json={"channel": "zpay_alipay"})
     ).status_code == 200
@@ -345,7 +351,7 @@ async def test_a_commit_survives_a_plain_unavailable_raised_afterwards(env, monk
     """Inconsistent evidence on a later original must not discard an earlier settlement."""
     admin, _ = await env.login("admin")
     buyer, _ = await env.login()
-    await _gateway(env, admin, monkeypatch)
+    first_ref, _ = await _gateway(env, admin, monkeypatch)
 
     async def create(*args):
         return {"kind": "qr", "payload": "https://qr.alipay.com/fixture"}
@@ -353,6 +359,8 @@ async def test_a_commit_survives_a_plain_unavailable_raised_afterwards(env, monk
     monkeypatch.setattr(ZPayClient, "create_payment", create)
     order = await _prepare(buyer, await env.product(mode="manual"))
     await _gateway(env, admin, monkeypatch, "fixture2")
+    # the first gateway is retired (v10: a ready attempt is reused while its gateway is enabled)
+    await admin.patch(f"/api/v1/admin/payment-gateways/{first_ref}", json={"enabled": False})
     assert (
         await buyer.post(f"/api/v1/orders/{order['id']}/pay", json={"channel": "zpay_alipay"})
     ).status_code == 200
@@ -530,10 +538,12 @@ async def test_a_deconfigured_tenant_fails_closed_over_a_recorded_legacy_url(env
 async def _two_durable_originals(env, monkeypatch):
     admin, _ = await env.login("admin")
     buyer, _ = await env.login()
-    await _gateway(env, admin, monkeypatch)
+    first_ref, _ = await _gateway(env, admin, monkeypatch)
     await _qr(monkeypatch)
     order = await _prepare(buyer, await env.product(mode="manual"))
     await _gateway(env, admin, monkeypatch, "fixture2")
+    # the first gateway is retired (v10: a ready attempt is reused while its gateway is enabled)
+    await admin.patch(f"/api/v1/admin/payment-gateways/{first_ref}", json={"enabled": False})
     again = await buyer.post(f"/api/v1/orders/{order['id']}/pay", json={"channel": "zpay_alipay"})
     assert again.status_code == 200, again.text
     return buyer, order

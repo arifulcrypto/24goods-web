@@ -94,6 +94,9 @@ async def test_create_payment_refusal_is_explicit_and_key_is_redacted():
         httpx.Response(200, text="<html>nope</html>"),
         httpx.Response(200, json=["code", 1]),
         httpx.Response(200, json={"msg": "no code"}),
+        httpx.Response(200, json={"code": "abc", "msg": "x"}),
+        httpx.Response(200, json={"code": True, "msg": "x"}),
+        httpx.Response(200, json={"code": 1.5, "msg": "x"}),
     ],
 )
 async def test_create_payment_ambiguous_answers_are_not_refusals(response):
@@ -600,3 +603,183 @@ async def test_test_payment_gateway_failure_is_reported_not_raised(env, monkeypa
     body = r.json()
     assert body["status"] == "failed" and body["reason"] == "gateway_refused"
     assert body["qr_content"] is None and "merchant disabled" in body["message"]
+
+
+# ----------------------------------------------------------------------- audit follow-ups
+@pytest.mark.parametrize(
+    "raw", ["1E+999990", "1E+999998", "sNaN", "NaN", "-1", "10.01", "0", "1e1"]
+)
+def test_parse_amount_rejects_hostile_forms_without_arithmetic(raw):
+    from app.core.errors import Validation
+    from app.modules.payments.gateway_tests import parse_amount
+
+    with pytest.raises(Validation):
+        parse_amount(raw)
+
+
+def test_parse_amount_accepts_the_range():
+    from app.modules.payments.gateway_tests import parse_amount
+
+    got = [parse_amount(x) for x in ("0.01", "1", "9.5", "10", "10.00")]
+    assert got == [1, 100, 950, 1000, 1000]
+
+
+@pytest.mark.parametrize("raw", ["1E+999990", "sNaN", "NaN"])
+async def test_test_payment_endpoint_answers_422_for_hostile_amounts(env, monkeypatch, raw):
+    admin, _ = await env.login("admin")
+    ref, _ = await _add_gateway(env, admin, monkeypatch, "gwa")
+    _stub_test_gateway(monkeypatch)
+    assert (await admin.post(f"{GW}/{ref}/test-payment", json={"amount": raw})).status_code == 422
+
+
+def test_refused_attempts_are_rechecked_by_the_reconciler():
+    from app.modules.payments.reconcile import RECHECK_REASONS
+
+    assert "gateway_refused" in RECHECK_REASONS and "gateway_unreachable" in RECHECK_REASONS
+
+
+async def test_concurrent_pays_open_at_most_one_live_gateway_order(env, monkeypatch):
+    import asyncio
+
+    a_failed = asyncio.Event()
+    calls: list[str] = []
+
+    async def create(self, order_no, *a):
+        calls.append(self.config.pid)
+        if self.config.pid == "gwa":
+            a_failed.set()
+            raise ZPayUnreachable("gateway unreachable")
+        await asyncio.sleep(0.4)  # gateway b is slow: the window the second request tries to use
+        return {"kind": "qr", "payload": "https://qr.alipay.com/b"}
+
+    admin, _ = await env.login("admin")
+    buyer, _ = await env.login()
+    await _add_gateway(env, admin, monkeypatch, "gwa", priority=10)
+    await _add_gateway(env, admin, monkeypatch, "gwb", priority=20)
+    await admin.put(f"{GW}/routing", json={"mode": "priority"})
+    monkeypatch.setattr(ZPayClient, "create_payment", create)
+    order = await _order(env, buyer)
+    url = PAY.format(order["id"])
+
+    async def second():
+        await a_failed.wait()
+        await asyncio.sleep(0.05)
+        return await buyer.post(url, json={"channel": "zpay_alipay"})
+
+    r1, r2 = await asyncio.gather(buyer.post(url, json={"channel": "zpay_alipay"}), second())
+    assert r1.status_code == 200, r1.text
+    assert r2.status_code in (200, 503), r2.text
+    assert calls.count("gwb") == 1
+    live = [x for x in await _attempts(env) if x.status in ("preparing", "ready", "unknown")]
+    assert len(live) == 1
+
+
+async def test_sticky_flip_by_another_success_does_not_supersede_a_live_qr(env, monkeypatch):
+    behaviour = {"gwa": None, "gwb": None}
+    _admin, buyer, a, _b, calls = await _setup(env, monkeypatch, behaviour, mode="sticky")
+    first = await _order(env, buyer)
+    r = await buyer.post(PAY.format(first["id"]), json={"channel": "zpay_alipay"})
+    assert r.status_code == 200
+    assert calls == ["gwa"]
+    behaviour["gwa"] = ZPayUnreachable("x")  # another payment fails over to b: b is now sticky
+    other = await _order(env, buyer)
+    r = await buyer.post(PAY.format(other["id"]), json={"channel": "zpay_alipay"})
+    assert r.status_code == 200
+    assert calls == ["gwa", "gwa", "gwb"]
+    # the first buyer comes back: the live QR at a (still enabled) is kept, nothing new is created
+    again = await buyer.post(PAY.format(first["id"]), json={"channel": "zpay_alipay"})
+    assert again.status_code == 200
+    assert calls == ["gwa", "gwa", "gwb"]
+    mine = [x for x in await _attempts(env) if x.local_ref == first["order_no"]]
+    assert [(x.status, str(x.provider_id)) for x in mine] == [("ready", a[0])]
+
+
+async def test_no_enabled_gateway_never_falls_back_to_the_environment_key(env, monkeypatch):
+    admin, _ = await env.login("admin")
+    buyer, _ = await env.login()
+    ref, _ = await _add_gateway(env, admin, monkeypatch, "gwa")
+    await admin.patch(f"{GW}/{ref}", json={"enabled": False})
+    _stub_create(monkeypatch, {"gwa": None})
+    monkeypatch.setattr(env.res.settings, "zpay_pid", "envpid", raising=False)
+    monkeypatch.setattr(env.res.settings, "zpay_key", "envkey" * 4, raising=False)
+    order = await _order(env, buyer)
+    r = await buyer.post(PAY.format(order["id"]), json={"channel": "zpay_alipay"})
+    assert r.status_code == 503 and r.json()["error"]["code"] == "unavailable", r.text
+    assert await _attempts(env) == []
+
+
+async def test_test_payment_ambiguous_error_stays_pending_and_a_notify_still_records_it(
+    env, monkeypatch
+):
+    admin, _ = await env.login("admin")
+    ref, key = await _add_gateway(env, admin, monkeypatch, "gwa", priority=10)
+
+    async def create(self, *a):
+        raise ZPayQueryError("query failed: ReadTimeout")
+
+    async def query(self, no):
+        return QueryResult(True, True, Decimal("0.01"), "TT-1", no)
+
+    monkeypatch.setattr(ZPayClient, "create_payment", create)
+    monkeypatch.setattr(ZPayClient, "query_order", query)
+    test = (await admin.post(f"{GW}/{ref}/test-payment", json={})).json()
+    assert test["status"] == "pending" and test["reason"] == "gateway_unknown"
+    assert test["qr_svg"] is None
+    got = await env.client(csrf=False).get(NOTIFY, params=_notify_params(test, key))
+    assert got.text == "success"
+    assert (await admin.get(f"{GW}/test-payments/{test['id']}")).json()["status"] == "paid"
+
+
+async def test_gateway_with_paid_test_payments_cannot_be_deleted(env, monkeypatch):
+    admin, _ = await env.login("admin")
+    ref, key = await _add_gateway(env, admin, monkeypatch, "gwa", priority=10)
+
+    async def query(self, no):
+        return QueryResult(True, True, Decimal("0.01"), "TT-1", no)
+
+    _stub_test_gateway(monkeypatch, query=query)
+    test = (await admin.post(f"{GW}/{ref}/test-payment", json={})).json()
+    await env.client(csrf=False).get(NOTIFY, params=_notify_params(test, key))
+    assert (await admin.delete(f"{GW}/{ref}")).status_code == 409
+
+
+async def test_concurrent_duplicate_test_notify_posts_the_ledger_once(env, monkeypatch):
+    import asyncio
+
+    admin, _ = await env.login("admin")
+    ref, key = await _add_gateway(env, admin, monkeypatch, "gwa", priority=10)
+
+    async def query(self, no):
+        await asyncio.sleep(0.1)
+        return QueryResult(True, True, Decimal("0.01"), "TT-1", no)
+
+    _stub_test_gateway(monkeypatch, query=query)
+    test = (await admin.post(f"{GW}/{ref}/test-payment", json={})).json()
+    params = _notify_params(test, key)
+    rs = await asyncio.gather(
+        *(env.client(csrf=False).get(NOTIFY, params=params) for _ in range(4))
+    )
+    assert all(r.status_code == 200 for r in rs)
+    assert (
+        await env.scalar("SELECT count(*) FROM ledger_entries WHERE account='test_receipts'") == 1
+    )
+    assert await env.scalar("SELECT count(*) FROM audit_log WHERE action='payment.test_paid'") == 1
+
+
+async def test_cross_tenant_notify_of_a_test_reference_is_rejected(env, monkeypatch):
+    from app.modules.payments.notify import handle_notify
+
+    admin, _ = await env.login("admin")
+    ref, key = await _add_gateway(env, admin, monkeypatch, "gwa", priority=10)
+
+    async def query(self, no):
+        return QueryResult(True, True, Decimal("0.01"), "TT-1", no)
+
+    _stub_test_gateway(monkeypatch, query=query)
+    test = (await admin.post(f"{GW}/{ref}/test-payment", json={})).json()
+    params = _notify_params(test, key)  # correctly signed with the owner tenant's gateway key
+    async with env.api_session(env.other_tenant_id) as db:
+        outcome = await handle_notify(db, env.res, env.other_tenant_id, params, None)
+    assert outcome.reply != "success"
+    assert await env.scalar("SELECT status FROM payment_tests") == "pending"
+    assert await env.scalar("SELECT count(*) FROM ledger_entries") == 0

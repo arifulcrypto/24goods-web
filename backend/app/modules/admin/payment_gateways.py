@@ -318,6 +318,17 @@ async def delete_gateway(
     )
     if used:
         raise InvalidState("This gateway has payment attempts; disable it instead of deleting it")
+    paid_tests = await db.scalar(
+        select(
+            exists().where(
+                PaymentTest.tenant_id == tid,
+                PaymentTest.provider_id == ref,
+                PaymentTest.status == "paid",
+            )
+        )
+    )
+    if paid_tests:
+        raise InvalidState("This gateway has paid test payments; disable it instead of deleting")
     active = await active_gateway(db, tid)
     if active is not None and active.id == row.id:
         await set_active(db, tid, None)

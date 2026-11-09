@@ -272,7 +272,10 @@ class ZPayClient:
         )
         if not isinstance(data, dict) or "code" not in data:
             raise ZPayQueryError("gateway refused payment")
-        if _as_int(data.get("code")) != 1:
+        code = _as_int(data.get("code"))
+        if code is None:  # non-numeric / boolean / fractional: not a well-formed refusal
+            raise ZPayQueryError("gateway refused payment")
+        if code != 1:
             msg = str(data.get("msg") or "")[:200]
             if self.config.key:
                 msg = msg.replace(self.config.key, "***")

@@ -12,6 +12,7 @@ amount, server-to-server re-query, then a row lock + idempotent state change.
 from __future__ import annotations
 
 import asyncio
+import re
 import secrets
 import uuid
 from dataclasses import replace
@@ -44,18 +45,22 @@ def is_test_ref(out_trade_no: str) -> bool:
     return out_trade_no.startswith(TEST_PREFIX) and len(out_trade_no) == 17
 
 
+_AMOUNT = re.compile(r"^\d{1,2}(\.\d{1,2})?$")
+
+
 def parse_amount(raw: str) -> int:
-    """Minor units of a 0.01..10.00 amount with at most two decimals."""
+    """Minor units of a 0.01..10.00 amount with at most two decimals. The shape is checked with a
+    regex BEFORE any Decimal arithmetic (exponent / NaN forms never reach it)."""
+    text = raw.strip() if isinstance(raw, str) else ""
+    if not _AMOUNT.fullmatch(text):
+        raise Validation("Amount must look like 0.01 to 10.00 (at most 2 decimals)")
     try:
-        value = Decimal(raw.strip())
-    except (InvalidOperation, AttributeError):
+        minor = int((Decimal(text) * 100).to_integral_value())
+    except (InvalidOperation, ArithmeticError):
         raise Validation("Invalid amount") from None
-    minor = value * 100
-    if not value.is_finite() or minor != minor.to_integral_value():
-        raise Validation("Amount can have at most 2 decimals")
-    if not MIN_MINOR <= int(minor) <= MAX_MINOR:
+    if not MIN_MINOR <= minor <= MAX_MINOR:
         raise Validation("Test amount must be between 0.01 and 10.00")
-    return int(minor)
+    return minor
 
 
 def view(row: PaymentTest, label: str | None = None) -> dict[str, Any]:
@@ -151,7 +156,8 @@ async def create(
     except ZPayUnreachable:
         status, data = "failed", {"reason": "gateway_unreachable"}
     except (ZPayQueryError, asyncio.TimeoutError):
-        status, data = "failed", {"reason": "gateway_unknown"}
+        # the gateway may have created it: stay pending so a later notify can still record it
+        status, data = "pending", {"reason": "gateway_unknown"}
     row = await db.scalar(
         select(PaymentTest)
         .where(PaymentTest.id == test_id, PaymentTest.tenant_id == tid)

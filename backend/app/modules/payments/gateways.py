@@ -212,7 +212,12 @@ async def prepare(
     gateway; anything ambiguous stops here with an ``unknown`` attempt (review-v10 §A.3)."""
     cands = await candidates(db, tid)
     if not cands:
-        if ((await tenant_settings(db, tid)).get("payments") or {}).get("epay_provider_id"):
+        has_rows = await db.scalar(
+            select(PaymentGateway.id).where(PaymentGateway.tenant_id == tid).limit(1)
+        )
+        managed = ((await tenant_settings(db, tid)).get("payments") or {}).get("epay_provider_id")
+        if has_rows or managed:
+            # managed tenant with nothing enabled: never fall back to the environment key
             raise Unavailable("No payment gateway is enabled")
         return None  # existing environment-configured integration remains compatible
     if currency != "CNY":
@@ -251,7 +256,7 @@ async def prepare(
             raise Unavailable("Payment outcome is unknown; reconciliation is required")
         if (
             att.amount_minor == amount_minor
-            and att.provider_id == cands[0].id  # first choice changed: new attempt
+            and att.provider_id in {c.id for c in cands}  # its gateway is still enabled
             and att.currency == currency
             and att.expires_at
             and att.expires_at > now
@@ -262,7 +267,7 @@ async def prepare(
         await db.flush()
     # plain values: every attempt commits, which expires the ORM rows
     plan = [(c.id, client_for(res, c), c.mode) for c in cands]
-    for pid, client, mode in plan:
+    for index, (pid, client, mode) in enumerate(plan):
         outcome = await _try_gateway(
             db,
             tid=tid,
@@ -277,8 +282,9 @@ async def prepare(
             model=model,
             col=col,
             target_version=target_version,
+            retry=index > 0,
         )
-        if outcome == "ok":
+        if outcome in ("ok", "taken"):
             return "/pay/epay/" + no
     raise ChannelUnreachable()
 
@@ -298,9 +304,33 @@ async def _try_gateway(
     model: Any,
     col: Any,
     target_version: str,
+    retry: bool = False,
 ) -> str:
     """One reservation + gateway call. Returns ``"ok"`` or ``"failover"``; every other outcome
     raises (and so ends the pay request)."""
+    if retry:
+        # the previous try's commit released the reservation lock: take it again and make sure no
+        # concurrent pay request opened a live attempt for this payable in the meantime
+        await db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+            {"key": str(tid) + ":epay:" + no},
+        )
+        live = await db.scalar(
+            select(PaymentAttempt)
+            .where(
+                PaymentAttempt.tenant_id == tid,
+                PaymentAttempt.local_ref == no,
+                PaymentAttempt.provider_id.is_not(None),
+                PaymentAttempt.status.in_(("preparing", "ready", "unknown")),
+            )
+            .limit(1)
+        )
+        if live is not None:
+            live_status = live.status
+            await db.rollback()
+            if live_status == "ready":
+                return "taken"
+            raise Unavailable("A payment is already being prepared; retry shortly")
     now = datetime.now(timezone.utc)
     att = PaymentAttempt(
         tenant_id=tid,

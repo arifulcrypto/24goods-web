@@ -200,7 +200,7 @@ async def requery_attempts(
 
 RECHECK_WINDOW = timedelta(hours=24)
 RECHECK_EVERY = timedelta(minutes=10)
-RECHECK_REASONS = ("gateway_unreachable", "resolved_not_paid")
+RECHECK_REASONS = ("gateway_unreachable", "gateway_refused", "resolved_not_paid")
 
 
 async def recheck_failed(res: Resources, db: AsyncSession, tid: uuid.UUID, now: datetime) -> int:
