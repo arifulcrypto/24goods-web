@@ -17,7 +17,9 @@ still honoured); job `sync_subscriptions` turns delivered subscription orders in
 renewed, audited as `system`); Services page shows order no./product/buyer/source/days left,
 renewal candidates and a date picker instead of pasted UUIDs; buyers see their service period on
 the order. Migration `0014_subscriptions` (additive). Not built: buyer self-service renew, recurring
-charge.
+charge. Follow-up (security review): a refunded *renewal* order does not yet shorten the
+service — staff adjust the due date by hand; with two open services for one buyer+product the job
+skips the order and logs it for staff.
 
 **Policy pages v2 + help center (2026-11-09, `docs/legal-help-sg`):** Terms / Privacy /
 After-sales / Platform rules rewritten (venue positioning, Singapore law, generic payment and

@@ -412,3 +412,19 @@ async def test_buyer_order_view_shows_service_only_to_its_owner(env):
     # another buyer can neither read the order nor its service
     assert (await stranger.get(f"{API}/orders/{src['id']}")).status_code == 404
     assert all(o["service"] is None for o in (await stranger.get(f"{API}/orders")).json()["items"])
+
+
+async def test_sync_skips_when_two_open_services_match(env):
+    """Security review PR #56: never guess which of several services to extend, never add more."""
+    admin, _ = await env.login("admin")
+    buyer, _ = await env.login("buyer")
+    staff, _ = await env.login("agent")
+    p = await subscription_product(env, admin)
+    await delivered_order(env, buyer, p, staff=staff)
+    assert await jobs.sync_subscriptions(env.res) == 1  # auto service
+    manual = await delivered_order(env, buyer, p, staff=staff)
+    r = await admin.post(f"{API}/admin/services", json={"order_no": manual["order_no"]})
+    assert r.status_code == 201, r.text  # staff registered a second, manual one
+    await delivered_order(env, buyer, p, staff=staff)
+    assert await jobs.sync_subscriptions(env.res) == 0
+    assert len(await entitlements(env)) == 2

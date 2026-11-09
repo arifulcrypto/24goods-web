@@ -33,10 +33,16 @@ def upgrade() -> None:
         "ALTER TABLE service_entitlements ADD COLUMN source varchar(8) NOT NULL "
         "DEFAULT 'manual' CHECK (source IN ('manual','auto'))"
     )
+    # Cross-tenant backfill: lift FORCE RLS for the statement, like 0013 (the migration role is
+    # the table owner and would otherwise see no rows).
+    for t in ("service_entitlements", "orders"):
+        op.execute(f"ALTER TABLE {t} NO FORCE ROW LEVEL SECURITY")
     op.execute(
         "UPDATE service_entitlements s SET product_id = o.product_id FROM orders o "
         "WHERE o.id = s.order_id AND o.tenant_id = s.tenant_id AND s.product_id IS NULL"
     )
+    for t in ("service_entitlements", "orders"):
+        op.execute(f"ALTER TABLE {t} FORCE ROW LEVEL SECURITY")
     op.execute(
         "CREATE INDEX ix_service_entitlements_buyer_product "
         "ON service_entitlements(tenant_id, buyer_id, product_id)"

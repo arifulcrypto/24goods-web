@@ -401,6 +401,12 @@ async def _apply_subscription(db, tid: uuid.UUID, order: Order, product: Product
             .with_for_update()
         )
     )
+    if len(existing) > 1:
+        # Ambiguous (e.g. a manual and an auto service for the same product): never guess which
+        # one to extend and never add a third. Staff link it from the Services page.
+        n = len(existing)
+        log.warning("subscription order %s skipped: %d open services match", order.id, n)
+        return None
     if len(existing) == 1:
         row = existing[0]
         before = snapshot(row)
