@@ -133,10 +133,11 @@ Outbound TCP to Xiaodou's API therefore goes through a relay on the dev/demo box
 - dev box: `kesiv-xiaodou-relay.service` (socat, port 20443, accepts c4's IPv4 only via `range=`
   plus a ufw rule) -> `pay.xiaodouap.cn:443`. TLS is end to end between the c4 app and Xiaodou;
   the relay only forwards encrypted bytes. The dev box IP is on Xiaodou's merchant whitelist.
-- c4: `kesiv-xiaodou-route.service` runs `/usr/local/sbin/kesiv-xiaodou-route.sh add`, a DNAT of
-  `159.75.195.113:443` (nat OUTPUT + PREROUTING, so host and containers) to the relay.
-  `kesiv-xiaodou-route.sh status|del` to inspect or remove. If Xiaodou's IP changes
-  (`getent ahosts pay.xiaodouap.cn`), update `XD_IP` in that script.
+- c4: `/usr/local/sbin/kesiv-xiaodou-route.sh` DNATs Xiaodou's API IPs (port 443; nat OUTPUT +
+  PREROUTING, so host and containers) to the relay. The IPs are resolved from `pay.xiaodouap.cn`
+  on every run: `kesiv-xiaodou-route.service` syncs at boot and `kesiv-xiaodou-route-sync.timer`
+  every 5 minutes (adds new IPs, removes stale ones, keeps the rules if DNS fails; changes are
+  logged with `journalctl -t kesiv-xiaodou-relay`). `kesiv-xiaodou-route.sh status|sync|del`.
 - Buyers never use the relay: their browsers open Xiaodou's pay page directly.
 - Check: Admin -> Settings -> Payment -> Test now (expects `-1 订单不存在` for the random probe),
   or `curl -sS -o /dev/null -w '%{http_code} %{time_total}\n' https://pay.xiaodouap.cn/api.php` on c4.
