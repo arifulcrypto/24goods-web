@@ -109,6 +109,7 @@ async def get_avatar(
             "Content-Security-Policy": "sandbox",
             "Content-Disposition": "inline",
             "Cross-Origin-Resource-Policy": "same-origin",
-            "Cache-Control": "private, max-age=3600",
+            "Cache-Control": "private, no-cache",  # revalidate: removal/visibility apply at once
+            "Vary": "Cookie",
         },
     )

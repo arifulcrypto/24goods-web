@@ -25,9 +25,11 @@ def _square(p: Processed) -> Processed:
         out = io.BytesIO()
         if p.mime == "image/webp":
             fitted.save(out, "WEBP", quality=82, method=4)
+            mime = "image/webp"
         else:
             fitted.convert("RGB").save(out, "JPEG", quality=85, optimize=True)
-    return Processed(out.getvalue(), p.mime, AVATAR_PX, AVATAR_PX)
+            mime = "image/jpeg"
+    return Processed(out.getvalue(), mime, AVATAR_PX, AVATAR_PX)
 
 
 async def avatar_from_upload(file: UploadFile) -> Processed:

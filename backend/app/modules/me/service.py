@@ -217,9 +217,31 @@ async def delete_account(
 async def set_avatar(
     db: AsyncSession, store: FileStore, user: User, processed: Processed, ip: str | None
 ) -> User:
+    # serialize concurrent uploads by the same user so no key is orphaned; drop the new file if
+    # the commit fails
+    await db.execute(
+        select(User.id)
+        .where(User.id == user.id, User.tenant_id == user.tenant_id)
+        .with_for_update()
+    )
+    await db.refresh(user, ["avatar_key"])
     key = await store.write(processed.data)
     old = user.avatar_key
     user.avatar_key = key
+    try:
+        await _avatar_set_audit(db, user, processed, ip)
+        await db.commit()
+    except BaseException:
+        await remove_files(store, [key])
+        raise
+    if old:
+        await remove_files(store, [old])
+    return user
+
+
+async def _avatar_set_audit(
+    db: AsyncSession, user: User, processed: Processed, ip: str | None
+) -> None:
     await audit(
         db,
         tenant_id=user.tenant_id,
@@ -230,10 +252,6 @@ async def set_avatar(
         ip=ip,
         detail={"bytes": len(processed.data), "mime": processed.mime},
     )
-    await db.commit()
-    if old:
-        await remove_files(store, [old])
-    return user
 
 
 async def clear_avatar(db: AsyncSession, store: FileStore, user: User, ip: str | None) -> User:

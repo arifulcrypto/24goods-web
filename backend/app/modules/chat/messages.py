@@ -142,7 +142,9 @@ async def ensure_open_conversation(
     )
     conv_id = await db.scalar(
         select(Conversation.id).where(
-            Conversation.buyer_id == buyer_id, Conversation.status == "open"
+            Conversation.tenant_id == tenant_id,
+            Conversation.buyer_id == buyer_id,
+            Conversation.status == "open",
         )
     )
     assert conv_id is not None
