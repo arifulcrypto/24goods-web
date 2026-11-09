@@ -3,11 +3,12 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ProductThumb } from '@24goods/shared/ui'
 import { moneyParts, formatNumber, type ProductSummary } from '@24goods/shared'
+import { isSoldOut } from '../lib/stock'
 
 const props = defineProps<{ product: ProductSummary }>()
 const { t, locale } = useI18n()
 const price = computed(() => moneyParts(props.product.price, props.product.currency, locale.value))
-const soldOut = computed(() => props.product.stock === 0)
+const soldOut = computed(() => isSoldOut(props.product))
 </script>
 
 <template>

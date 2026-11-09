@@ -1,4 +1,5 @@
 import { defineConfig } from 'vite'
+import { noRemoteAssets } from '../../scripts/vite-no-remote-assets.mjs'
 import vue from '@vitejs/plugin-vue'
 import AutoImport from 'unplugin-auto-import/vite'
 import Components from 'unplugin-vue-components/vite'
@@ -9,6 +10,7 @@ const BACKEND = process.env.VITE_BACKEND ?? 'http://127.0.0.1:18000'
 export default defineConfig({
   base: '/admin/',
   plugins: [
+    noRemoteAssets(),
     vue(),
     // ElMessage / ElMessageBox / ElNotification (+ their CSS) on demand
     AutoImport({

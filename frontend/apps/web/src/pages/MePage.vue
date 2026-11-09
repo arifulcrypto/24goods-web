@@ -1,18 +1,17 @@
 <script setup lang="ts">
-import { imageQuality, compressUploads, setMediaPreference } from '@24goods/shared'
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { clearRecent, isApiError, recentIds, type Locale, type ProductSummary } from '@24goods/shared'
+import { clearRecent, recentIds, type Locale, type ProductSummary } from '@24goods/shared'
 import { api } from '../api'
 import MiniStrip from '../components/MiniStrip.vue'
 import { useAuthStore } from '../stores/auth'
 import { useConversationsStore } from '../stores/conversations'
 import { useSiteStore } from '../stores/site'
 import { openSupport as support } from '../lib/support'
+import { siteAccessCleared } from '../lib/securityChallenge'
 import { languagePreference, setLocale } from '../locale'
 import type { AppLocale } from '../i18n'
-import type { LocalePreference } from '@24goods/shared'
 import { confirm, showSuccessToast, showToast, toastError } from '../ui'
 
 const { t, locale } = useI18n()
@@ -31,21 +30,24 @@ const ORDER_ICONS: Record<(typeof ORDER_TABS)[number], string> = {
   afterSales: 'after-sale',
 }
 
-onMounted(async () => {
+async function loadRecent() {
   const ids = recentIds()
   if (!ids.length) return
   try {
     recent.value = (await api.productsByIds(ids)).items
   } catch {
-    /* optional */
+    /* optional (a 428 here raises the inline access banner; we retry once it is cleared) */
   }
-})
+}
+onMounted(loadRecent)
+watch(siteAccessCleared, loadRecent)
+// product titles are server-localized: refetch in the new language
+watch(locale, loadRecent)
 function clearViewed() {
   clearRecent()
   recent.value = []
 }
 
-function switchLang(l: LocalePreference) { setLocale(l) }
 async function logout() {
   if (!(await confirm(t('me.logout'), t('me.logoutConfirm', { brand: site.headerName })))) return
   try {
@@ -86,74 +88,8 @@ async function saveProfile() {
   }
 }
 
-// ---- change credentials / secure account ----
-const credShow = ref(false)
-const credEmail = ref('')
-const credCurrent = ref('')
-const credNew = ref('')
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-const credValid = computed(() => {
-  const emailOk = !credEmail.value.trim() || EMAIL_RE.test(credEmail.value.trim())
-  const pwOk = !credNew.value || credNew.value.length >= 10
-  const changed = !!credEmail.value.trim() || !!credNew.value
-  const currentOk = auth.user?.is_instant || !credNew.value || !!credCurrent.value
-  return emailOk && pwOk && changed && !!currentOk
-})
-function openCred() {
-  credEmail.value = auth.user?.email ?? ''
-  credCurrent.value = ''
-  credNew.value = ''
-  credShow.value = true
-}
-async function saveCred() {
-  if (!credValid.value || saving.value) return
-  saving.value = true
-  try {
-    const body: { current_password?: string; email?: string; new_password?: string } = {}
-    if (credEmail.value.trim() && credEmail.value.trim() !== auth.user?.email) body.email = credEmail.value.trim()
-    if (credNew.value) body.new_password = credNew.value
-    if (credCurrent.value) body.current_password = credCurrent.value
-    auth.setUser(await api.me.credentials(body))
-    credShow.value = false
-    showSuccessToast(t('common.saved'))
-  } catch (e) {
-    if (isApiError(e) && (e.code === 'invalid_password' || e.code === 'unauthorized' || e.code === 'forbidden')) showToast(t('me.wrongPassword'))
-    else toastError(e)
-  } finally {
-    credCurrent.value = ''
-    credNew.value = ''
-    saving.value = false
-  }
-}
-
-// ---- delete account ----
-const delShow = ref(false)
-const delConfirm = ref('')
-const delPassword = ref('')
-const delBlocked = ref(false)
-function openDelete() {
-  delConfirm.value = ''
-  delPassword.value = ''
-  delBlocked.value = false
-  delShow.value = true
-}
-async function deleteAccount() {
-  if (delConfirm.value !== 'DELETE' || saving.value) return
-  saving.value = true
-  delBlocked.value = false
-  try {
-    await api.me.remove({ confirm: 'DELETE', ...(delPassword.value ? { password: delPassword.value } : {}) })
-    auth.clear()
-    delShow.value = false
-    showToast(t('me.deleted'))
-    void router.replace('/')
-  } catch (e) {
-    if (isApiError(e) && e.status === 409) delBlocked.value = true
-    else toastError(e)
-  } finally {
-    delPassword.value = ''
-    saving.value = false
-  }
+function secureAccount() {
+  void router.push({ name: 'settings', query: { secure: '1' } })
 }
 </script>
 
@@ -187,7 +123,7 @@ async function deleteAccount() {
         <strong>{{ t('me.secureTitle') }}</strong>
         <p class="muted">{{ t('me.secureText') }}</p>
       </div>
-      <van-button round type="primary" size="small" class="tap" @click="openCred">{{ t('me.secureCta') }}</van-button>
+      <van-button round type="primary" size="small" class="tap" @click="secureAccount">{{ t('me.secureCta') }}</van-button>
     </section>
 
     <section v-if="auth.user" class="section card orders-card">
@@ -209,32 +145,21 @@ async function deleteAccount() {
       <van-cell-group :border="false">
         <van-cell v-if="auth.user" :title="t('me.orders')" icon="orders-o" is-link to="/orders" />
         <van-cell v-if="auth.user" :title="t('me.messages')" icon="chat-o" is-link to="/messages" :value="convs.totalUnread ? String(convs.totalUnread) : ''" />
-        <van-cell v-if="auth.user" :title="t('me.changeCredentials')" icon="lock" is-link @click="openCred" />
         <van-cell v-if="auth.user && !auth.user.is_instant && site.features.resellers" :title="t('reseller.center')" icon="shop-o" is-link to="/reseller" />
         <van-cell v-if="site.features.lookup" :title="t('lookup.title')" icon="search" is-link to="/lookup" />
+        <van-cell :title="t('me.contactCs')" icon="service-o" is-link @click="openSupport" />
+        <van-cell v-if="auth.isStaff" :title="t('me.staff')" :label="t('me.staffHint')" icon="manager-o" is-link url="/admin/" />
+        <van-cell :title="t('me.settings')" icon="setting-o" is-link to="/me/settings" />
+      </van-cell-group>
+    </section>
+
+    <section class="section card">
+      <van-cell-group :border="false">
         <van-cell :title="t('help.title')" icon="question-o" is-link to="/help" />
         <van-cell :title="t('me.rules')" icon="description-o" is-link to="/a/rules" />
         <van-cell :title="t('me.afterSalesPolicy')" icon="shield-o" is-link to="/a/after-sales" />
         <van-cell :title="t('me.terms')" icon="notes-o" is-link to="/a/terms" />
         <van-cell :title="t('me.privacy')" icon="eye-o" is-link to="/a/privacy" />
-        <van-cell :title="t('mediaPrefs.quality')"><template #value><select :value="imageQuality" @change="setMediaPreference(($event.target as HTMLSelectElement).value as 'auto' | 'low' | 'high', compressUploads)"><option value="auto">{{ t('mediaPrefs.auto') }}</option><option value="low">{{ t('mediaPrefs.low') }}</option><option value="high">{{ t('mediaPrefs.high') }}</option></select></template></van-cell>
-        <van-cell :title="t('mediaPrefs.compress')"><template #value><van-switch :model-value="compressUploads" @update:model-value="v => setMediaPreference(imageQuality, v)" /></template></van-cell>
-        <van-cell :title="t('me.language')" icon="flag-o" center>
-          <template #value>
-            <div class="seg" role="radiogroup" :aria-label="t('me.language')">
-              <button type="button" role="radio" :aria-checked="languagePreference === 'auto'" :class="{ on: languagePreference === 'auto' }" @click="switchLang('auto')">{{ t('lang.auto') }}</button>
-              <button type="button" role="radio" :aria-checked="languagePreference === 'en'" :class="{ on: languagePreference === 'en' }" @click="switchLang('en')">
-                {{ t('lang.en') }}
-              </button>
-              <button type="button" role="radio" :aria-checked="languagePreference === 'zh-CN'" :class="{ on: languagePreference === 'zh-CN' }" @click="switchLang('zh-CN')">
-                {{ t('lang.zh') }}
-              </button>
-            </div>
-          </template>
-        </van-cell>
-        <van-cell v-if="auth.isStaff" :title="t('me.staff')" :label="t('me.staffHint')" icon="manager-o" is-link url="/admin/" />
-        <van-cell :title="t('me.contactCs')" icon="service-o" is-link @click="openSupport" />
-        <van-cell v-if="auth.user" :title="t('me.deleteAccount')" icon="delete-o" is-link class="danger" @click="openDelete" />
       </van-cell-group>
     </section>
 
@@ -262,27 +187,6 @@ async function deleteAccount() {
       </form>
     </van-popup>
 
-    <van-popup v-model:show="credShow" position="bottom" round closeable safe-area-inset-bottom teleport="body" class="buy-sheet">
-      <form class="sheet" @submit.prevent="saveCred">
-        <h2>{{ auth.user?.is_instant ? t('me.secureTitle') : t('me.changeCredentials') }}</h2>
-        <van-field v-model="credEmail" type="email" inputmode="email" autocomplete="email" :label="t('auth.email')" :placeholder="t('auth.emailPlaceholder')" />
-        <van-field v-if="!auth.user?.is_instant" v-model="credCurrent" type="password" autocomplete="current-password" :label="t('me.currentPassword')" />
-        <van-field v-model="credNew" type="password" autocomplete="new-password" :label="t('me.newPassword')" :placeholder="t('auth.passwordHint')" />
-        <van-button block round type="primary" size="large" native-type="submit" :loading="saving" :disabled="!credValid">{{ t('common.save') }}</van-button>
-      </form>
-    </van-popup>
-
-    <van-popup v-model:show="delShow" position="bottom" round closeable safe-area-inset-bottom teleport="body" class="buy-sheet">
-      <form class="sheet" @submit.prevent="deleteAccount">
-        <h2>{{ t('me.deleteAccount') }}</h2>
-        <p class="del-text">{{ t('me.deleteDeleted') }}</p>
-        <p class="del-text">{{ t('me.deleteRetained') }}</p>
-        <p v-if="delBlocked" class="del-err" role="alert">{{ t('me.deleteBlocked') }}</p>
-        <van-field v-if="!auth.user?.is_instant" v-model="delPassword" type="password" autocomplete="current-password" :label="t('auth.password')" />
-        <van-field v-model="delConfirm" autocapitalize="characters" autocomplete="off" :label="t('me.typeDelete')" placeholder="DELETE" />
-        <van-button block round type="danger" size="large" native-type="submit" :loading="saving" :disabled="delConfirm !== 'DELETE'">{{ t('me.deleteConfirm') }}</van-button>
-      </form>
-    </van-popup>
   </div>
 </template>
 
@@ -443,18 +347,5 @@ async function deleteAccount() {
   align-items: center;
   justify-content: space-between;
   padding: 8px 16px 16px;
-}
-.del-text {
-  font-size: 13px;
-  color: var(--c-text-2);
-  margin: 0 0 8px;
-}
-.del-err {
-  color: var(--c-danger);
-  font-size: 13px;
-  margin: 0 0 8px;
-}
-:deep(.danger .van-cell__title) {
-  color: var(--c-danger);
 }
 </style>

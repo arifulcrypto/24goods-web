@@ -1,8 +1,15 @@
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { ProductSummary } from '@24goods/shared'
 import { api } from '../api'
 
-/** Paginated product feed for van-list infinite scroll. */
+/**
+ * Paginated product feed for van-list infinite scroll.
+ *
+ * Titles come back localized by the server (Accept-Language), so the feed is keyed by locale too:
+ * a language switch drops the cached pages and refetches the same query/category, and a response
+ * still in flight from the old locale is discarded by the generation check (issue 49 D).
+ */
 export function useProductFeed(params: () => { q?: string; category?: string }, pageSize = 20) {
   const items = ref<ProductSummary[]>([])
   const loading = ref(false)
@@ -11,8 +18,10 @@ export function useProductFeed(params: () => { q?: string; category?: string }, 
   const total = ref<number | null>(null)
   let page = 0
   let gen = 0
+  let started = false
 
   async function load() {
+    started = true
     const myGen = gen
     loading.value = true
     error.value = false
@@ -32,6 +41,7 @@ export function useProductFeed(params: () => { q?: string; category?: string }, 
   }
 
   function reset() {
+    started = false
     gen++
     page = 0
     items.value = []
@@ -40,6 +50,13 @@ export function useProductFeed(params: () => { q?: string; category?: string }, 
     error.value = false
     loading.value = false
   }
+
+  const { locale } = useI18n()
+  watch(locale, () => {
+    if (!started) return
+    reset()
+    void load()
+  })
 
   return { items, loading, finished, error, total, load, reset }
 }

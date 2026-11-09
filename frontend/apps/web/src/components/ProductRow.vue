@@ -3,12 +3,13 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ProductThumb } from '@24goods/shared/ui'
 import { afterSalesBadge, formatNumber, moneyParts, type ProductSummary } from '@24goods/shared'
+import { isSoldOut } from '../lib/stock'
 
 const props = defineProps<{ product: ProductSummary }>()
 const emit = defineEmits<{ buy: [p: ProductSummary] }>()
 const { t, locale } = useI18n()
 const price = computed(() => moneyParts(props.product.price, props.product.currency, locale.value))
-const soldOut = computed(() => props.product.delivery_mode === 'auto_card' && props.product.stock === 0)
+const soldOut = computed(() => isSoldOut(props.product))
 const as = computed(() => afterSalesBadge(props.product.after_sales_hours))
 </script>
 
@@ -25,7 +26,7 @@ const as = computed(() => afterSalesBadge(props.product.after_sales_hours))
           <span v-if="as" class="badge-as">{{ t(as.unit === 'h' ? 'product.afterSalesH' : 'product.afterSalesD', { n: as.n }) }}</span>
         </div>
         <div class="prow-meta muted">
-          <span v-if="product.delivery_mode === 'auto_card' && product.stock !== null">{{
+          <span v-if="product.stock !== null && product.stock !== undefined">{{
             soldOut ? t('product.outOfStock') : t('product.stock', { n: formatNumber(product.stock, locale) })
           }}</span>
           <span>{{ t('home.sold', { n: formatNumber(product.sold, locale) }) }}</span>

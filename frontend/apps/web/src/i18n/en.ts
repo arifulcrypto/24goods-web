@@ -2,7 +2,7 @@
 import { BRAND } from '@24goods/shared'
 
 export default {
-  challenge: {"title": "Security verification", "accessibility": "If verification is slow or unavailable, cancel and contact support. No payment has been confirmed by this check.", "visit": "Verify access to the store", "visitNote": "Complete the configured access check before browsing.", "verify": "Verify and continue"},
+  challenge: {"title": "Security verification", "accessibility": "If verification is slow or unavailable, cancel and contact support. No payment has been confirmed by this check.", "visit": "Verify access to the store", "visitNote": "Complete the configured access check before browsing.", "verify": "Verify and continue", "visitBanner": "Some content on this page needs a quick access check."},
   epay: { title: 'Pay securely', checkPayee: 'Check the payee and amount in your payment app before confirming.', openCashier: 'Open payment cashier', unknown: 'The result is uncertain. Do not pay again; refresh or contact support.', expires: 'Expires: {at}', refresh: 'Refresh payment status' },
   app: {
     name: BRAND.name,
@@ -176,6 +176,9 @@ export default {
     },
   },
   me: {
+    settings: 'Settings',
+    preferences: 'Preferences',
+    accountSecurity: 'Account & security',
     title: 'Me',
     guest: 'Not signed in',
     signInHint: 'Sign in to chat with sellers and see your orders',
@@ -265,6 +268,8 @@ export default {
   buy: {
     guestNote: 'No account needed: we create a one-tap account for you.',
     continueGuest: 'Continue without registering',
+    configFailed: 'Could not load the order details for this product.',
+    retry: 'Retry',
   },
   lookup: {
     title: 'Order lookup',

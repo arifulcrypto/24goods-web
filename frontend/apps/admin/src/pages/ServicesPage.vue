@@ -24,7 +24,7 @@ async function update(cancel=false){if(!editing.value)return;const r=await run((
 async function renew(){if(!editing.value)return;const r=await run(()=>client.post(`/admin/services/${editing.value!.id}/renewals`,{order_id:renewal.value,reason:reason.value}));if(r){editing.value=null;await load()}}
 </script>
 <template>
-  <div>
+  <div class="page">
     <h1>{{ t('services.title') }}</h1><p>{{ t('services.note') }}</p>
     <div class="tools"><el-button type="primary" @click="adding=true">{{ t('services.add') }}</el-button><el-select v-model="due" clearable :placeholder="t('services.filter')" @change="page=1;load()"><el-option value="upcoming" :label="t('services.upcoming')"/><el-option value="overdue" :label="t('services.overdue')"/></el-select><el-checkbox v-model="mine" @change="page=1;load()">{{ t('services.mine') }}</el-checkbox><el-button :loading="saving" @click="load">{{ t('ops.refresh') }}</el-button></div>
     <el-table :data="rows" row-key="id">

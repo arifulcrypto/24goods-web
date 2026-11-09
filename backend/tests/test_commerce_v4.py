@@ -543,6 +543,21 @@ async def test_buyer_input_config_validation_and_public_resolution(env):
     }
     zh = (await buyer.get(f"/api/v1/products/{p.id}?lang=zh-CN")).json()["buyer_input"]
     assert zh["title"] == "下单信息" and zh["placeholder"] == "粘贴到这里"
+
+
+async def test_product_lists_carry_buyer_input_for_quick_buy(env):
+    """Issue 49 B: Home/Search quick buy opens BuySheet with a list summary; without the config
+    it skipped the order-information form and the order failed with buyer_input_required."""
+    admin, _ = await env.login("admin")
+    p, _ = await input_product(env, admin, required=False)
+    plain = await env.product(title="No input", mode="manual")
+    buyer, _ = await env.login("buyer")
+    listed = {i["id"]: i for i in (await buyer.get("/api/v1/products")).json()["items"]}
+    assert listed[str(p.id)]["buyer_input"]["enabled"] is True
+    assert listed[str(p.id)]["buyer_input"]["required"] is False
+    assert listed[str(plain.id)]["buyer_input"] is None  # off is explicit, never missing
+    by_ids = (await buyer.get(f"/api/v1/products?ids={p.id}")).json()["items"]
+    assert by_ids[0]["buyer_input"]["placeholder"] == "Paste here"
     r = await admin.patch(f"/api/v1/admin/products/{p.id}", json={"buyer_input": None})
     assert r.json()["buyer_input"] is None
     assert (await buyer.get(f"/api/v1/products/{p.id}")).json()["buyer_input"] is None

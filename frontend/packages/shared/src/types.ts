@@ -35,6 +35,8 @@ export interface ProductSummary {
   after_sales_hours?: number | null
   /** v5 §11: manual products only; promised shipping window in hours. */
   delivery_eta_hours?: number | null
+  /** Order-information form (null = off). Lists carry it too, so quick buy asks for it (issue 49 B). */
+  buyer_input?: BuyerInputConfig | null
 }
 export type ProductStatus = 'active' | 'draft'
 export interface Product extends ProductSummary {
@@ -50,8 +52,6 @@ export interface Product extends ProductSummary {
   usage_html?: string | null
   /** v4: server-rendered, sanitized HTML of the markdown description (render with SafeHtml). */
   description_html?: string | null
-  /** v4: public order-information popup config, resolved to the request locale. */
-  buyer_input?: BuyerInputConfig | null
 }
 /** v4 (§4): public config of the order-information popup. */
 export interface BuyerInputConfig {

@@ -2,7 +2,7 @@ import type { WebMessages } from './index'
 import { BRAND } from '@24goods/shared'
 
 const zhCN: WebMessages = {
-  challenge: {"title": "安全验证", "accessibility": "验证缓慢或不可用时可取消并联系客服。此验证不会确认支付到账。", "visit": "验证访问商店", "visitNote": "浏览前请完成管理员设置的访问验证。", "verify": "验证并继续"},
+  challenge: {"title": "安全验证", "accessibility": "验证缓慢或不可用时可取消并联系客服。此验证不会确认支付到账。", "visit": "验证访问商店", "visitNote": "浏览前请完成管理员设置的访问验证。", "verify": "验证并继续", "visitBanner": "本页部分内容需要先完成访问验证。"},
   epay: { title: '安全付款', checkPayee: '确认付款前，请在支付应用中核对收款人和金额。', openCashier: '打开收银台', unknown: '结果尚未确定，请勿重复付款，请刷新或联系客服。', expires: '到期时间：{at}', refresh: '刷新支付状态' },
   app: {
     name: `${BRAND.nameZh} ${BRAND.name}`,
@@ -15,7 +15,7 @@ const zhCN: WebMessages = {
     me: '我的账户',
   },
   lang: {
-    auto: '自动（浏览器）',
+    auto: '自动',
     en: 'English',
     zh: '中文',
   },
@@ -176,6 +176,9 @@ const zhCN: WebMessages = {
     },
   },
   me: {
+    settings: '设置',
+    preferences: '偏好设置',
+    accountSecurity: '账号与安全',
     title: '我的',
     guest: '未登录',
     signInHint: '登录后可与卖家聊天并查看订单',
@@ -265,6 +268,8 @@ const zhCN: WebMessages = {
   buy: {
     guestNote: '无需注册：我们会为您创建一键账号。',
     continueGuest: '无需注册，继续购买',
+    configFailed: '无法加载该商品的下单信息。',
+    retry: '重试',
   },
   lookup: {
     title: '卡密查询',

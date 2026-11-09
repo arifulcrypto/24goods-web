@@ -1,8 +1,9 @@
 import { defineStore } from 'pinia'
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import type { CartQuote, CartQuoteLine, CheckoutLineInput } from '@24goods/shared'
 import { feeBreakdownLines, isApiError } from '@24goods/shared'
 import { api } from '../api'
+import { useAuthStore } from './auth'
 
 export const CART_MAX_LINES = 20
 export const CART_MAX_QTY = 99
@@ -11,13 +12,20 @@ const KEY = 'kesiv.cart.v1'
 export interface CartLine {
   product_id: string
   qty: number
+  /** Memory only: never written to storage (it may hold a token or account login, issue 49 A). */
   buyer_input?: string
   selected: boolean
 }
 
+/** What survives a reload: ids, quantities and ticks. Buyer information is never persisted. */
+function serialize(ls: readonly CartLine[]): string {
+  return JSON.stringify(ls.map((l) => ({ product_id: l.product_id, qty: l.qty, selected: l.selected })))
+}
+
 function load(): CartLine[] {
   try {
-    const raw: unknown = JSON.parse(localStorage.getItem(KEY) ?? '[]')
+    const stored = localStorage.getItem(KEY) ?? '[]'
+    const raw: unknown = JSON.parse(stored)
     if (!Array.isArray(raw)) return []
     const seen = new Set<string>()
     const out: CartLine[] = []
@@ -31,10 +39,12 @@ function load(): CartLine[] {
         product_id: l.product_id,
         qty,
         selected: l.selected !== false,
-        ...(typeof l.buyer_input === 'string' && l.buyer_input ? { buyer_input: l.buyer_input.slice(0, 4000) } : {}),
       })
       if (out.length >= CART_MAX_LINES) break
     }
+    // purge buyer information written by older builds (kesiv.cart.v1 used to store it)
+    const clean = serialize(out)
+    if (clean !== stored) localStorage.setItem(KEY, clean)
     return out
   } catch {
     return []
@@ -50,7 +60,7 @@ export const useCartStore = defineStore('cart', () => {
 
   function persist() {
     try {
-      localStorage.setItem(KEY, JSON.stringify(lines.value))
+      localStorage.setItem(KEY, serialize(lines.value))
     } catch {
       /* storage blocked: the cart lives for this tab only */
     }
@@ -143,6 +153,20 @@ export const useCartStore = defineStore('cart', () => {
     lines.value = lines.value.filter((l) => l.product_id !== productId)
     persist()
   }
+  /** Forget every buyer input (sign-out or a different account signing in). */
+  function clearInputs() {
+    for (const l of lines.value) delete l.buyer_input
+  }
+  // buyer information belongs to the account that typed it: drop it on sign-out or an account
+  // switch. Guest -> signed in (login / instant account mid-checkout) is the same person in this tab.
+  const auth = useAuthStore()
+  watch(
+    () => auth.user?.id ?? null,
+    (now, before) => {
+      if (before !== null && now !== before) clearInputs()
+    },
+  )
+
   /** After a successful checkout: drop exactly the lines that were bought. */
   function removeMany(ids: readonly string[]) {
     const s = new Set(ids)
@@ -212,6 +236,7 @@ export const useCartStore = defineStore('cart', () => {
     selectAll,
     remove,
     removeMany,
+    clearInputs,
     refreshQuote,
   }
 })
