@@ -40,6 +40,8 @@ class ServiceEntitlement(Base):
     buyer_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
     order_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("orders.id"))
     owner_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    product_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("products.id"))
+    source: Mapped[str] = mapped_column(String(8), default="manual")  # manual | auto
     label: Mapped[str] = mapped_column(String(120))
     status: Mapped[str] = mapped_column(String(16), default="pending")
     timezone: Mapped[str] = mapped_column(String(64), default="UTC")

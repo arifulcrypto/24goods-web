@@ -12,7 +12,7 @@ from app.core.money import fmt
 from app.core.settings_v5 import manual_eta_hours
 from app.models import AfterSales, Attachment, Message, Order, Product, User
 from app.modules.common.buyerinput import admin_config, public_config
-from app.modules.common.sitedefaults import resolve_after_sales_hours
+from app.modules.common.sitedefaults import resolve_after_sales_hours, resolve_after_sales_months
 from app.modules.payments.channels import fee_rate
 
 REVEALABLE = frozenset({"delivered", "completed"})
@@ -78,7 +78,12 @@ def product_summary(
         else (stock if p.delivery_mode == "auto_card" else None),
         "category": p.category,
         "sold": p.sold,
-        "after_sales_hours": resolve_after_sales_hours(p.after_sales_hours, tenant_settings),
+        "after_sales_hours": resolve_after_sales_hours(
+            p.after_sales_hours, tenant_settings, p.after_sales_months
+        ),
+        "after_sales_months": resolve_after_sales_months(
+            p.after_sales_hours, p.after_sales_months, tenant_settings
+        ),
         # manual delivery promise (hours); never cost/source (staff-only)
         "delivery_eta_hours": manual_eta_hours(tenant_settings, p.delivery_eta_hours)
         if p.delivery_mode == "manual"
@@ -152,6 +157,8 @@ def admin_product_view(p: Product, stock: int | None) -> dict[str, Any]:
         "redeem_url": p.redeem_url,
         "usage_i18n": {"en": p.usage_i18n.get("en", ""), "zh-CN": p.usage_i18n.get("zh-CN", "")},
         "after_sales_hours": p.after_sales_hours,
+        "after_sales_months": p.after_sales_months,
+        "subscription": p.subscription,
         "group_sort": p.group_sort,
         "buyer_input": admin_config(p.buyer_input),
         # v5, staff-only: never part of buyer payloads
@@ -278,6 +285,7 @@ def order_view(
         "after_sales_until": iso(o.after_sales_until),
         "auto_confirm_at": iso(o.auto_confirm_at),
         "after_sales": ticket,
+        "service": None,  # filled by the buyer order endpoints (never the delivery worker)
         "delivery_info": delivery_info(product, lang),
         "manual_delivery": manual,
         "can_reveal": bool(

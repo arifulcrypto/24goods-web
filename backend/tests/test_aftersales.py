@@ -9,6 +9,7 @@ import httpx
 import pytest
 from sqlalchemy import text
 
+from app.modules.common.sitedefaults import add_months
 from app.modules.jobs import auto_confirm
 from tests.helpers import delivered_order, notify_params, open_conversation
 from tests.test_notify import GatewayStub
@@ -40,7 +41,7 @@ async def test_delivery_sets_deadlines_manual_and_auto(env):
     d = datetime.fromisoformat(o["delivered_at"].replace("Z", "+00:00"))
     until = datetime.fromisoformat(o["after_sales_until"].replace("Z", "+00:00"))
     conf = datetime.fromisoformat(o["auto_confirm_at"].replace("Z", "+00:00"))
-    assert until - d == timedelta(hours=672) and conf - d == timedelta(hours=72)
+    assert until == add_months(d, 1) and conf - d == timedelta(hours=72)
     p2 = await env.product(mode="auto_card", title="Card")
     await env.import_codes(p2, CODES[:2])
     o2 = await delivered_order(env, buyer, p2)

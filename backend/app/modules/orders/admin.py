@@ -157,6 +157,7 @@ async def deliver_manual(
         now,
         mode=order.delivery_mode,
         product_hours=product.after_sales_hours if product else None,
+        product_months=product.after_sales_months if product else None,
         tenant_settings=await tenant_settings(db, order.tenant_id),
     )
     order.status = "delivered"

@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.modules.content.schemas_v5 import (
     AuditIn,
@@ -181,6 +181,17 @@ class RateLimitIn(BaseModel):
     window_s: int | None = Field(None, ge=1, le=3600)
 
 
+class AfterSalesDefaultIn(BaseModel):
+    unit: Literal["month", "hour"]
+    value: int = Field(ge=0, le=8760)
+
+    @model_validator(mode="after")
+    def _range(self) -> AfterSalesDefaultIn:
+        if self.unit == "month" and not 1 <= self.value <= 12:
+            raise ValueError("months must be 1..12")
+        return self
+
+
 class SiteIn(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -202,7 +213,8 @@ class SiteIn(BaseModel):
     payments: PaymentsIn | None = None
     support: SupportIn | None = None
     rate_limit: RateLimitIn | None = None
-    after_sales_default_hours: int | None = Field(None, ge=0, le=8760)
+    after_sales_default_hours: int | None = Field(None, ge=0, le=8760)  # legacy
+    after_sales_default: AfterSalesDefaultIn | None = None
     auto_confirm_hours: AutoConfirmIn | None = None
     support_hours: dict[str, str] | None = None
 

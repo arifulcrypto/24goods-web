@@ -114,6 +114,7 @@ async def handle_order_paid(db: AsyncSession, order_id: uuid.UUID) -> JobResult:
             now,
             mode="auto_card",
             product_hours=product.after_sales_hours if product else None,
+            product_months=product.after_sales_months if product else None,
             tenant_settings=tenant.settings if tenant else None,
         )
         order.status = "delivered"

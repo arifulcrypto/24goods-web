@@ -4,8 +4,8 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import BigInteger, Computed, ForeignKey, Integer, String, Text
-from sqlalchemy.dialects.postgresql import ARRAY, TSVECTOR
+from sqlalchemy import BigInteger, Computed, ForeignKey, Integer, SmallInteger, String, Text
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, created_at, updated_at, uuid_pk
@@ -32,6 +32,9 @@ class Product(Base):
     usage_i18n: Mapped[dict[str, Any]] = mapped_column(default=dict)
     usage_html_i18n: Mapped[dict[str, Any]] = mapped_column(default=dict)
     after_sales_hours: Mapped[int | None] = mapped_column(Integer)
+    after_sales_months: Mapped[int | None] = mapped_column(SmallInteger)
+    # v7: null = not a subscription; else {period_policy, period_days, grace_days, ...}
+    subscription: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True))
     group_sort: Mapped[int] = mapped_column(Integer, default=0)
     # v4: per-product "order information" popup config (review-v4 §4) and markdown render
     buyer_input: Mapped[dict[str, Any] | None]

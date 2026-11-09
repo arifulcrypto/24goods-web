@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import calendar
 import hashlib
 import html
 import os
@@ -12,14 +11,16 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from sqlalchemy import or_, select
+from sqlalchemy import exists, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import audit
 from app.core.errors import Conflict, InvalidState, NotFound, Validation
+from app.core.money import fmt
 from app.core.security import STAFF_ROLES
-from app.models import Order, Payment, User
+from app.models import AfterSales, Order, Payment, Product, User
 from app.models.operations import OperationEvent, ServiceEntitlement, ServiceRenewal
+from app.modules.common.sitedefaults import add_months
 from app.modules.common.views import iso
 
 SAFE_CODE = re.compile(r"^[a-zA-Z0-9_.:-]{1,64}$")
@@ -46,18 +47,21 @@ def aware(value: datetime) -> datetime:
     return value.astimezone(timezone.utc)
 
 
-def period_end(start: datetime, policy: str, days: int, tz: str) -> datetime:
-    """Calendar periods keep local wall time with month-end clamping; fixed days = 24h.
+def periods_end(start: datetime, policy: str, days: int, tz: str, count: int = 1) -> datetime:
+    """End of ``count`` periods. Calendar periods keep local wall time with month-end clamping
+    (computed from the start, so Jan 31 + 2 months = Mar 31); fixed days = 24h each.
     A nonexistent DST wall time normalizes forward; ambiguous time uses fold=0."""
     start = aware(start)
     if policy == "fixed_days":
-        return start + timedelta(days=days)
+        return start + timedelta(days=days * count)
     if policy != "calendar_month":
         raise Validation("Unknown period policy")
     local = start.astimezone(zone(tz))
-    year, month = (local.year + 1, 1) if local.month == 12 else (local.year, local.month + 1)
-    day = min(local.day, calendar.monthrange(year, month)[1])
-    return local.replace(year=year, month=month, day=day, fold=0).astimezone(timezone.utc)
+    return add_months(local, count).replace(fold=0).astimezone(timezone.utc)
+
+
+def period_end(start: datetime, policy: str, days: int, tz: str) -> datetime:
+    return periods_end(start, policy, days, tz, 1)
 
 
 def snapshot(row: ServiceEntitlement) -> dict[str, Any]:
@@ -76,6 +80,14 @@ def snapshot(row: ServiceEntitlement) -> dict[str, Any]:
     }
 
 
+def days_left(due: datetime | None, now: datetime) -> int | None:
+    """Whole days until ``due`` (rounded up); zero or negative once it has passed."""
+    if due is None:
+        return None
+    secs = (due - now).total_seconds()
+    return -int((-secs) // 86400)
+
+
 def view(row: ServiceEntitlement) -> dict[str, Any]:
     due = row.ends_at
     now = utcnow()
@@ -83,9 +95,12 @@ def view(row: ServiceEntitlement) -> dict[str, Any]:
         "id": str(row.id),
         "buyer_id": str(row.buyer_id),
         "order_id": str(row.order_id),
+        "product_id": str(row.product_id) if row.product_id else None,
+        "source": row.source,
         "label": row.label,
         **snapshot(row),
         "created_at": iso(row.created_at),
+        "days_left": days_left(due, now) if row.status == "active" else None,
         "overdue": row.status == "active" and due is not None and due <= now,
         "in_grace": bool(
             row.status == "active" and due and due <= now < due + timedelta(days=row.grace_days)
@@ -180,31 +195,73 @@ async def changed(
 
 
 async def create(db: AsyncSession, actor: User, body: Any, ip: str | None) -> ServiceEntitlement:
-    await staff_owner(db, actor.tenant_id, body.owner_id)
-    buyer = await db.scalar(
-        select(User).where(
-            User.id == body.buyer_id, User.tenant_id == actor.tenant_id, User.role == "buyer"
+    """Register a service from a paid order, given by id (+ buyer) or by order number.
+    Buyer, owner, label and policy are prefilled from the order/product when omitted."""
+    tenant = actor.tenant_id
+    if body.order_no:
+        found = await db.scalar(
+            select(Order).where(Order.tenant_id == tenant, Order.order_no == body.order_no.strip())
         )
+        if found is None:
+            raise NotFound("Order not found")
+        order_id, buyer_id = found.id, found.buyer_id
+    else:
+        order_id, buyer_id = body.order_id, body.buyer_id
+    owner_id = body.owner_id or actor.id
+    await staff_owner(db, tenant, owner_id)
+    buyer = await db.scalar(
+        select(User).where(User.id == buyer_id, User.tenant_id == tenant, User.role == "buyer")
     )
     if buyer is None:
         raise NotFound("Buyer not found")
-    await paid_order(db, actor.tenant_id, body.buyer_id, body.order_id)
+    order = await paid_order(db, tenant, buyer_id, order_id)
     if await db.scalar(
         select(ServiceEntitlement.id).where(
-            ServiceEntitlement.tenant_id == actor.tenant_id,
-            ServiceEntitlement.order_id == body.order_id,
+            ServiceEntitlement.tenant_id == tenant, ServiceEntitlement.order_id == order_id
         )
     ):
         raise Conflict("This order already has a service")
     if await db.scalar(
         select(ServiceRenewal.id).where(
-            ServiceRenewal.tenant_id == actor.tenant_id, ServiceRenewal.order_id == body.order_id
+            ServiceRenewal.tenant_id == tenant, ServiceRenewal.order_id == order_id
         )
     ):
         raise Conflict("This order was already used for renewal")
+    product = (
+        await db.scalar(
+            select(Product).where(Product.id == order.product_id, Product.tenant_id == tenant)
+        )
+        if order.product_id
+        else None
+    )
+    sub = (product.subscription if product else None) or {}
+    given = body.model_fields_set
+
+    def pick(name: str, default: Any) -> Any:
+        return getattr(body, name) if name in given else sub.get(name, default)
+
+    label = (
+        body.label
+        or ((product.title_i18n.get("en") or "").strip() if product else "")
+        or order.title
+    )[:120]
     zone(body.timezone)
     row = ServiceEntitlement(
-        tenant_id=actor.tenant_id, **body.model_dump(), status="pending", version=1
+        tenant_id=tenant,
+        buyer_id=buyer_id,
+        order_id=order_id,
+        owner_id=owner_id,
+        product_id=order.product_id,
+        source="manual",
+        label=label,
+        timezone=body.timezone,
+        period_policy=pick("period_policy", "calendar_month"),
+        period_days=pick("period_days", 30),
+        grace_days=pick("grace_days", 0),
+        email_reminders=pick("email_reminders", False),
+        telegram_reminders=pick("telegram_reminders", False),
+        status="pending",
+        version=1,
     )
     db.add(row)
     await db.flush()
@@ -369,3 +426,243 @@ async def record_event(
             occurred_at=utcnow(),
         )
     )
+
+
+# ---------------------------------------------------------------------------- admin read models
+
+
+async def system_changed(
+    db: AsyncSession,
+    row: ServiceEntitlement,
+    action: str,
+    before: dict[str, Any] | None,
+    reason: str,
+) -> None:
+    """Audit + operation event for an automatic (job-driven) change; actor role ``system``."""
+    await audit(
+        db,
+        tenant_id=row.tenant_id,
+        action=action,
+        actor_id=None,
+        actor_role="system",
+        target=f"service:{row.id}",
+        before=before,
+        after=snapshot(row),
+        detail={"reason": reason},
+        ip=None,
+    )
+    await record_event(
+        db,
+        tenant_id=row.tenant_id,
+        environment=os.environ.get("APP_ENV", "unknown"),
+        family="operation",
+        action=action,
+        outcome="success",
+        reason=reason,
+        resource_id=str(row.id),
+        detail={"version": row.version},
+    )
+
+
+OPEN_AFTER_SALES = ("open", "processing")
+
+
+async def linked_order_ids(
+    db: AsyncSession, tenant: uuid.UUID, rows: list[ServiceEntitlement]
+) -> dict[uuid.UUID, list[uuid.UUID]]:
+    """entitlement id -> [source order id, renewal order ids...]."""
+    out = {r.id: [r.order_id] for r in rows}
+    if rows:
+        for ent_id, order_id in (
+            await db.execute(
+                select(ServiceRenewal.entitlement_id, ServiceRenewal.order_id)
+                .where(
+                    ServiceRenewal.tenant_id == tenant,
+                    ServiceRenewal.entitlement_id.in_(list(out)),
+                )
+                .order_by(ServiceRenewal.created_at, ServiceRenewal.id)
+            )
+        ).all():
+            out[ent_id].append(order_id)
+    return out
+
+
+async def enriched_views(
+    db: AsyncSession, tenant: uuid.UUID, rows: list[ServiceEntitlement]
+) -> list[dict[str, Any]]:
+    """List rows with order_no, product title, buyer email and open-after-sales flag."""
+    if not rows:
+        return []
+    links = await linked_order_ids(db, tenant, rows)
+    all_orders = {oid for ids in links.values() for oid in ids}
+    order_no = dict(
+        (
+            await db.execute(
+                select(Order.id, Order.order_no).where(
+                    Order.tenant_id == tenant, Order.id.in_(all_orders)
+                )
+            )
+        ).all()
+    )
+    open_orders = set(
+        await db.scalars(
+            select(AfterSales.order_id).where(
+                AfterSales.tenant_id == tenant,
+                AfterSales.order_id.in_(all_orders),
+                AfterSales.status.in_(OPEN_AFTER_SALES),
+            )
+        )
+    )
+    pids = {r.product_id for r in rows if r.product_id}
+    titles: dict[uuid.UUID, str] = {}
+    if pids:
+        titles = {
+            p.id: (p.title_i18n.get("en") or p.title_i18n.get("zh-CN") or "")
+            for p in await db.scalars(
+                select(Product).where(Product.tenant_id == tenant, Product.id.in_(pids))
+            )
+        }
+    buyers = dict(
+        (
+            await db.execute(
+                select(User.id, User.email).where(
+                    User.tenant_id == tenant, User.id.in_({r.buyer_id for r in rows})
+                )
+            )
+        ).all()
+    )
+    out = []
+    for r in rows:
+        email = buyers.get(r.buyer_id, "")
+        out.append(
+            {
+                **view(r),
+                "order_no": order_no.get(r.order_id),
+                "product_title": titles.get(r.product_id) if r.product_id else None,
+                "buyer_email": "" if email.endswith("@instant.invalid") else email,
+                "after_sales_open": any(oid in open_orders for oid in links[r.id]),
+            }
+        )
+    return out
+
+
+async def detail_view(
+    db: AsyncSession, tenant: uuid.UUID, row: ServiceEntitlement
+) -> dict[str, Any]:
+    (base,) = await enriched_views(db, tenant, [row])
+    links = (await linked_order_ids(db, tenant, [row]))[row.id]
+    orders = {
+        o.id: o
+        for o in await db.scalars(
+            select(Order).where(Order.tenant_id == tenant, Order.id.in_(links))
+        )
+    }
+    ticket_status: dict[uuid.UUID, str] = {}
+    for oid, status in (
+        await db.execute(
+            select(AfterSales.order_id, AfterSales.status)
+            .where(AfterSales.tenant_id == tenant, AfterSales.order_id.in_(links))
+            .order_by(AfterSales.created_at, AfterSales.id)
+        )
+    ).all():
+        ticket_status[oid] = status  # latest wins
+    linked = []
+    for i, oid in enumerate(links):
+        o = orders.get(oid)
+        if o is None:
+            continue
+        linked.append(
+            {
+                "kind": "source" if i == 0 else "renewal",
+                "order_id": str(o.id),
+                "order_no": o.order_no,
+                "paid_at": iso(o.paid_at),
+                "amount": fmt(o.amount_minor),
+                "currency": o.currency,
+                "status": o.status,
+                "after_sales_status": ticket_status.get(oid),
+            }
+        )
+    return {**base, "orders": linked}
+
+
+async def renewal_candidates(
+    db: AsyncSession, tenant: uuid.UUID, row: ServiceEntitlement
+) -> list[dict[str, Any]]:
+    """The buyer's verified-paid orders for the same product not yet used by any service."""
+    if row.product_id is None:
+        return []
+    paid_ok = exists().where(
+        Payment.tenant_id == tenant,
+        Payment.status == "succeeded",
+        Payment.currency == Order.currency,
+        or_(Payment.order_id == Order.id, Payment.checkout_id == Order.checkout_id),
+    )
+    used_src = exists().where(
+        ServiceEntitlement.tenant_id == tenant, ServiceEntitlement.order_id == Order.id
+    )
+    used_ren = exists().where(
+        ServiceRenewal.tenant_id == tenant, ServiceRenewal.order_id == Order.id
+    )
+    rows = await db.scalars(
+        select(Order)
+        .where(
+            Order.tenant_id == tenant,
+            Order.buyer_id == row.buyer_id,
+            Order.product_id == row.product_id,
+            Order.status.in_(("paid", "delivered", "completed")),
+            Order.paid_at.is_not(None),
+            paid_ok,
+            ~used_src,
+            ~used_ren,
+        )
+        .order_by(Order.paid_at.desc(), Order.id)
+        .limit(50)
+    )
+    return [
+        {
+            "order_id": str(o.id),
+            "order_no": o.order_no,
+            "paid_at": iso(o.paid_at),
+            "amount": fmt(o.amount_minor),
+            "currency": o.currency,
+            "status": o.status,
+            "qty": o.qty,
+        }
+        for o in rows
+    ]
+
+
+async def buyer_service_map(
+    db: AsyncSession, tenant: uuid.UUID, buyer: uuid.UUID, order_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, dict[str, Any]]:
+    """order id -> {status, starts_at, ends_at} for the buyer's own source/renewal orders."""
+    if not order_ids:
+        return {}
+
+    def brief(r: ServiceEntitlement) -> dict[str, Any]:
+        return {"status": r.status, "starts_at": iso(r.starts_at), "ends_at": iso(r.ends_at)}
+
+    out: dict[uuid.UUID, dict[str, Any]] = {}
+    for r in await db.scalars(
+        select(ServiceEntitlement).where(
+            ServiceEntitlement.tenant_id == tenant,
+            ServiceEntitlement.buyer_id == buyer,
+            ServiceEntitlement.order_id.in_(order_ids),
+        )
+    ):
+        out[r.order_id] = brief(r)
+    for order_id, ent in (
+        await db.execute(
+            select(ServiceRenewal.order_id, ServiceEntitlement)
+            .join(ServiceEntitlement, ServiceEntitlement.id == ServiceRenewal.entitlement_id)
+            .where(
+                ServiceRenewal.tenant_id == tenant,
+                ServiceRenewal.order_id.in_(order_ids),
+                ServiceEntitlement.tenant_id == tenant,
+                ServiceEntitlement.buyer_id == buyer,
+            )
+        )
+    ).all():
+        out[order_id] = brief(ent)
+    return out

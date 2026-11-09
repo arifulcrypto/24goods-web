@@ -98,6 +98,7 @@ async def run_jobs_once(res: Resources, *, hourly: bool) -> None:
     from app.modules.payments.reconcile import run as reconcile_payments
 
     await _job("payment reconciliation", reconcile_payments(res), res)
+    await _job("subscription sync", operations_jobs.sync_subscriptions(res), res)
     await _job("service reminder scheduling", operations_jobs.schedule_reminders(res), res)
     await _job("service reminder delivery", operations_jobs.process_reminders(res), res)
     await _job("order expiry", expire_pending(res.maker, res), res)

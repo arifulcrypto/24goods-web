@@ -22,8 +22,10 @@ from app.core.markdown import render_i18n
 from app.core.settings_v5 import merge, section
 from app.models import Article, Tenant, User
 from app.modules.common.sitedefaults import (
+    DEFAULT_AFTER_SALES,
     DEFAULT_AFTER_SALES_HOURS,
     DEFAULT_AUTO_CONFIRM_HOURS,
+    after_sales_default,
     after_sales_default_hours,
     auto_confirm_hours,
 )
@@ -111,6 +113,7 @@ async def public_site(
         **v5,
         "announcement": announcement,
         "after_sales_default_hours": after_sales_default_hours(ts),
+        "after_sales_default": _after_sales_cfg(ts),
         "support_hours": pick(_support_hours(ts.get("support_hours")), lang),
         "support": {
             "welcome": pick(sup["welcome_i18n"], lang),
@@ -179,6 +182,11 @@ async def _public_v5(
     }
 
 
+def _after_sales_cfg(ts: dict[str, Any]) -> dict[str, Any]:
+    unit, value = after_sales_default(ts)
+    return {"unit": unit, "value": value}
+
+
 async def admin_site(
     db: AsyncSession, tenant_id: uuid.UUID, settings: Settings | None = None
 ) -> dict[str, Any]:
@@ -215,6 +223,7 @@ async def admin_site(
         "bepusdt": {"configured": settings.bepusdt_enabled if settings is not None else False},
         "announcement": _announcement_admin(ts.get("announcement")),
         "after_sales_default_hours": after_sales_default_hours(ts),
+        "after_sales_default": _after_sales_cfg(ts),
         "auto_confirm_hours": {
             "manual": auto_confirm_hours(ts, "manual"),
             "auto_card": auto_confirm_hours(ts, "auto_card"),
@@ -227,6 +236,7 @@ async def admin_site(
         "defaults": {
             **v5["defaults"],
             "after_sales_default_hours": DEFAULT_AFTER_SALES_HOURS,
+            "after_sales_default": dict(DEFAULT_AFTER_SALES),
             "auto_confirm_hours": dict(DEFAULT_AUTO_CONFIRM_HOURS),
             "rate_limit": dict(globallimit.DEFAULTS),
         },
@@ -267,8 +277,15 @@ async def update_site(
             if text != old["body_i18n"]
             else old["body_html_i18n"],
         }
-    if body.after_sales_default_hours is not None:
+    if body.after_sales_default is not None:
+        new["after_sales_default"] = {
+            "unit": body.after_sales_default.unit,
+            "value": body.after_sales_default.value,
+        }
+        new.pop("after_sales_default_hours", None)
+    elif body.after_sales_default_hours is not None:  # legacy field: the new key would win
         new["after_sales_default_hours"] = body.after_sales_default_hours
+        new.pop("after_sales_default", None)
     if body.auto_confirm_hours is not None:
         new["auto_confirm_hours"] = {
             "manual": body.auto_confirm_hours.manual,
