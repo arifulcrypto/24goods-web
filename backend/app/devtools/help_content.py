@@ -8,9 +8,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.devtools.legal_content import SUPPORT_EMAIL, _flow
+from app.devtools.legal_content import _flow
 
-HELP_EN = f"""## Getting started
+HELP_EN = """## Getting started
 
 You can browse without an account. To buy, sign in with your email, use a supported third-party
 sign-in, or choose **Continue without registering** at checkout and an account is created for you.
@@ -45,10 +45,11 @@ Open the order and tap **Request after-sales** within the after-sales period. Se
 
 ## Contact us
 
-Chat with us from **Me → Contact online customer service**, or email {SUPPORT_EMAIL}.
+Chat with us from **Me → Contact online customer service**, or use the contact email at the bottom
+of the page.
 """
 
-HELP_ZH = f"""## 新手入门
+HELP_ZH = """## 新手入门
 
 无需账号即可浏览。购买时可使用邮箱登录、使用支持的第三方账号登录，或在结算时选择 **无需注册，继续购买**，系统会
 为您自动创建账号。
@@ -79,7 +80,7 @@ HELP_ZH = f"""## 新手入门
 
 ## 联系我们
 
-在 **我的 → 联系在线客服** 中与我们对话，或发送邮件至 {SUPPORT_EMAIL}。
+在 **我的 → 联系在线客服** 中与我们对话，或发送邮件至页面底部的联系邮箱。
 """
 
 # New general articles. Seeded once (by slug) and never overwritten, like the rest of the content.

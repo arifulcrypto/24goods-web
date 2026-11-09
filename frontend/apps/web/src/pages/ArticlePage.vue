@@ -7,6 +7,7 @@ import { SafeHtml } from '@24goods/shared/ui'
 import { api } from '../api'
 import { useNoindex } from '../composables/useNoindex'
 import { toastError } from '../ui'
+import SiteFooter from '../components/SiteFooter.vue'
 
 const { t, locale } = useI18n()
 const route = useRoute()
@@ -50,6 +51,7 @@ watch(
       </div>
       <SafeHtml class="body" :html="article.body_html" />
     </article>
+    <SiteFooter />
   </div>
 </template>
 

@@ -41,16 +41,18 @@ async def test_seed_populates_v3_demo_data_idempotently(env, monkeypatch):
         assert "lawyer" not in terms["en"] and "律师" not in terms["zh-CN"]
         assert "Mainland China" in terms["en"] and "中国大陆" in terms["zh-CN"]
         assert terms["en"].startswith("_Effective date:")
-        # owner 2026-11-09: venue positioning, Singapore law, only brand + law + support email
+        # owner 2026-11-09 / #58: venue positioning; no governing-law jurisdiction, no vendors or
+        # hosting details, and no contact email in page bodies (SiteFooter is its single place)
         assert "joint or several liability" in terms["en"] and "连带责任" in terms["zh-CN"]
-        assert "laws of the Republic of Singapore" in terms["en"] and "新加坡" in terms["zh-CN"]
         privacy = (
             await db.execute(text("SELECT body_i18n FROM articles WHERE slug='privacy'"))
         ).scalar()
-        for body in (terms, privacy):
-            for word in ("Japan", "日本", "Cloudflare", "Google"):
+        bodies = (
+            await db.execute(text("SELECT body_i18n FROM articles WHERE kind='page'"))
+        ).scalars()
+        for body in [terms, privacy, *bodies]:
+            for word in ("Japan", "日本", "Cloudflare", "Google", "Singapore", "新加坡", "@"):
                 assert word not in body["en"] and word not in body["zh-CN"], word
-            assert body["en"].rstrip().endswith("support@kesiv.com")
         ann = (
             await db.execute(
                 text("SELECT settings->'announcement' FROM tenants WHERE id=:t"), {"t": tid}

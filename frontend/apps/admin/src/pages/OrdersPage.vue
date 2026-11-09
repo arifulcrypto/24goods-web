@@ -25,12 +25,18 @@ const openId = ref<string | null>(typeof route.query.open === 'string' ? route.q
 type AdminOrder = AdminOrderV5
 const resellerId = ref(typeof route.query.reseller === 'string' ? route.query.reseller : '')
 const overdue = ref(route.query.overdue === '1')
+// display order = payment priority (#58): Alipay, then USDT X Layer -> Arbitrum One -> TRC20
+const CHANNELS = ['zpay_alipay', 'usdt_xlayer', 'usdt_arbitrum', 'usdt_trc20'] as const
+const channel = ref(typeof route.query.channel === 'string' ? route.query.channel : '')
+function channelLabel(c: string | null | undefined): string {
+  return c && (CHANNELS as readonly string[]).includes(c) ? t(`payChannel.${c}`) : c || '—'
+}
 const resellers = ref<AdminReseller[]>([])
 const table = usePaged<AdminOrder>((page, page_size) =>
-  apiV5.orders.list({ status: status.value, q: q.value.trim() || undefined, reseller_id: resellerId.value, overdue_manual: overdue.value || undefined, page, page_size }),
+  apiV5.orders.list({ status: status.value, q: q.value.trim() || undefined, reseller_id: resellerId.value, overdue_manual: overdue.value || undefined, channel: channel.value || undefined, page, page_size }),
 )
-watch([resellerId, overdue], ([r, o]) => {
-  void router.replace({ query: { ...route.query, reseller: r || undefined, overdue: o ? '1' : undefined } })
+watch([resellerId, overdue, channel], ([r, o, c]) => {
+  void router.replace({ query: { ...route.query, reseller: r || undefined, overdue: o ? '1' : undefined, channel: c || undefined } })
   void table.reload()
 })
 let debounce: ReturnType<typeof setTimeout> | null = null
@@ -87,6 +93,10 @@ function open(row: AdminOrder) {
         <el-select v-if="resellers.length" v-model="resellerId" clearable style="width: 180px" :placeholder="t('v5.orders.storeFilter')">
           <el-option v-for="r in resellers" :key="r.id" :value="r.id" :label="r.store_name" />
         </el-select>
+        <el-select v-model="channel" clearable style="width: 170px" :placeholder="t('payChannel.filter')">
+          <el-option v-for="c in CHANNELS" :key="c" :value="c" :label="t(`payChannel.${c}`)" />
+          <el-option value="none" :label="t('payChannel.none')" />
+        </el-select>
         <el-checkbox v-model="overdue" border>{{ t('v5.orders.overdueFilter') }}</el-checkbox>
         <el-input v-model="q" :placeholder="t('orders.search')" :prefix-icon="Search" clearable style="width: 280px" />
       </div>
@@ -114,6 +124,12 @@ function open(row: AdminOrder) {
         </el-table-column>
         <el-table-column :label="t('orders.col.amount')" width="130">
           <template #default="{ row }"><span class="price">{{ formatMoney(row.amount, row.currency, locale) }}</span></template>
+        </el-table-column>
+        <el-table-column :label="t('payChannel.column')" width="150">
+          <template #default="{ row }">
+            <el-tag v-if="row.channel" size="small" :type="String(row.channel).startsWith('usdt_') ? 'success' : 'primary'" effect="plain">{{ channelLabel(row.channel) }}</el-tag>
+            <span v-else class="muted">—</span>
+          </template>
         </el-table-column>
         <el-table-column :label="t('orders.col.status')" width="130">
           <template #default="{ row }"><OrderStatusTag :status="row.status" /></template>

@@ -205,6 +205,15 @@ const zhCN: AdminMessages = {
       void: '已作废',
     },
   },
+  payChannel: {
+    column: '支付方式',
+    filter: '支付方式',
+    none: '未选择',
+    zpay_alipay: '支付宝',
+    usdt_xlayer: 'USDT（X Layer）',
+    usdt_arbitrum: 'USDT（Arbitrum One）',
+    usdt_trc20: 'USDT（TRC20）',
+  },
   orders: {
     search: '订单号、标题或买家邮箱',
     allStatus: '全部',

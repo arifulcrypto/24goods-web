@@ -15,7 +15,7 @@ from app.models import Conversation, User
 from app.modules.chat import quotes as quote_svc
 from app.modules.chat import service
 from app.modules.chat.schemas import ConversationIn, MessageIn, ReadIn
-from app.modules.orders.router import ORDER_ACTIONS
+from app.modules.orders.riskctl import guard_order_create
 from app.modules.orders.service import broadcast_order, one_view
 from app.modules.uploads.storage import FileStore
 
@@ -126,7 +126,7 @@ async def accept_quote(
     db: AsyncSession = Depends(get_db),
     res: Resources = Depends(get_res),
 ) -> dict:
-    await enforce(res.redis, "order:create", str(user.id), *ORDER_ACTIONS)
+    await guard_order_create(res, db, user, client_ip(request))
     order, quote, msgs = await quote_svc.accept_quote(
         db, res.settings, quote_id, user, client_ip(request)
     )

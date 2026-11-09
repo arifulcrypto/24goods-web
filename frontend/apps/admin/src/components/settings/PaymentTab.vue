@@ -14,7 +14,7 @@ const { t } = useI18n()
 const { saving, run } = useSave()
 const errors = ref<Record<string, string>>({})
 const other = ref<Record<string, ChannelCfg>>({})
-const USDT = ['usdt_arbitrum', 'usdt_xlayer', 'usdt_trc20'] as const
+const USDT = ['usdt_xlayer', 'usdt_arbitrum', 'usdt_trc20'] as const
 const usdt = reactive<Record<string, { on: boolean; pct: number }>>(
   Object.fromEntries(USDT.map((id) => [id, { on: false, pct: 0 }])),
 )

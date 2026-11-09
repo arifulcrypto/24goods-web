@@ -88,7 +88,12 @@ class Settings(BaseSettings):
 
     # --- orders ---
     order_ttl_minutes: int = 30
-    max_pending_orders: int = 5  # per buyer
+    max_pending_orders: int = 2  # per buyer (#58); tenants can override in Admin -> Settings
+    # order-creation throttles (#58 §6, app/modules/orders/riskctl.py)
+    order_create_per_user: int = 3
+    order_create_user_window_s: int = 60
+    order_create_per_ip: int = 10
+    order_create_ip_window_s: int = 300
     reveal_per_buyer_cards: int = 30  # cards revealed per buyer per window (API side)
     reveal_per_buyer_window_s: int = 600
     expiry_interval_s: int = 60

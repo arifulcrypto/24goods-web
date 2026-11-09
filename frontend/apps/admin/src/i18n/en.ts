@@ -204,6 +204,15 @@ export default {
       void: 'Void',
     },
   },
+  payChannel: {
+    column: 'Payment method',
+    filter: 'Payment method',
+    none: 'Not chosen',
+    zpay_alipay: 'Alipay',
+    usdt_xlayer: 'USDT (X Layer)',
+    usdt_arbitrum: 'USDT (Arbitrum One)',
+    usdt_trc20: 'USDT (TRC20)',
+  },
   orders: {
     search: 'Order no., title or buyer email',
     allStatus: 'All',
