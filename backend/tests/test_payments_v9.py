@@ -475,6 +475,19 @@ async def test_gateway_json_on_404_is_parsed_not_a_transport_error():
     bodies = {
         "NF": (404, {"code": -1, "msg": "订单不存在"}),
         "SIG": (400, {"code": -1, "msg": "签名校验失败"}),
+        # a 4xx may only say "no": a success-shaped body on an error status is refused
+        "EVIL": (
+            404,
+            {
+                "code": 1,
+                "status": 1,
+                "out_trade_no": "EVIL",
+                "pid": "p",
+                "type": "alipay",
+                "money": "1.00",
+                "trade_no": "T1",
+            },
+        ),
     }
 
     def handler(request):
@@ -493,3 +506,5 @@ async def test_gateway_json_on_404_is_parsed_not_a_transport_error():
             await client.query_order("SIG")
         with pytest.raises(ZPayQueryError):
             await client.query_order("HTML404")
+        with pytest.raises(ZPayQueryError):
+            await client.query_order("EVIL")

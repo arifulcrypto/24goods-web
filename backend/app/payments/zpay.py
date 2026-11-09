@@ -128,6 +128,16 @@ QUERY_TIMEOUT_S = 3.0
 # decide what they mean; nothing here can mark a payment paid) instead of treating them as
 # transport failures.
 _JSON_ERROR_STATUSES = frozenset({400, 404})
+
+
+def _error_status_guard(status: int, data: Any) -> Any:
+    """A 4xx body may only ever say "no": a success code on an error status is refused (it
+    could otherwise read as paid in reconcile/cancel, or hand out a pay URL)."""
+    if status >= 400 and isinstance(data, Mapping) and _as_int(data.get("code")) == 1:
+        raise ValueError("success code on an HTTP error status")
+    return data
+
+
 # connect fails first (before the overall wait_for) so a dead host is told apart from a slow one
 _TIMEOUT = httpx.Timeout(QUERY_TIMEOUT_S, connect=QUERY_TIMEOUT_S * 0.7)
 
@@ -185,8 +195,9 @@ class ZPayClient:
                         raw = await response_bytes(
                             response, 256 * 1024, body_statuses=_JSON_ERROR_STATUSES
                         )
-                        return json.loads(
-                            raw, parse_float=bounded_decimal, parse_int=bounded_integer
+                        return _error_status_guard(
+                            response.status_code,
+                            json.loads(raw, parse_float=bounded_decimal, parse_int=bounded_integer),
                         )
             async with self._http.stream(
                 "POST" if post else "GET",
@@ -197,7 +208,10 @@ class ZPayClient:
                 timeout=_TIMEOUT,
             ) as response:
                 raw = await response_bytes(response, 256 * 1024, body_statuses=_JSON_ERROR_STATUSES)
-                return json.loads(raw, parse_float=bounded_decimal, parse_int=bounded_integer)
+                return _error_status_guard(
+                    response.status_code,
+                    json.loads(raw, parse_float=bounded_decimal, parse_int=bounded_integer),
+                )
         except (httpx.HTTPError, ValueError, safefetch.FetchError) as exc:
             if _never_dispatched(exc):
                 raise ZPayUnreachable("gateway unreachable") from exc
