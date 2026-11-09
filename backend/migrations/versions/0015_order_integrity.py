@@ -8,8 +8,8 @@
   subscription periods (C).
 
 Grants: the delivery worker only reads ``orders.terms`` (it already has table-level SELECT on
-orders); app_api gets UPDATE (reversed_at) only on service_renewals (previously insert-only); RLS + FORCE on
-service_renewals come from 0011 (tests/test_integrity_v8.py asserts it).
+orders); app_api gets UPDATE (reversed_at) only on service_renewals (previously insert-only);
+RLS + FORCE on service_renewals come from 0011 (tests/test_integrity_v8.py asserts it).
 
 Revision ID: 0015_order_integrity
 Revises: 0014_subscriptions
