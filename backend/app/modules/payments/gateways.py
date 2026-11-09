@@ -251,7 +251,7 @@ async def prepare(
             raise Unavailable("Payment outcome is unknown; reconciliation is required")
         if (
             att.amount_minor == amount_minor
-            and att.provider_id in {c.id for c in cands}
+            and att.provider_id == cands[0].id  # first choice changed: new attempt
             and att.currency == currency
             and att.expires_at
             and att.expires_at > now
