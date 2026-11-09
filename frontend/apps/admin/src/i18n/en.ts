@@ -506,6 +506,7 @@ export default {
     },
     refundNote: 'Return the money first (payment console, wallet transfer for USDT, …), then confirm here with the reference.',
     refundReference: 'Refund reference (required)',
+    refundReferenceVisible: 'Shown to the buyer',
     refundReferenceHint: 'Provider refund id, transaction hash or transfer note',
     refundConfirmBtn: 'Confirm refund sent',
     rejectReason: 'Reason shown to the buyer (required)',

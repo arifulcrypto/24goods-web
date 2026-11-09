@@ -14,7 +14,7 @@ import time as monotonic_time
 import uuid
 from datetime import datetime, time, timedelta, timezone
 
-from sqlalchemy import and_, delete, exists, func, or_, select, text
+from sqlalchemy import String, and_, cast, delete, exists, func, or_, select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 
@@ -490,6 +490,15 @@ async def _ambiguous(db, row: ServiceEntitlement, order: Order, what: str) -> No
         )
 
 
+def _not_flagged(ent_id, order_id):  # type: ignore[no-untyped-def]
+    """Rows already recorded as ambiguous are not re-selected (they would starve the batch)."""
+    return ~exists().where(
+        OperationEvent.action == "service.reversal_ambiguous",
+        OperationEvent.resource_id
+        == func.concat(cast(ent_id, String), ":", cast(order_id, String)),
+    )
+
+
 async def _reverse_voided(db, tid: uuid.UUID) -> int:  # type: ignore[no-untyped-def]
     """v8 C: refunded/cancelled orders take back exactly the periods they paid for.
 
@@ -512,6 +521,7 @@ async def _reverse_voided(db, tid: uuid.UUID) -> int:  # type: ignore[no-untyped
                 ServiceRenewal.reversed_at.is_(None),
                 ServiceEntitlement.source == "auto",
                 Order.status.in_(void),
+                _not_flagged(ServiceEntitlement.id, ServiceRenewal.order_id),
             )
             .order_by(ServiceEntitlement.id, ServiceRenewal.created_at, ServiceRenewal.id)
             .limit(SUBSCRIPTION_BATCH)
@@ -546,6 +556,7 @@ async def _reverse_voided(db, tid: uuid.UUID) -> int:  # type: ignore[no-untyped
                 ServiceEntitlement.status != "cancelled",
                 ServiceEntitlement.source_reversed_at.is_(None),
                 Order.status.in_(void),
+                _not_flagged(ServiceEntitlement.id, Order.id),
             )
             .order_by(ServiceEntitlement.id)
             .limit(SUBSCRIPTION_BATCH)

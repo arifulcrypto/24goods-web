@@ -487,6 +487,7 @@ defineExpose({ reload: () => props.orderId && load(props.orderId) })
       <el-form label-position="top" @submit.prevent="submitRefund">
         <el-form-item :label="t('afterSales.refundReference')" :error="refund.error">
           <el-input v-model="refund.reference" maxlength="200" show-word-limit :placeholder="t('afterSales.refundReferenceHint')" />
+          <div class="small muted hint">{{ t('afterSales.refundReferenceVisible') }}</div>
         </el-form-item>
         <el-form-item :label="t('afterSales.note')">
           <el-input v-model="refund.note" type="textarea" :rows="2" maxlength="500" show-word-limit />

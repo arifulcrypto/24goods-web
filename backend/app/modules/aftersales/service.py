@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import audit
 from app.core.deps import Page
-from app.core.errors import ApiError, Forbidden, InvalidState, NotFound, Validation
+from app.core.errors import ApiError, Conflict, Forbidden, InvalidState, NotFound, Validation
 from app.core.money import fmt
 from app.core.settings_v5 import section
 from app.models import (
@@ -23,6 +23,7 @@ from app.models import (
     LedgerEntry,
     Message,
     Order,
+    OrderEvent,
     Outbox,
     Product,
     User,
@@ -36,7 +37,7 @@ from app.modules.content.site import tenant_settings
 from app.modules.orders.events import add_event, snapshot
 from app.modules.orders.service import get_owned, release_manual_stock
 from app.modules.payments.ledger import Line, post_txn
-from app.modules.payments.settle import payment_lines
+from app.modules.payments.settle import payment_for_order, payment_lines
 from app.payments.zpay import CHANNEL
 
 ELIGIBLE = ("delivered", "completed")
@@ -427,10 +428,22 @@ async def refund_order(
     before = snapshot(order)
     prev = order.status
     reverse_ledger = True
+    if await db.scalar(
+        select(func.count(OrderEvent.id)).where(
+            OrderEvent.tenant_id == order.tenant_id,
+            OrderEvent.to_status == "refunded",
+            OrderEvent.reason == f"{REFUND_PREFIX}{reference}"[:500],
+            OrderEvent.order_id != order.id,
+        )
+    ):
+        raise Conflict("This refund reference was already used for another order")
+    pay = await payment_for_order(db, order)
     if prev in UNDELIVERED:
         # a payment-anomaly manual_review order may never have been booked: never reverse
         # a posting that does not exist (would invent revenue)
         reverse_ledger = await _has_open_ledger(db, order)
+        if not reverse_ledger and (pay is None or pay.status != "succeeded"):
+            raise InvalidState("No recorded payment for this order; cancel it instead")
         await release_manual_stock(db, order.tenant_id, [order])  # undelivered: stock goes back
     order.status = "refunded"
     order.version += 1
@@ -475,6 +488,8 @@ async def refund_order(
             "note": (note or "")[:500] or None,
             "from_status": prev,
             "ledger_reversed": reverse_ledger,
+            "payment_id": str(pay.id) if pay else None,
+            "paid_minor": pay.amount_minor if pay else None,
         },
         severity="warning",
     )

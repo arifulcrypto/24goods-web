@@ -8,7 +8,8 @@
   subscription periods (C).
 
 Grants: the delivery worker only reads ``orders.terms`` (it already has table-level SELECT on
-orders); app_api gets UPDATE on service_renewals (previously insert-only) for ``reversed_at``.
+orders); app_api gets UPDATE (reversed_at) only on service_renewals (previously insert-only); RLS + FORCE on
+service_renewals come from 0011 (tests/test_integrity_v8.py asserts it).
 
 Revision ID: 0015_order_integrity
 Revises: 0014_subscriptions
@@ -32,7 +33,7 @@ def upgrade() -> None:
     op.execute("ALTER TABLE orders ADD COLUMN terms jsonb")
     op.execute("ALTER TABLE service_renewals ADD COLUMN reversed_at timestamptz")
     op.execute("ALTER TABLE service_entitlements ADD COLUMN source_reversed_at timestamptz")
-    op.execute("GRANT UPDATE ON service_renewals TO app_api")
+    op.execute("GRANT UPDATE (reversed_at) ON service_renewals TO app_api")
     # cross-tenant backfill: lift FORCE RLS for the statement (as 0013/0014)
     op.execute("ALTER TABLE orders NO FORCE ROW LEVEL SECURITY")
     op.execute(

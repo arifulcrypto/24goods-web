@@ -507,6 +507,7 @@ const zhCN: AdminMessages = {
     },
     refundNote: '请先把钱退回（支付后台、USDT 钱包转账等），再在此填写凭证并确认。',
     refundReference: '退款凭证（必填）',
+    refundReferenceVisible: '买家可见',
     refundReferenceHint: '支付渠道退款单号、交易哈希或转账备注',
     refundConfirmBtn: '确认已退款',
     rejectReason: '显示给买家的原因（必填）',

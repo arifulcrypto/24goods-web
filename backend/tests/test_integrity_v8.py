@@ -39,6 +39,30 @@ async def cross_tenant(env, call):
         return await call(db, u)
 
 
+async def other_tenant_admin(env):
+    """An admin session of the OTHER tenant on that tenant's own host (so it is authenticated)."""
+    from datetime import timezone
+
+    from app.models import CustomDomain
+
+    async with env.owner_session(env.other_tenant_id) as db:
+        db.add(
+            CustomDomain(
+                tenant_id=env.other_tenant_id,
+                hostname="shop.reseller.test",
+                verify_token="t",
+                status="active",
+                verified_at=datetime.now(timezone.utc),
+            )
+        )
+        await db.commit()
+    u = await env.user("admin", tenant_id=env.other_tenant_id)
+    token = await env.res.sessions.create(u.id, u.tenant_id, u.role)
+    c = env.client(host="shop.reseller.test")
+    c.cookies.set("sid", token)
+    return c
+
+
 async def paid_manual_review(env, product):
     """Buy + pay one card, then remove the stock before the worker runs: the order is held in
     manual_review exactly as production can leave it. Returns (buyer client, order view)."""
@@ -102,8 +126,8 @@ async def test_requeue_needs_stock_payment_admin_and_is_idempotent(env):
     await sql(env, "UPDATE payments SET amount_minor = 1")
     assert (await admin.post(url)).status_code == 409
     await sql(env, "UPDATE payments SET amount_minor = 1990")
-    other_admin, _ = await env.login("admin", tenant_id=env.other_tenant_id)
-    assert (await other_admin.post(url)).status_code == 401  # session of another tenant
+    other_admin = await other_tenant_admin(env)
+    assert (await other_admin.post(url)).status_code == 404  # tenant-pinned: order invisible
     with pytest.raises(NotFound):  # and below the HTTP layer: the order is invisible to it
         await cross_tenant(env, lambda db, u: order_admin.requeue_delivery(db, oid, u, None))
     r = await admin.post(url)
@@ -129,8 +153,8 @@ async def test_refund_before_delivery(env):
     assert (await agent.post(url, json={"reference": "REF-1234"})).status_code == 403
     assert (await admin.post(url, json={})).status_code == 422
     assert (await admin.post(url, json={"reference": "ab"})).status_code == 422
-    other_admin, _ = await env.login("admin", tenant_id=env.other_tenant_id)
-    assert (await other_admin.post(url, json={"reference": "REF-1234"})).status_code == 401
+    other_admin = await other_tenant_admin(env)
+    assert (await other_admin.post(url, json={"reference": "REF-1234"})).status_code == 404
     with pytest.raises(NotFound):
         await cross_tenant(
             env, lambda db, u: order_admin.refund_undelivered(db, oid, "REF-1234", None, u, None)
@@ -355,3 +379,78 @@ async def test_open_ticket_holds_reseller_markup(env):
     )
     bal = (await rb.get(f"{API}/reseller/me")).json()["balances"]
     assert bal["available_minor"] == 400 and bal["disputed_minor"] == 0
+
+
+# ------------------------------------------------------------------ audit follow-ups
+
+
+async def test_refund_refuses_unrecorded_payment_and_reused_reference(env):
+    admin, _ = await env.login("admin")
+    p = await env.product(mode="auto_card")
+    await env.import_codes(p, ["NOPAY-0001"])
+    b, _ = await env.login("buyer")
+    o = (await buy(b, p)).json()
+    # held with no payment and no ledger: never refundable (cancel instead)
+    await sql(env, "UPDATE orders SET status='manual_review', paid_at=now()")
+    r = await admin.post(f"{API}/admin/orders/{o['id']}/refund", json={"reference": "REF-AAAA"})
+    assert r.status_code == 409, r.text
+    assert await env.scalar("SELECT count(*) FROM order_events WHERE to_status='refunded'") == 0
+    # one reference cannot close two orders
+    ps = [await env.product(mode="auto_card", title=f"P{i}") for i in range(2)]
+    held = []
+    for pr in ps:
+        await env.import_codes(pr, [f"HELD-{pr.id.hex[:8]}"])
+        held.append((await paid_manual_review(env, pr))[1])
+    url0 = f"{API}/admin/orders/{held[0]['id']}/refund"
+    url1 = f"{API}/admin/orders/{held[1]['id']}/refund"
+    r = await admin.post(url0, json={"reference": "SAME-REF"})
+    assert r.status_code == 200, r.text
+    q = "SELECT detail->>'payment_id' FROM audit_log WHERE action='order.refunded'"
+    assert await env.scalar(q) is not None
+    assert (await admin.post(url1, json={"reference": "SAME-REF"})).status_code == 409
+    assert (await admin.post(url1, json={"reference": "OTHER-REF"})).status_code == 200
+
+
+async def test_carts_buy_now_and_promo_never_deadlock(env):
+    admin, _ = await env.login("admin")
+    promo = {"code": "SAVE10", "kind": "percent", "value": 100}
+    await admin.post(f"{API}/admin/promo-codes", json=promo)
+    a = await env.product(mode="auto_card", title="A")
+    b = await env.product(mode="auto_card", title="B")
+    await env.import_codes(a, [f"A-CODE-{i:04d}" for i in range(3)])
+    await env.import_codes(b, [f"B-CODE-{i:04d}" for i in range(3)])
+    cs = [(await env.login("buyer"))[0] for _ in range(6)]
+    la, lb = {"product_id": str(a.id), "qty": 1}, {"product_id": str(b.id), "qty": 1}
+
+    def cart(c, items, code=None):
+        body = {"items": items, **({"promo_code": code} if code else {})}
+        return c.post(f"{API}/checkout", json=body)
+
+    rs = await asyncio.gather(
+        cart(cs[0], [la, lb]),
+        cart(cs[1], [lb, la]),
+        cart(cs[2], [la, lb], "SAVE10"),
+        cart(cs[3], [lb, la], "SAVE10"),
+        cs[4].post(f"{API}/orders", json={"product_id": str(a.id), "promo_code": "SAVE10"}),
+        cs[5].post(f"{API}/orders", json={"product_id": str(b.id), "promo_code": "SAVE10"}),
+    )
+    for r in rs:
+        assert r.status_code in (200, 201, 409), r.text
+        if r.status_code == 409:
+            assert r.json()["error"]["code"] in ("out_of_stock", "too_many_unpaid"), r.text
+    for pr in (a, b):
+        n = await env.scalar(
+            "SELECT coalesce(sum(qty),0) FROM orders WHERE product_id=:p "
+            "AND status='pending_payment'",
+            p=pr.id,
+        )
+        assert n <= 3
+
+
+async def test_service_renewals_rls_forced_and_column_grant(env):
+    q = "SELECT relrowsecurity AND relforcerowsecurity FROM pg_class WHERE relname=:n"
+    assert await env.scalar(q, n="service_renewals") is True
+    q = "SELECT has_table_privilege('app_api','service_renewals','UPDATE')"
+    assert await env.scalar(q) is False
+    q = "SELECT has_column_privilege('app_api','service_renewals','reversed_at','UPDATE')"
+    assert await env.scalar(q) is True

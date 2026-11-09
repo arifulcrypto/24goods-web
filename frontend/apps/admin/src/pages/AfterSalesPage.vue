@@ -194,6 +194,7 @@ function tagType(a: TicketAction) {
           </el-form-item>
           <el-form-item v-if="dlg.action === 'refund'" :label="t('afterSales.refundReference')" :error="dlg.error">
             <el-input v-model="dlg.reference" maxlength="200" show-word-limit :placeholder="t('afterSales.refundReferenceHint')" />
+            <div class="small muted hint">{{ t('afterSales.refundReferenceVisible') }}</div>
           </el-form-item>
           <el-form-item :label="dlg.action === 'reject' ? t('afterSales.rejectReason') : t('afterSales.note')" :error="dlg.action === 'reject' ? dlg.error : ''">
             <el-input v-model="dlg.note" type="textarea" :rows="3" maxlength="500" show-word-limit />
@@ -235,6 +236,11 @@ function tagType(a: TicketAction) {
 }
 .gap {
   margin-bottom: 12px;
+}
+.hint {
+  font-size: 12px;
+  line-height: 1.4;
+  width: 100%;
 }
 :deep(.el-table__row) {
   cursor: pointer;

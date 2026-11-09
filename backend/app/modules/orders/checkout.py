@@ -45,6 +45,7 @@ from app.modules.orders.service import (
     create_order,
     enforce_payables_cap,
     lock_manual_products,
+    require_auto_stock,
     tenant_order_limits,
     utcnow,
 )
@@ -328,20 +329,19 @@ async def create_checkout(
     want: dict[uuid.UUID, int] = {}
     for it in items:
         want[it.product_id] = want.get(it.product_id, 0) + it.qty
-    stock = await stock_counts(
-        db, [p.id for p in products.values() if p.delivery_mode == "auto_card"]
+    # lock ALL goods product rows in id order BEFORE the promo row (global order: buyer ->
+    # products sorted -> promo): carts, buy-nows and quotes never deadlock each other
+    goods_ids = sorted(
+        pid for pid in want if products[pid].delivery_mode in ("manual", "auto_card")
     )
-    for pid, qty in want.items():
+    await lock_manual_products(db, buyer.tenant_id, goods_ids)
+    for pid in goods_ids:
         p = products[pid]
-        if p.delivery_mode == "auto_card" and stock.get(pid, 0) < qty:
-            raise OutOfStock("Not enough stock", extra={"product_id": str(pid)})
-    manual_ids = sorted(pid for pid in want if products[pid].delivery_mode == "manual")
-    if manual_ids:  # lock product rows in id order: carts never deadlock each other
-        await lock_manual_products(db, buyer.tenant_id, manual_ids)
-        for pid in manual_ids:
-            await db.refresh(products[pid], ["manual_stock"])
-            ms = products[pid].manual_stock
-            if ms is not None and ms < want[pid]:
+        if p.delivery_mode == "auto_card":  # free cards minus reservations (row lock held)
+            await require_auto_stock(db, buyer.tenant_id, pid, want[pid])
+        else:
+            await db.refresh(p, ["manual_stock"])
+            if p.manual_stock is not None and p.manual_stock < want[pid]:
                 raise OutOfStock("Not enough stock", extra={"product_id": str(pid)})
     cfg = channel_by_id(await tenant_settings(db, buyer.tenant_id), channel)
     if channel and cfg.id != channel:
