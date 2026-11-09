@@ -31,6 +31,7 @@ async def test_register_login_logout_and_cookie_flags(env):
         "locale": "zh-CN",
         "is_instant": False,
         "handle": None,
+        "avatar_url": None,
     }
     cookie = r.headers["set-cookie"]
     assert cookie.startswith("sid=") and "HttpOnly" in cookie and "SameSite=lax" in cookie

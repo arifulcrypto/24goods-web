@@ -69,3 +69,50 @@ export function createSeenSet(max = 500) {
     },
   }
 }
+
+// ---- order lifecycle alerts (review-v8b §4) ----
+export type OrderAlertKind = 'created' | 'paid' | 'cancelled' | 'expired'
+export type OrderAlertPrefs = Record<OrderAlertKind, boolean>
+export const DEFAULT_ORDER_ALERTS: Readonly<OrderAlertPrefs> = { created: true, paid: true, cancelled: true, expired: false }
+export const ORDER_ALERT_KINDS = Object.keys(DEFAULT_ORDER_ALERTS) as OrderAlertKind[]
+
+/** Merge stored (untrusted) toggles over the defaults; anything that is not a boolean is ignored. */
+export function mergeOrderAlerts(raw: unknown): OrderAlertPrefs {
+  const out = { ...DEFAULT_ORDER_ALERTS }
+  if (raw && typeof raw === 'object') {
+    for (const k of ORDER_ALERT_KINDS) {
+      const v = (raw as Record<string, unknown>)[k]
+      if (typeof v === 'boolean') out[k] = v
+    }
+  }
+  return out
+}
+
+/** A paid status change older than this is a late staff action, not a payment arriving now. */
+export const PAID_FRESH_MS = 10 * 60 * 1000
+export const CREATED_FRESH_MS = 2 * 60 * 1000
+const PAID_STATES = new Set(['paid', 'delivered', 'completed', 'manual_review'])
+
+/**
+ * Map a staff `order` event to at most one alert, exactly once per (order, kind): a manual order
+ * going paid -> delivered never alerts twice, and every delivery mode alerts on payment.
+ */
+export function orderAlertKind(
+  o: { id: string; status: string; paid_at?: string | null; created_at?: string | null },
+  seen: { first(id: string): boolean },
+  now: number = Date.now(),
+): OrderAlertKind | null {
+  let kind: OrderAlertKind | null = null
+  if (o.status === 'pending_payment') {
+    // re-broadcasts of an old pending order (e.g. channel switch) are not new orders
+    const c = o.created_at ? Date.parse(o.created_at) : NaN
+    kind = Number.isFinite(c) && now - c <= CREATED_FRESH_MS ? 'created' : null
+  }
+  else if (o.status === 'cancelled') kind = 'cancelled'
+  else if (o.status === 'expired') kind = 'expired'
+  else if (PAID_STATES.has(o.status)) {
+    const t = o.paid_at ? Date.parse(o.paid_at) : NaN
+    kind = Number.isFinite(t) && now - t <= PAID_FRESH_MS ? 'paid' : null
+  }
+  return kind && seen.first(`${kind}:${o.id}`) ? kind : null
+}

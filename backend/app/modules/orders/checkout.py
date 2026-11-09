@@ -395,7 +395,7 @@ async def create_checkout(
     )
     db.add(co)
     await db.flush()
-    conv = await chat.open_conversation_for(db, buyer)
+    conv_id = await chat.conversation_id_for_order(db, buyer)
     orders: list[Order] = []
     codes: dict[str, str] = {}
     for it, value, sub, disc, mk in zip(items, inputs, subs, discounts, markups, strict=True):
@@ -415,7 +415,7 @@ async def create_checkout(
             delivery_mode=p.delivery_mode,
             product_id=p.id,
             quote_id=None,
-            conversation_id=conv.id if conv else None,
+            conversation_id=conv_id,
             ip=ip,
             source=source,
             buyer_input=value,

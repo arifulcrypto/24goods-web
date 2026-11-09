@@ -3,14 +3,14 @@ import { useRoute, useRouter, type RouteLocationRaw } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { formatMoney, messagePreview } from '@24goods/shared'
 import { beep, desktopNotify } from '../notify'
-import { createSeenSet, createThrottle, isRelevant, titleWithCount, type NotifyEvent } from '../lib/notifyPolicy'
+import { createSeenSet, createThrottle, isRelevant, orderAlertKind, titleWithCount, type NotifyEvent } from '../lib/notifyPolicy'
 import { useDeskStore } from '../stores/desk'
 import { usePrefsStore } from '../stores/prefs'
 import { useRealtimeStore } from '../stores/realtime'
 
 /**
- * CS notifications (review-v3 §6): chime + browser Notification on a new buyer message, a newly
- * paid manual order and a new after-sales ticket. Only when the tab is hidden or the agent is
+ * CS notifications (review-v3 §6, v8b §4): chime + browser Notification on a new buyer message, order
+ * created / paid (any delivery mode) / cancelled / expired (per-agent toggles) and a new after-sales ticket. Only when the tab is hidden or the agent is
  * looking at something else; throttled to one alert per 4 s; tab title shows the unread count.
  * Mounted once, by AdminLayout.
  */
@@ -22,7 +22,7 @@ export function useCsNotifications() {
   const prefs = usePrefsStore()
   const desk = useDeskStore()
   const throttle = createThrottle()
-  const paidSeen = createSeenSet()
+  const orderSeen = createSeenSet()
   const ticketSeen = createSeenSet()
 
   const isHidden = () => document.visibilityState === 'hidden' || !document.hasFocus()
@@ -65,11 +65,14 @@ export function useCsNotifications() {
       )
     }),
     rt.on('order', (o) => {
-      if (o.status !== 'paid' || o.delivery_mode !== 'manual' || !paidSeen.first(o.id)) return
+      // one alert per (order, event); per-agent toggles decide which events are shown
+      const kind = orderAlertKind(o, orderSeen)
+      if (!kind || !prefs.orderAlerts[kind]) return
+      const amount = formatMoney(o.amount, o.currency, locale.value)
       fire(
         { kind: 'order', orderId: o.id },
-        t('notify.paidManual', { no: o.order_no }),
-        `${o.title} · ${formatMoney(o.amount, o.currency, locale.value)}`,
+        t(`notify.order.${kind}`, { no: o.order_no, title: o.title, amount }),
+        kind === 'created' ? amount : o.title,
         { name: 'orders', query: { open: o.id } },
       )
     }),

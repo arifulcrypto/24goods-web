@@ -400,7 +400,7 @@ async def buy_now(
             currency=product.currency,
             lock=True,  # promo row FOR UPDATE until commit: limits + reserve are atomic
         )
-    conv = await chat.open_conversation_for(db, buyer)
+    conv_id = await chat.conversation_id_for_order(db, buyer)
     order, msg = await create_order(
         db,
         settings=settings,
@@ -412,7 +412,7 @@ async def buy_now(
         delivery_mode=product.delivery_mode,
         product_id=product.id,
         quote_id=None,
-        conversation_id=conv.id if conv else None,
+        conversation_id=conv_id,
         ip=ip,
         source=source,
         buyer_input=value,

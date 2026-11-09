@@ -35,6 +35,10 @@ type AdminOrderDetail = AdminOrderDetailBase & Partial<OrderV5Fields>
 const props = defineProps<{ orderId: string | null }>()
 const emit = defineEmits<{ close: []; updated: [o: Order] }>()
 const { t, locale } = useI18n()
+const PAY_CHANNELS = ['zpay_alipay', 'usdt_xlayer', 'usdt_arbitrum', 'usdt_trc20']
+function channelLabel(c: string): string {
+  return PAY_CHANNELS.includes(c) ? t(`payChannel.${c}`) : c
+}
 
 const order = ref<AdminOrderDetail | null>(null)
 const loading = ref(false)
@@ -378,7 +382,10 @@ defineExpose({ reload: () => props.orderId && load(props.orderId) })
           <el-descriptions-item :label="t('orders.info.buyerEmail')">{{ visibleEmail(order.buyer.email) || '—' }}</el-descriptions-item>
           <el-descriptions-item :label="t('orders.info.qty')">{{ order.qty }}</el-descriptions-item>
           <el-descriptions-item :label="t('orders.col.mode')">{{ t(`deliveryMode.${order.delivery_mode}`) }}</el-descriptions-item>
-          <el-descriptions-item :label="t('orders.info.channel')">{{ order.channel ?? '—' }}</el-descriptions-item>
+          <el-descriptions-item :label="t('payChannel.column')">
+            <el-tag v-if="order.channel" size="small" :type="String(order.channel).startsWith('usdt_') ? 'success' : 'primary'" effect="plain">{{ channelLabel(order.channel) }}</el-tag>
+            <el-tag v-else size="small" type="info" effect="plain">{{ t('payChannel.none') }}</el-tag>
+          </el-descriptions-item>
           <el-descriptions-item :label="t('orders.info.version')">v{{ order.version }}</el-descriptions-item>
           <el-descriptions-item v-if="order.quote_id" :label="t('orders.info.quote')"><span class="mono small">{{ order.quote_id }}</span></el-descriptions-item>
           <el-descriptions-item :label="t('orders.col.created')">{{ formatDateTime(order.created_at, locale) }}</el-descriptions-item>

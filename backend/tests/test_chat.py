@@ -37,7 +37,12 @@ async def test_send_text_idempotent_and_limits(env):
     m1 = (await buyer.post(url, json=body)).json()
     m2 = (await buyer.post(url, json=body)).json()
     assert m1["id"] == m2["id"] and m1["text"] == "hello"
-    assert m1["sender"] == {"id": str(user.id), "role": "buyer", "display_name": "Buyer"}
+    assert m1["sender"] == {
+        "id": str(user.id),
+        "role": "buyer",
+        "display_name": "Buyer",
+        "avatar_url": None,
+    }
     assert await env.scalar("SELECT count(*) FROM messages WHERE type='text'") == 1
     r = await buyer.post(url, json={"client_msg_id": "c-2", "type": "text", "text": "x" * 2001})
     assert r.status_code == 422

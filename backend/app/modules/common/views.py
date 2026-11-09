@@ -49,6 +49,13 @@ def attachment_view(a: Attachment | None) -> dict[str, Any] | None:
     return out
 
 
+def avatar_url(u: User | None) -> str | None:
+    """Same-origin, authenticated URL; ``v`` busts caches when the avatar changes."""
+    if u is None or not u.avatar_key:
+        return None
+    return f"/api/v1/avatars/{u.id}?v={u.avatar_key[:8]}"
+
+
 def user_view(u: User) -> dict[str, Any]:
     # The `<handle>@instant.invalid` placeholder is an internal login key, never shown.
     email = "" if u.email.endswith("@instant.invalid") else u.email
@@ -60,6 +67,7 @@ def user_view(u: User) -> dict[str, Any]:
         "locale": u.locale,
         "is_instant": u.is_instant,
         "handle": u.handle,
+        "avatar_url": avatar_url(u),
     }
 
 
@@ -313,6 +321,7 @@ def message_view(
     m: Message,
     *,
     sender_name: str | None,
+    sender_avatar: str | None = None,
     attachment: Attachment | None = None,
     payload_overlay: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -328,6 +337,7 @@ def message_view(
                 "id": str(m.sender_id) if m.sender_id else None,
                 "role": m.sender_role,
                 "display_name": sender_name or SYSTEM_NAME,
+                "avatar_url": None,
             },
             "type": m.type,
             "text": None,
@@ -349,6 +359,7 @@ def message_view(
             "id": str(m.sender_id) if m.sender_id else None,
             "role": m.sender_role,
             "display_name": sender_name or SYSTEM_NAME,
+            "avatar_url": sender_avatar,
         },
         "type": m.type,
         "text": m.text,

@@ -331,6 +331,8 @@ function deliveredOrderId(it: { kind: string; message?: { type: string; payload:
     <div v-if="offline" class="notice offline" role="status">{{ offlineText }}</div>
 
     <ChatMessageList
+      :self-name="auth.user?.display_name"
+      :self-avatar="auth.user?.avatar_url"
       :self-id="auth.user?.id"
       @action="messageAction"
       ref="list"

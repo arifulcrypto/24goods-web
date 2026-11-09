@@ -14,7 +14,7 @@ import OrderCardView from './OrderCardView.vue'
 import ProductCardView from './ProductCardView.vue'
 import SmartText from './SmartText.vue'
 
-const props = defineProps<{ item: ChatItem; mode: 'buyer' | 'staff'; busyQuoteId?: string | null; viewOrder?: boolean; selfId?: string }>()
+const props = defineProps<{ item: ChatItem; mode: 'buyer' | 'staff'; busyQuoteId?: string | null; viewOrder?: boolean; selfId?: string; selfName?: string; selfAvatar?: string | null }>()
 const emit = defineEmits<{
   preview: [url: string]
   openFile: [f: { url: string; name: string }]
@@ -39,7 +39,8 @@ const view = computed(() => {
       type: p.type,
       text: p.text,
       senderRole: it.senderRole,
-      senderName: '',
+      senderName: props.selfName ?? '',
+      senderAvatar: props.selfAvatar ?? null,
       imageUrl: p.type === 'image' ? (safeAssetUrl(p.attachment?.url) ?? p.objectUrl) : null,
       voiceUrl: p.type === 'voice' ? (safeAssetUrl(p.attachment?.url) ?? p.objectUrl) : null,
       durationMs: p.durationMs ?? 0,
@@ -58,6 +59,7 @@ const view = computed(() => {
     text: m.text,
     senderRole: m.sender.role,
     senderName: m.sender.display_name,
+    senderAvatar: m.sender.avatar_url ?? null,
     imageUrl: m.type === 'image' ? safeAssetUrl(m.attachment?.url) : null,
     voiceUrl: m.type === 'voice' ? safeAssetUrl(m.attachment?.url) : null,
     durationMs: m.attachment?.duration_ms ?? 0,
@@ -83,6 +85,7 @@ const centered = computed(() => view.value.type === 'system')
 const file = computed(() => (view.value.type === 'file' ? (view.value.payload as FilePayload | null) : null))
 const isCard = computed(() => ['product_card', 'quote_card', 'order_card'].includes(view.value.type))
 
+const avatarSrc = computed(() => safeAssetUrl(view.value.senderAvatar))
 const initial = computed(() => (view.value.senderName || '?').trim().charAt(0).toUpperCase() || '?')
 
 /** Fixed-aspect image box (max 200×200) so the list does not jump while images load. */
@@ -145,7 +148,7 @@ const systemText = computed(() => {
       <button v-if="canRecall" type="button" @click="action('recall')">{{ t('chatActions.recall') }}</button>
       <button type="button" @click="menu = false">{{ t('common.cancel') }}</button>
     </div>
-    <span v-if="!self" class="gc-avatar" aria-hidden="true">{{ initial }}</span>
+    <span class="gc-avatar" aria-hidden="true"><img v-if="avatarSrc" :src="avatarSrc" alt="" loading="lazy" decoding="async" />{{ avatarSrc ? '' : initial }}</span>
     <div class="gc-col">
       <span v-if="!self && mode === 'staff' && view.senderName" class="gc-name">{{ view.senderName }}</span>
       <span v-else-if="self && mode === 'staff' && view.senderName" class="gc-name gc-name-self">{{ view.senderName }}</span>

@@ -71,6 +71,9 @@ const zhCN: AdminMessages = {
     statusMessage: '状态说明（买家可见）',
     statusMessagePlaceholder: '例如：10 分钟后回来',
     update: '更新',
+    avatarChange: '更换头像',
+    avatarRemove: '移除头像',
+    avatarType: '请选择图片文件（最大 2 MB）。',
     statusUpdated: '状态已更新',
     logout: '退出登录',
     role: {
@@ -408,7 +411,7 @@ const zhCN: AdminMessages = {
   },
   notify: {
     title: '提醒',
-    when: '收到买家新消息、手动发货订单付款、新的售后工单时提醒；仅当本页在后台，或当前打开的是其他会话时触发。',
+    when: '收到买家新消息、订单动态、新的售后工单时提醒；仅当本页在后台，或当前打开的是其他会话时触发。',
     sound: '提示音',
     desktop: '桌面通知',
     denied: '此浏览器已屏蔽通知。请在站点设置中允许后，再重新开启。',
@@ -416,6 +419,9 @@ const zhCN: AdminMessages = {
     newMessage: '{name} 发来新消息',
     paidManual: '订单 {no} 已付款，待发货',
     newTicket: '新售后工单 · {no}',
+    orders: '订单提醒',
+    orderKind: { created: '新订单', paid: '收到付款', cancelled: '订单已取消', expired: '订单已过期（默认关闭）' },
+    order: { created: '新订单 #{no} · {title}', paid: '已付款 #{no} · {amount}', cancelled: '已取消 #{no}', expired: '已过期 #{no}' },
   },
   delivery: {
     title: '发货展示',

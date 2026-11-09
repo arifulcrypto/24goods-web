@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { clearRecent, recentIds, type Locale, type ProductSummary } from '@24goods/shared'
+import { clearRecent, recentIds, safeAssetUrl, type Locale, type ProductSummary } from '@24goods/shared'
 import { api } from '../api'
 import MiniStrip from '../components/MiniStrip.vue'
 import SiteFooter from '../components/SiteFooter.vue'
@@ -21,6 +21,7 @@ const auth = useAuthStore()
 const convs = useConversationsStore()
 const site = useSiteStore()
 const initial = computed(() => (auth.user?.display_name || auth.user?.handle || auth.user?.email || '?').trim().charAt(0).toUpperCase())
+const avatarSrc = computed(() => safeAssetUrl(auth.user?.avatar_url))
 const identity = computed(() => auth.user?.email || auth.user?.handle || '')
 const recent = ref<ProductSummary[]>([])
 const ORDER_TABS = ['unpaid', 'toDeliver', 'delivered', 'afterSales'] as const
@@ -73,6 +74,36 @@ function openEdit() {
   editLocale.value = (auth.user?.locale ?? locale.value) as Locale
   editShow.value = true
 }
+const AVATAR_MAX = 2 * 1024 * 1024
+const avatarBusy = ref(false)
+async function pickAvatar(ev: Event) {
+  const input = ev.target as HTMLInputElement
+  const f = input.files?.[0]
+  input.value = ''
+  if (!f || avatarBusy.value) return
+  if (!f.type.startsWith('image/')) return void showToast(t('me.avatarType'))
+  if (f.size > AVATAR_MAX) return void showToast(t('me.avatarTooBig'))
+  avatarBusy.value = true
+  try {
+    auth.setUser(await api.me.setAvatar(f))
+    showSuccessToast(t('common.saved'))
+  } catch (e) {
+    toastError(e)
+  } finally {
+    avatarBusy.value = false
+  }
+}
+async function removeAvatar() {
+  if (avatarBusy.value) return
+  avatarBusy.value = true
+  try {
+    auth.setUser(await api.me.removeAvatar())
+  } catch (e) {
+    toastError(e)
+  } finally {
+    avatarBusy.value = false
+  }
+}
 async function saveProfile() {
   if (saving.value || !editName.value.trim()) return
   saving.value = true
@@ -98,7 +129,7 @@ function secureAccount() {
   <div class="page with-tabbar">
     <header class="me-head">
       <template v-if="auth.user">
-        <span class="avatar" aria-hidden="true">{{ initial }}</span>
+        <span class="avatar" aria-hidden="true"><img v-if="avatarSrc" :src="avatarSrc" alt="" />{{ avatarSrc ? '' : initial }}</span>
         <div class="who">
           <div class="name">{{ auth.user.display_name }}</div>
           <div class="email">{{ identity }}</div>
@@ -178,6 +209,14 @@ function secureAccount() {
     <van-popup v-model:show="editShow" position="bottom" round closeable safe-area-inset-bottom teleport="body" class="buy-sheet">
       <form class="sheet" @submit.prevent="saveProfile">
         <h2>{{ t('me.editProfile') }}</h2>
+        <div class="av-row">
+          <span class="avatar" aria-hidden="true"><img v-if="avatarSrc" :src="avatarSrc" alt="" />{{ avatarSrc ? '' : initial }}</span>
+          <label class="av-btn" :class="{ busy: avatarBusy }">
+            {{ t('me.avatarChange') }}
+            <input type="file" accept="image/jpeg,image/png,image/webp,image/gif" class="av-input" :disabled="avatarBusy" @change="pickAvatar" />
+          </label>
+          <button v-if="avatarSrc" type="button" class="av-btn" :disabled="avatarBusy" @click="removeAvatar">{{ t('me.avatarRemove') }}</button>
+        </div>
         <van-field v-model="editName" maxlength="40" :label="t('auth.displayName')" :rules="[{ required: true }]" />
         <div class="lang-row">
           <span>{{ t('me.language') }}</span>
@@ -194,6 +233,44 @@ function secureAccount() {
 </template>
 
 <style scoped>
+.avatar {
+  overflow: hidden;
+}
+.avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.av-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+}
+.av-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--van-border-color, #ddd);
+  border-radius: 22px;
+  background: transparent;
+  color: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+.av-btn.busy {
+  opacity: 0.5;
+}
+.av-input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+  width: 100%;
+}
 .page {
   min-height: 100vh;
 }

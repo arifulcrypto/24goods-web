@@ -131,6 +131,13 @@ export function createBuyerApi(c: ApiClient) {
       credentials: (b: { current_password?: string; email?: string; new_password?: string }) =>
         c.post<User>('/me/credentials', b),
       remove: (b: { password?: string; confirm: 'DELETE' }) => c.post<void>('/me/delete', b),
+      /** v8b: server re-encodes to a 256 px square; input <= 2 MB. */
+      setAvatar: (file: Blob) => {
+        const fd = new FormData()
+        fd.append('file', file, 'avatar')
+        return c.request<User>('PUT', '/me/avatar', { form: fd })
+      },
+      removeAvatar: () => c.delete<User>('/me/avatar'),
     },
     categories: () => c.get<Category[]>('/categories'),
     products: (q: { q?: string; category?: string; page?: number; page_size?: number }) =>
