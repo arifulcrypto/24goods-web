@@ -37,8 +37,10 @@ async def test_seed_populates_v3_demo_data_idempotently(env, monkeypatch):
         terms = (
             await db.execute(text("SELECT body_i18n FROM articles WHERE slug='terms'"))
         ).scalar()
-        assert "Template — have it reviewed by a lawyer before launch" in terms["en"]
-        assert "模板" in terms["zh-CN"]
+        # issue #48 §5: no internal "have a lawyer review this" banner on a live site
+        assert "lawyer" not in terms["en"] and "律师" not in terms["zh-CN"]
+        assert "Mainland China" in terms["en"] and "中国大陆" in terms["zh-CN"]
+        assert terms["en"].startswith("_Effective date:")
         ann = (
             await db.execute(
                 text("SELECT settings->'announcement' FROM tenants WHERE id=:t"), {"t": tid}

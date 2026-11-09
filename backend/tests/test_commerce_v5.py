@@ -1121,7 +1121,14 @@ async def test_refund_of_a_promo_order_keeps_redemption_used_and_balances(env):
     await assert_ledger_balanced(env)
 
 
-async def test_anonymous_promo_errors_are_opaque_and_quote_shares_the_bucket(env):
+async def test_anonymous_promo_errors_are_opaque_and_quote_shares_the_bucket(env, monkeypatch):
+    # The limiter uses fixed 60 s windows: pin its clock so a minute boundary falling mid-test
+    # cannot split the ~23 requests across two windows (flaked once in CI, PR #52).
+    import types
+
+    import app.core.ratelimit as rl
+
+    monkeypatch.setattr(rl, "time", types.SimpleNamespace(time=lambda: 1_800_000_030.0))
     admin, _ = await env.login("admin")
     await make_promo(admin, code="OFF2", enabled=False)
     p = await env.product(mode="manual", price=1990, floor=100)
