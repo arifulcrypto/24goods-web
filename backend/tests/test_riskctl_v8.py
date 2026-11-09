@@ -2,8 +2,19 @@
 
 from __future__ import annotations
 
+import types
+
+import pytest
+
+import app.core.ratelimit as rl
 from app.core.config import Settings
 from app.core.settings_v5 import DEFAULTS
+
+
+@pytest.fixture(autouse=True)
+def _pinned_window(monkeypatch):
+    # fixed-window limiter: a window boundary mid-test would reset the counts
+    monkeypatch.setattr(rl, "time", types.SimpleNamespace(time=lambda: 1_800_000_030.0))
 
 
 def test_new_defaults():

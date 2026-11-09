@@ -149,7 +149,13 @@ async def test_pending_order_cap(env):
     assert r.status_code == 200
 
 
-async def test_pay_and_create_rate_limits(env):
+async def test_pay_and_create_rate_limits(env, monkeypatch):
+    import types
+
+    import app.core.ratelimit as rl
+
+    # fixed-window limiter: pin the clock mid-window so a boundary can't reset the count mid-test
+    monkeypatch.setattr(rl, "time", types.SimpleNamespace(time=lambda: 1_800_000_030.0))
     # 20/min per account on create, shared by buy-now and quote-accept (#58 risk control)
     env.res.settings = env.res.settings.model_copy(update={"order_create_per_user": 20})
     product = await env.product(mode="manual")
