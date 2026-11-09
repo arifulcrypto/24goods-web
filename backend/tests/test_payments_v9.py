@@ -278,7 +278,7 @@ async def test_gateway_self_test_and_health(env, monkeypatch):
 
     monkeypatch.setattr(payment_ops, "tcp_connect_ms", connect)
 
-    async def not_found(self, endpoint, params, *, post=False):
+    async def not_found(self, endpoint, params, *, post=False, connect_s=1.8):
         return {"code": -1, "msg": "order not found " + params["key"]}
 
     monkeypatch.setattr(ZPayClient, "_json", not_found)
@@ -295,7 +295,7 @@ async def test_gateway_self_test_and_health(env, monkeypatch):
     h = (await admin.get("/api/v1/admin/payment-gateways-health")).json()
     assert h["gateways"][ref]["status"] == "healthy"
 
-    async def down(self, endpoint, params, *, post=False):
+    async def down(self, endpoint, params, *, post=False, connect_s=1.8):
         raise ZPayUnreachable("gateway unreachable")
 
     monkeypatch.setattr(ZPayClient, "_json", down)

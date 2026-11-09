@@ -123,6 +123,9 @@ class Settings(BaseSettings):
     # resulting pay_url is then relative too. Must be https:// in prod.
     zpay_gateway: str = "https://zpayz.cn"
     zpay_api_base: str = ""  # server-to-server base for api.php (defaults to gateway)
+    # fallback TCP relays for gateway API hosts, used only when the direct connection fails:
+    # "pay.example.cn=203.0.113.5:20443[,host=ip:port]" (app/payments/egress.py)
+    zpay_relays: str = ""
     zpay_fee_permille: int = 16  # 1.6 %
     notify_rate_per_min: int = 120  # per source IP on /pay/notify/*
 
