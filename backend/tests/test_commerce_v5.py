@@ -493,7 +493,8 @@ async def test_storefront_order_markup_ledger_refund_and_visibility(env):
     )
     assert t.status_code == 200, t.text
     r = await admin.post(
-        f"{API}/admin/after-sales/{t.json()['id']}/action", json={"action": "refund"}
+        f"{API}/admin/after-sales/{t.json()['id']}/action",
+        json={"action": "refund", "reference": "REF-TEST-1"},
     )
     assert r.status_code == 200, r.text
     for acct in (
@@ -662,7 +663,7 @@ async def test_reseller_products_overrides_and_payout_ledger(env):
     await staff.post(f"{API}/admin/orders/{o['id']}/deliver", json={"text": "ok"})
     assert (await buyer.post(f"{API}/orders/{o['id']}/confirm")).status_code == 200
     bal = (await rb.get(f"{API}/reseller/me")).json()["balances"]
-    assert bal == {"pending_minor": 0, "available_minor": 400, "paid_minor": 0}
+    assert bal == {"pending_minor": 0, "available_minor": 400, "paid_minor": 0, "disputed_minor": 0}
     # payout rules
     r = await rb.post(f"{API}/reseller/payouts", json={"amount_minor": 100})
     assert r.json()["error"]["code"] == "payout_below_minimum"
@@ -1076,7 +1077,8 @@ async def test_payout_paid_rechecks_balance_after_a_refund_unless_forced(env):
     )
     assert t.status_code == 200, t.text
     r = await admin.post(
-        f"{API}/admin/after-sales/{t.json()['id']}/action", json={"action": "refund"}
+        f"{API}/admin/after-sales/{t.json()['id']}/action",
+        json={"action": "refund", "reference": "REF-TEST-1"},
     )
     assert r.status_code == 200, r.text
     r = await admin.post(f"{API}/admin/payouts/{pid}/decide", json={"action": "paid"})
@@ -1111,7 +1113,8 @@ async def test_refund_of_a_promo_order_keeps_redemption_used_and_balances(env):
         json={"reason": "invalid_code", "description": "x", "attachment_ids": []},
     )
     r = await admin.post(
-        f"{API}/admin/after-sales/{t.json()['id']}/action", json={"action": "refund"}
+        f"{API}/admin/after-sales/{t.json()['id']}/action",
+        json={"action": "refund", "reference": "REF-TEST-1"},
     )
     assert r.status_code == 200, r.text
     for acct in ("sales_revenue", "promo_discount", "surcharge_revenue", "gateway_clearing:zpay"):

@@ -204,9 +204,13 @@ async def test_refund_marks_order_and_ledger_balances_to_zero(env):
     _p, buyer, staff, admin, order = await setup_manual(env)
     t = (await open_ticket(buyer, order)).json()
     url = f"/api/v1/admin/after-sales/{t['id']}/action"
-    r = await staff.post(url, json={"action": "refund"})  # agents cannot move money
+    r = await staff.post(
+        url, json={"action": "refund", "reference": "REF-TEST-1"}
+    )  # agents cannot move money
     assert r.status_code == 403
-    r = await admin.post(url, json={"action": "refund", "note": "refunded in Alipay"})
+    r = await admin.post(
+        url, json={"action": "refund", "note": "refunded in Alipay", "reference": "REF-TEST-1"}
+    )
     assert r.status_code == 200 and r.json()["status"] == "refunded"
     o = (await buyer.get(f"/api/v1/orders/{order['id']}")).json()
     assert o["status"] == "refunded"
@@ -358,7 +362,10 @@ async def test_refund_unpaid_order_rejected(env):
     async with env.owner_session() as db:  # force an impossible state
         await db.execute(text("UPDATE orders SET status='pending_payment'"))
         await db.commit()
-    r = await admin.post(f"/api/v1/admin/after-sales/{t['id']}/action", json={"action": "refund"})
+    r = await admin.post(
+        f"/api/v1/admin/after-sales/{t['id']}/action",
+        json={"action": "refund", "reference": "REF-TEST-1"},
+    )
     assert r.status_code == 409
     assert await env.scalar("SELECT count(*) FROM ledger_entries WHERE memo LIKE 'refund %'") == 0
 
@@ -376,7 +383,13 @@ async def test_service_level_refund_requires_admin(env):
         agent = await db.scalar(select_user("agent"))
         assert isinstance(agent, User)
         try:
-            await service.act(db, agent, uuid.UUID(t["id"]), ActionIn(action="refund"), None)
+            await service.act(
+                db,
+                agent,
+                uuid.UUID(t["id"]),
+                ActionIn(action="refund", reference="REF-TEST-1"),
+                None,
+            )
         except Forbidden:
             pass
         else:
@@ -417,7 +430,10 @@ async def test_duplicate_notify_after_refund_is_benign(env, gw):
         )
         await db.commit()
     t = (await open_ticket(buyer, o)).json()
-    r = await admin.post(f"/api/v1/admin/after-sales/{t['id']}/action", json={"action": "refund"})
+    r = await admin.post(
+        f"/api/v1/admin/after-sales/{t['id']}/action",
+        json={"action": "refund", "reference": "REF-TEST-1"},
+    )
     assert r.status_code == 200
     before = (
         await env.scalar("SELECT count(*) FROM payments"),
@@ -453,7 +469,10 @@ async def test_duplicate_notify_after_refund_is_benign(env, gw):
 async def test_reveal_after_refund_is_409(env):
     _p, buyer, _staff, admin, order = await _auto_order(env)
     t = (await open_ticket(buyer, order)).json()
-    r = await admin.post(f"/api/v1/admin/after-sales/{t['id']}/action", json={"action": "refund"})
+    r = await admin.post(
+        f"/api/v1/admin/after-sales/{t['id']}/action",
+        json={"action": "refund", "reference": "REF-TEST-1"},
+    )
     assert r.status_code == 200
     r = await buyer.post(f"/api/v1/orders/{order['id']}/reveal")
     assert r.status_code == 409

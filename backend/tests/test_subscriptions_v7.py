@@ -219,7 +219,9 @@ async def test_sync_creates_renews_is_idempotent_and_cancels_on_refund(env):
         == 2
     )
 
-    # the source order is refunded -> the auto service is cancelled (audited as system)
+    # the source order is refunded while a paid renewal remains (v8 C): the service keeps the
+    # renewal's periods and only the source's one period is taken back (no cancellation)
+    before_end = row.ends_at
     async with env.owner_session() as db:
         await db.execute(
             text("UPDATE orders SET status='refunded' WHERE id=:i"), {"i": uuid.UUID(first["id"])}
@@ -227,12 +229,13 @@ async def test_sync_creates_renews_is_idempotent_and_cancels_on_refund(env):
         await db.commit()
     assert await jobs.sync_subscriptions(env.res) == 1
     (row,) = await entitlements(env)
-    assert row.status == "cancelled"
+    assert row.status == "active" and row.source_reversed_at is not None
+    assert row.ends_at == service.periods_end(before_end, row.period_policy, 30, "UTC", -1)
     assert await jobs.sync_subscriptions(env.res) == 0
-    # a later order starts a fresh service (the cancelled one is not renewed)
+    # a later order renews the same (still open) service
     await delivered_order(env, buyer, p, staff=staff)
     assert await jobs.sync_subscriptions(env.res) == 1
-    assert len(await entitlements(env)) == 2
+    assert len(await entitlements(env)) == 1
 
 
 async def test_sync_ignores_old_orders_and_pins_tenants(env):

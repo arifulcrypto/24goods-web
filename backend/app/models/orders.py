@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import BigInteger, ForeignKey, Identity, Integer, String, Text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, created_at, updated_at, uuid_pk
@@ -53,6 +54,9 @@ class Order(Base):
     promo_code_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("promo_codes.id"))
     reseller_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("resellers.id"))
     reseller_markup_minor: Mapped[int] = mapped_column(BigInteger, default=0)
+    # v8: manual stock actually reserved at creation (G); terms snapshot at purchase (F)
+    stock_reserved: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    terms: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True))
     created_at: Mapped[datetime] = created_at()
     updated_at: Mapped[datetime] = updated_at()
 

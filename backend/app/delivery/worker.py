@@ -29,7 +29,11 @@ from app.models import (
 )
 from app.modules.chat.messages import order_card_messages, post_system
 from app.modules.common.orderviews import order_views
-from app.modules.common.sitedefaults import AFTER_SALES_REOPEN_EXTENSION, delivery_deadlines
+from app.modules.common.sitedefaults import (
+    AFTER_SALES_REOPEN_EXTENSION,
+    delivery_deadlines,
+    order_terms,
+)
 from app.modules.common.views import after_sales_view, message_view
 from app.modules.orders.events import add_event, snapshot
 from app.modules.realtime.publish import publish_after_sales, publish_message, publish_order
@@ -110,11 +114,12 @@ async def handle_order_paid(db: AsyncSession, order_id: uuid.UUID) -> JobResult:
         now = datetime.now(timezone.utc)
         product = await db.get(Product, order.product_id) if order.product_id else None
         tenant = await db.get(Tenant, order.tenant_id)
+        t_hours, t_months = order_terms(order, product)  # purchase-time snapshot (v8 F)
         order.after_sales_until, order.auto_confirm_at = delivery_deadlines(
             now,
             mode="auto_card",
-            product_hours=product.after_sales_hours if product else None,
-            product_months=product.after_sales_months if product else None,
+            product_hours=t_hours,
+            product_months=t_months,
             tenant_settings=tenant.settings if tenant else None,
         )
         order.status = "delivered"

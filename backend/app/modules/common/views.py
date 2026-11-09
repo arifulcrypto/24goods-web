@@ -223,6 +223,7 @@ def order_view(
     promo_code: str | None = None,
     manual_eta_default: int = 24,
     channel_totals: dict[str, dict[str, Any]] | None = None,
+    refund_reference: str | None = None,
 ) -> dict[str, Any]:
     manual = None
     eta = deadline = None
@@ -276,6 +277,17 @@ def order_view(
         "delivery_mode": o.delivery_mode,
         "delivery_eta_hours": eta,
         "delivery_deadline": deadline,
+        # v8 A.4: from this moment a paid, undelivered goods order may be escalated by the buyer
+        "not_received_from": iso(
+            o.paid_at + timedelta(hours=eta if o.delivery_mode == "manual" else 1)
+        )
+        if o.paid_at is not None
+        and o.kind == "goods"
+        and o.status in ("paid", "manual_review")
+        and (o.delivery_mode != "manual" or eta is not None)
+        else None,
+        # v8 B: what staff confirmed when they marked the money as returned
+        "refund_reference": refund_reference if o.status == "refunded" else None,
         "channel": o.channel,
         "created_at": iso(o.created_at),
         "paid_at": iso(o.paid_at),

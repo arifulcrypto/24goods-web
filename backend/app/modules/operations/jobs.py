@@ -9,11 +9,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time as monotonic_time
 import uuid
 from datetime import datetime, time, timedelta, timezone
 
-from sqlalchemy import delete, exists, func, select, text
+from sqlalchemy import and_, delete, exists, func, or_, select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 
@@ -386,7 +387,10 @@ async def _delivery_owner(db, tid: uuid.UUID, order: Order) -> uuid.UUID | None:
 async def _apply_subscription(db, tid: uuid.UUID, order: Order, product: Product) -> str | None:  # type: ignore[no-untyped-def]
     """Create or extend the service for one delivered subscription order (caller holds a
     savepoint). Returns ``renewed``/``created`` or None when it must be skipped."""
-    cfg = product.subscription or {}
+    # purchase-time snapshot (v8 F); legacy orders (terms NULL) use the product's current terms
+    cfg = (
+        order.terms.get("subscription") if order.terms is not None else product.subscription
+    ) or {}
     qty = max(1, order.qty)
     start = order.delivered_at
     existing = list(
@@ -461,6 +465,126 @@ async def _apply_subscription(db, tid: uuid.UUID, order: Order, product: Product
     return "created"
 
 
+async def _ambiguous(db, row: ServiceEntitlement, order: Order, what: str) -> None:  # type: ignore[no-untyped-def]
+    """A reversal would end the service before it began: never guess. Leave the row, warn,
+    and leave staff one operation event per (service, order)."""
+    log.warning("subscription reversal ambiguous service=%s order=%s (%s)", row.id, order.id, what)
+    rid = f"{row.id}:{order.id}"
+    seen = await db.scalar(
+        select(OperationEvent.id).where(
+            OperationEvent.tenant_id == row.tenant_id,
+            OperationEvent.action == "service.reversal_ambiguous",
+            OperationEvent.resource_id == rid,
+        )
+    )
+    if seen is None:
+        await record_event(
+            db,
+            tenant_id=row.tenant_id,
+            environment=os.environ.get("APP_ENV", "unknown"),
+            family="operation",
+            action="service.reversal_ambiguous",
+            outcome="failed",
+            reason=what,
+            resource_id=rid,
+        )
+
+
+async def _reverse_voided(db, tid: uuid.UUID) -> int:  # type: ignore[no-untyped-def]
+    """v8 C: refunded/cancelled orders take back exactly the periods they paid for.
+
+    1. a renewal order that is void and not yet reversed -> subtract its periods (qty x policy);
+    2. a source order that is void -> subtract its periods when later paid renewals remain,
+       else cancel the service as before.
+    Auto services only (manual services are staff-owned and never adjusted). Row locks:
+    entitlement first (ORDER BY id), renewals follow."""
+    void = ("refunded", "cancelled")
+    n = 0
+    pending = (
+        await db.execute(
+            select(ServiceRenewal, ServiceEntitlement, Order)
+            .join(ServiceEntitlement, ServiceEntitlement.id == ServiceRenewal.entitlement_id)
+            .join(Order, Order.id == ServiceRenewal.order_id)
+            .where(
+                ServiceRenewal.tenant_id == tid,
+                ServiceEntitlement.tenant_id == tid,
+                Order.tenant_id == tid,
+                ServiceRenewal.reversed_at.is_(None),
+                ServiceEntitlement.source == "auto",
+                Order.status.in_(void),
+            )
+            .order_by(ServiceEntitlement.id, ServiceRenewal.created_at, ServiceRenewal.id)
+            .limit(SUBSCRIPTION_BATCH)
+            .with_for_update(of=ServiceEntitlement)
+        )
+    ).all()
+    for ren, row, order in pending:
+        if row.status == "cancelled" or row.ends_at is None or row.starts_at is None:
+            ren.reversed_at = utcnow()  # nothing left to take back
+            continue
+        new_end = periods_end(
+            row.ends_at, row.period_policy, row.period_days, row.timezone, -max(1, order.qty)
+        )
+        if new_end <= row.starts_at:
+            await _ambiguous(db, row, order, "renewal_reversal")
+            continue
+        before = snapshot(row)
+        row.ends_at = new_end
+        row.version += 1
+        ren.reversed_at = utcnow()
+        await db.flush()
+        await system_changed(db, row, "service.renewal_reversed", before, "renewal_order_void")
+        n += 1
+    doomed = (
+        await db.execute(
+            select(ServiceEntitlement, Order)
+            .join(Order, Order.id == ServiceEntitlement.order_id)
+            .where(
+                ServiceEntitlement.tenant_id == tid,
+                Order.tenant_id == tid,
+                ServiceEntitlement.source == "auto",
+                ServiceEntitlement.status != "cancelled",
+                ServiceEntitlement.source_reversed_at.is_(None),
+                Order.status.in_(void),
+            )
+            .order_by(ServiceEntitlement.id)
+            .limit(SUBSCRIPTION_BATCH)
+            .with_for_update(of=ServiceEntitlement)
+        )
+    ).all()
+    for row, order in doomed:
+        live_renewals = await db.scalar(
+            select(func.count(ServiceRenewal.id))
+            .join(Order, Order.id == ServiceRenewal.order_id)
+            .where(
+                ServiceRenewal.tenant_id == tid,
+                ServiceRenewal.entitlement_id == row.id,
+                ServiceRenewal.reversed_at.is_(None),
+                Order.tenant_id == tid,
+                Order.status.not_in(void),
+            )
+        )
+        before = snapshot(row)
+        if live_renewals and row.ends_at is not None and row.starts_at is not None:
+            new_end = periods_end(
+                row.ends_at, row.period_policy, row.period_days, row.timezone, -max(1, order.qty)
+            )
+            if new_end <= row.starts_at:
+                await _ambiguous(db, row, order, "source_reversal")
+                continue
+            row.ends_at = new_end
+            row.source_reversed_at = utcnow()
+            row.version += 1
+            await db.flush()
+            await system_changed(db, row, "service.source_reversed", before, "source_order_void")
+        else:
+            row.status = "cancelled"
+            row.version += 1
+            await system_changed(db, row, "service.cancelled", before, "source_order_void")
+        n += 1
+    return n
+
+
 async def sync_subscriptions(res: Resources) -> int:
     """Turn delivered subscription orders into services (new or renewed) and cancel auto
     services whose source order was refunded/cancelled. Idempotent: the unique
@@ -482,7 +606,13 @@ async def sync_subscriptions(res: Resources) -> int:
                     .where(
                         Order.tenant_id == tid,
                         Product.tenant_id == tid,
-                        Product.subscription.is_not(None),
+                        or_(
+                            and_(Order.terms.is_(None), Product.subscription.is_not(None)),
+                            and_(
+                                Order.terms.is_not(None),
+                                Order.terms["subscription"].astext.is_not(None),
+                            ),
+                        ),
                         Order.status.in_(("delivered", "completed")),
                         Order.delivered_at >= now - SUBSCRIPTION_WINDOW,
                         ~used_src,
@@ -499,27 +629,6 @@ async def sync_subscriptions(res: Resources) -> int:
                             count += 1
                 except IntegrityError:
                     log.info("subscription order already applied order=%s", order.id)
-            doomed = (
-                await db.execute(
-                    select(ServiceEntitlement)
-                    .join(Order, Order.id == ServiceEntitlement.order_id)
-                    .where(
-                        ServiceEntitlement.tenant_id == tid,
-                        Order.tenant_id == tid,
-                        ServiceEntitlement.source == "auto",
-                        ServiceEntitlement.status != "cancelled",
-                        Order.status.in_(("refunded", "cancelled")),
-                    )
-                    .order_by(ServiceEntitlement.id)
-                    .limit(SUBSCRIPTION_BATCH)
-                    .with_for_update(of=ServiceEntitlement)
-                )
-            ).scalars()
-            for row in list(doomed):
-                before = snapshot(row)
-                row.status = "cancelled"
-                row.version += 1
-                await system_changed(db, row, "service.cancelled", before, "source_order_void")
-                count += 1
+            count += await _reverse_voided(db, tid)
             await db.commit()
     return count
