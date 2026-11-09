@@ -173,6 +173,9 @@ APP_ZPAY_API_BASE=http://mockpay:8002
 APP_BEPUSDT_URL=http://mockusdt:8003
 APP_BEPUSDT_API_TOKEN=$BEPUSDT_TOKEN
 APP_BEPUSDT_SIM_URL=/mockusdt/pay
+# demo/CI: mock money, one shared address for testers and the E2E smoke -> looser order throttles
+APP_ORDER_CREATE_PER_USER=30
+APP_ORDER_CREATE_PER_IP=300
 EOF2
 fi
 # Real BEpusdt (profile "usdt", see docs/production.md): its own, initially empty env file.

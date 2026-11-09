@@ -150,6 +150,8 @@ async def test_pending_order_cap(env):
 
 
 async def test_pay_and_create_rate_limits(env):
+    # 20/min per account on create, shared by buy-now and quote-accept (#58 risk control)
+    env.res.settings = env.res.settings.model_copy(update={"order_create_per_user": 20})
     product = await env.product(mode="manual")
     buyer, _ = await env.login("buyer")
     o = (await buyer.post("/api/v1/orders", json={"product_id": str(product.id), "qty": 1})).json()
