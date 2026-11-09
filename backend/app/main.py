@@ -44,6 +44,7 @@ from app.modules.chat.actions import router as chat_actions_router
 from app.modules.chat.router import router as chat_router
 from app.modules.content.router import router as content_router
 from app.modules.lookup.router import router as lookup_router
+from app.modules.me.router import avatar_router
 from app.modules.me.router import router as me_router
 from app.modules.operations import jobs as operations_jobs
 from app.modules.operations.router import router as operations_router
@@ -135,6 +136,7 @@ def api_router() -> APIRouter:
         auth_router,
         oauth_router,
         me_router,
+        avatar_router,
         content_router,
         lookup_router,
         aftersales_router,

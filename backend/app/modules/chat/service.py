@@ -14,8 +14,8 @@ from app.core.resources import Resources
 from app.core.security import STAFF_ROLES
 from app.models import Attachment, Conversation, Message, Order, Product, Quote, User
 from app.modules.catalog.service import get_active_product
-from app.modules.chat.messages import insert_message
-from app.modules.common.views import iso, message_view, product_card_payload
+from app.modules.chat.messages import ensure_open_conversation, insert_message
+from app.modules.common.views import avatar_url, iso, message_view, product_card_payload
 from app.modules.realtime.publish import publish_conversation, publish_message
 from app.modules.uploads.service import text_preview
 from app.modules.uploads.storage import FileStore
@@ -80,6 +80,7 @@ async def message_views(db: AsyncSession, msgs: list[Message]) -> list[dict[str,
             message_view(
                 m,
                 sender_name=sender.display_name if sender else None,
+                sender_avatar=avatar_url(sender),
                 attachment=atts.get(m.attachment_id) if m.attachment_id else None,
                 payload_overlay=overlay,
             )
@@ -130,11 +131,18 @@ async def conversation_views(
                 "buyer": {
                     "id": str(c.buyer_id),
                     "display_name": buyer.display_name if buyer else "",
+                    "avatar_url": avatar_url(buyer),
                 },
                 "product": product_card_payload(product, lang) if product else None,
                 "status": c.status,
                 "assigned_agent": (
-                    {"id": str(agent.id), "display_name": agent.display_name} if agent else None
+                    {
+                        "id": str(agent.id),
+                        "display_name": agent.display_name,
+                        "avatar_url": avatar_url(agent),
+                    }
+                    if agent
+                    else None
                 ),
                 "last_message": last_views.get(c.last_message_id) if c.last_message_id else None,
                 "unread": unread.get(c.id, 0),
@@ -176,6 +184,15 @@ async def open_conversation_for(db: AsyncSession, buyer: User) -> Conversation |
     return await db.scalar(
         select(Conversation).where(Conversation.buyer_id == buyer.id, Conversation.status == "open")
     )
+
+
+async def conversation_id_for_order(db: AsyncSession, buyer: User) -> uuid.UUID | None:
+    """The conversation an order attaches to: the buyer's open one, created if missing so
+    customer service sees every order (idempotent under concurrency via the partial unique
+    index; no commit here). Staff accounts never get buyer conversations."""
+    if buyer.role in STAFF_ROLES:
+        return None
+    return await ensure_open_conversation(db, tenant_id=buyer.tenant_id, buyer_id=buyer.id)
 
 
 async def find_or_create(

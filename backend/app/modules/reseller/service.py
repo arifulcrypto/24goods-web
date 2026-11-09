@@ -366,7 +366,7 @@ async def apply(
         assert old is not None
         order_view = await one_view(db, old, uid, user.locale)  # re-use, never a second order
     elif fee > 0:
-        conv = await chat.open_conversation_for(db, user)
+        conv_id = await chat.conversation_id_for_order(db, user)
         # MONEY: sign-up fee from settings only; fee rule + CHECK as any order, no promo,
         # no reseller attribution, delivery_mode 'system' (never reaches the worker)
         order, _msg = await create_order(
@@ -380,7 +380,7 @@ async def apply(
             delivery_mode="system",
             product_id=None,
             quote_id=None,
-            conversation_id=conv.id if conv else None,
+            conversation_id=conv_id,
             ip=ip,
             kind="reseller_signup",
         )
