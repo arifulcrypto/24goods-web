@@ -123,9 +123,10 @@ onMounted(() => {
             </select>
           </template>
         </van-cell>
-        <van-cell :title="t('mediaPrefs.compress')" icon="upgrade" center>
+        <!-- whole row toggles: the switch alone is below the 44 px touch target -->
+        <van-cell :title="t('mediaPrefs.compress')" icon="upgrade" center clickable @click="setMediaPreference(imageQuality, !compressUploads)">
           <template #value>
-            <van-switch :model-value="compressUploads" :aria-label="t('mediaPrefs.compress')" @update:model-value="(v: boolean) => setMediaPreference(imageQuality, v)" />
+            <van-switch :model-value="compressUploads" :aria-label="t('mediaPrefs.compress')" @click.stop @update:model-value="(v: boolean) => setMediaPreference(imageQuality, v)" />
           </template>
         </van-cell>
       </van-cell-group>
@@ -156,6 +157,7 @@ onMounted(() => {
         <p class="del-text">{{ t('me.deleteRetained') }}</p>
         <p v-if="delBlocked" class="del-err" role="alert">{{ t('me.deleteBlocked') }}</p>
         <van-field v-if="!auth.user?.is_instant" v-model="delPassword" type="password" autocomplete="current-password" :label="t('auth.password')" />
+        <!-- "DELETE" is the literal confirmation token the API expects, not translatable copy -->
         <van-field v-model="delConfirm" autocapitalize="characters" autocomplete="off" :label="t('me.typeDelete')" placeholder="DELETE" />
         <van-button block round type="danger" size="large" native-type="submit" :loading="saving" :disabled="delConfirm !== 'DELETE'">{{ t('me.deleteConfirm') }}</van-button>
       </form>
@@ -179,7 +181,7 @@ onMounted(() => {
 }
 .seg {
   display: inline-flex;
-  background: #f2f2f2;
+  background: var(--c-bg);
   border-radius: 999px;
   padding: 2px;
 }
@@ -205,6 +207,11 @@ onMounted(() => {
   color: var(--c-text);
   font-weight: 700;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+.seg button:focus-visible,
+.select:focus-visible {
+  outline: 2px solid var(--c-text);
+  outline-offset: 2px;
 }
 .select {
   min-height: 44px;

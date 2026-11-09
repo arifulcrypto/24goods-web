@@ -196,11 +196,11 @@ async function credsDone() {
         <van-stepper v-model="qty" :min="1" :max="maxQty" integer :input-width="48" :button-size="36" />
       </div>
       <ManualPromise v-if="p.delivery_mode === 'manual'" class="sheet-manual" :eta="p.delivery_eta_hours" compact />
-      <p v-if="soldOut" class="muted small sheet-note" role="status">{{ t('product.outOfStock') }}</p>
-      <p v-else-if="resolveFailed" class="sheet-note" role="alert">
-        {{ t('buy.configFailed') }}
+      <p v-if="soldOut" class="muted small sheet-note" role="alert">{{ t('product.outOfStock') }}</p>
+      <div v-else-if="resolveFailed" class="sheet-note sheet-retry" role="alert">
+        <span>{{ t('buy.configFailed') }}</span>
         <van-button size="small" plain round class="retry" @click="resolveConfig">{{ t('buy.retry') }}</van-button>
-      </p>
+      </div>
       <PromoField v-model="promo" :items="promoItems" />
       <p v-if="promo?.stale" class="muted small">{{ t('promo.stale') }}</p>
       <div class="sheet-fees">
@@ -292,8 +292,13 @@ async function credsDone() {
   margin: 0 0 8px;
   font-size: 13px;
 }
+.sheet-retry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 .retry {
-  margin-left: 8px;
+  flex-shrink: 0;
   min-height: 44px;
 }
 .guest-note {

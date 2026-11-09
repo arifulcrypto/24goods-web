@@ -83,7 +83,8 @@ watch(
     <van-button v-else @click="check">{{ t('common.retry') }}</van-button>
   </section>
   <template v-else>
-    <div v-if="banner" class="visit-banner" role="status">
+    <!-- docked above the tab bar: a fixed top nav bar would cover an in-flow banner -->
+    <div v-if="banner" class="dock visit-banner" role="alert">
       <span>{{ t('challenge.visitBanner') }}</span>
       <van-button size="small" type="primary" round :loading="busy" class="visit-btn" @click="clear">{{ t('challenge.verify') }}</van-button>
     </div>
@@ -99,6 +100,13 @@ watch(
   text-align: center;
 }
 .visit-banner {
+  bottom: calc(var(--tabbar-h) + var(--safe-bottom) + 8px);
+  margin: 0 auto;
+  width: calc(100% - 24px);
+  max-width: calc(var(--dock-w, var(--shell-w)) - 24px);
+  z-index: 60;
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow-1);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -106,7 +114,7 @@ watch(
   padding: 8px 12px;
   font-size: 13px;
   background: var(--c-surface);
-  border-bottom: 1px solid var(--c-line);
+  border: 1px solid var(--c-line);
 }
 .visit-btn {
   flex-shrink: 0;
