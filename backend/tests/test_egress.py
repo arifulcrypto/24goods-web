@@ -122,4 +122,57 @@ async def test_everything_down_raises_connect_error_and_without_relay_direct_onl
     net = Net(up=set())
     with pytest.raises(httpx.ConnectTimeout):
         await send(net, host="other.example.cn")
-    assert net.calls == [(DIRECT, None)]
+    assert len(net.calls) == 1 and net.calls[0][0] == DIRECT
+    assert 1.9 < net.calls[0][1] <= 2.0  # half of the 4 s connect deadline (TCP + TLS phases)
+
+
+async def test_dns_failure_still_tries_the_relay():
+    net = Net(up={RELAY})
+
+    async def no_dns():
+        raise httpx.ConnectError("dns down")
+
+    out = await egress.send(
+        scheme="https",
+        host="pay.example.cn",
+        port=443,
+        path="/api.php",
+        fresh_ip=no_dns,
+        exchange=net.exchange,
+        never_dispatched=never_dispatched,
+    )
+    assert out == {"ok": RELAY}
+
+
+async def test_connect_deadline_is_never_overrun(monkeypatch):
+    clock = [0.0]
+    monkeypatch.setattr(egress.time, "monotonic", lambda: clock[0])
+    net = Net()
+
+    async def slow_fail(url, connect):
+        net.calls.append((url, connect))
+        clock[0] += 2 * connect  # TCP + TLS phases both time out
+        raise httpx.ConnectTimeout("slow")
+
+    with pytest.raises(httpx.ConnectTimeout):
+        await egress.send(
+            scheme="https",
+            host="pay.example.cn",
+            port=443,
+            path="/api.php",
+            fresh_ip=net.fresh_ip,
+            exchange=slow_fail,
+            never_dispatched=never_dispatched,
+            connect_deadline_s=4.0,
+        )
+    assert clock[0] <= 4.0  # the caller's outer timeout (> deadline) never cuts a connect
+
+
+async def test_remembered_address_expires(monkeypatch):
+    clock = [0.0]
+    monkeypatch.setattr(egress.time, "monotonic", lambda: clock[0])
+    net = Net(up={DIRECT})
+    await send(net)
+    clock[0] += egress.IP_TTL_S + 1
+    await send(net)
+    assert net.lookups == 2

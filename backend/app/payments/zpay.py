@@ -123,8 +123,11 @@ def parse_query_response(data: Any) -> QueryResult:
 
 
 QUERY_TIMEOUT_S = 3.0
-# creating a payment may try the direct path and then a configured relay (app/payments/egress.py)
-CREATE_TIMEOUT_S = 5.0
+# creating a payment may try the direct path and then a configured relay (app/payments/egress.py);
+# connecting gets CREATE_CONNECT_S of it so the outer timeout never cuts a connect (which would
+# turn "provably not sent" into "unknown"). Queries: 1.8 s of their 3 s; probe: 3.5 s of 5 s.
+CREATE_TIMEOUT_S = 7.0
+CREATE_CONNECT_S = 4.5
 # Xiaodou answers an unknown out_trade_no with HTTP 404 + {"code":-1,"msg":"订单不存在"}
 # and a bad signature with 400 + JSON. Parse those bodies (parse_query_response / create_payment
 # decide what they mean; nothing here can mark a payment paid) instead of treating them as
@@ -174,7 +177,9 @@ class ZPayClient:
     def verify_signature(self, params: Mapping[str, str]) -> bool:
         return epay.verify_signature(params, self.config.key)
 
-    async def _json(self, endpoint: str, params: dict[str, str], *, post: bool = False) -> Any:
+    async def _json(
+        self, endpoint: str, params: dict[str, str], *, post: bool = False, connect_s: float = 1.8
+    ) -> Any:
         """Bounded transport. Database-configured gateways use DNS-pinned public HTTPS only."""
         from app.core import safefetch
 
@@ -184,6 +189,9 @@ class ZPayClient:
                 parts = urlsplit(url)
                 if parts.scheme != "https":
                     raise ZPayQueryError("HTTPS gateway required")
+                port_ok = (parts.port or 443) in safefetch.ALLOWED_PORTS
+                if parts.username or parts.password or not port_ok:
+                    raise ZPayQueryError("gateway URL not allowed")  # re-checked on every call
                 host = (parts.hostname or "").rstrip(".")
 
                 async def fresh_ip() -> str:
@@ -222,6 +230,7 @@ class ZPayClient:
                     fresh_ip=fresh_ip,
                     exchange=exchange,
                     never_dispatched=_never_dispatched,
+                    connect_deadline_s=connect_s,
                 )
             async with self._http.stream(
                 "POST" if post else "GET",
@@ -248,7 +257,9 @@ class ZPayClient:
         params["clientip"] = client_ip
         params["device"] = "pc"
         params["sign"] = epay.sign(params, self.config.key)
-        data = await asyncio.wait_for(self._json("/mapi.php", params, post=True), CREATE_TIMEOUT_S)
+        data = await asyncio.wait_for(
+            self._json("/mapi.php", params, post=True, connect_s=CREATE_CONNECT_S), CREATE_TIMEOUT_S
+        )
         if not isinstance(data, dict) or str(data.get("code")) != "1":
             raise ZPayQueryError("gateway refused payment")
         qr, redirect = str(data.get("qrcode") or ""), str(data.get("payurl") or "")
@@ -284,7 +295,7 @@ class ZPayClient:
         c = self.config
         query = {"act": "order", "pid": c.pid, "key": c.key, "out_trade_no": order_no}
         try:
-            data = await asyncio.wait_for(self._json("/api.php", query), timeout=5.0)
+            data = await asyncio.wait_for(self._json("/api.php", query, connect_s=3.5), timeout=5.0)
         except asyncio.TimeoutError:
             raise ZPayQueryError("query timed out") from None
         if not isinstance(data, dict):

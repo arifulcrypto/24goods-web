@@ -21,9 +21,12 @@ from __future__ import annotations
 
 import ipaddress
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TypeVar
+
+import httpx
 
 log = logging.getLogger("app.payments.egress")
 
@@ -35,15 +38,18 @@ T = TypeVar("T")
 @dataclass
 class _HostState:
     ip: str | None = None
+    ip_at: float = 0.0
     preferred: str = "direct"
 
 
-_STATE: dict[str, _HostState] = {}
+IP_TTL_S = 1800.0  # a remembered address is re-resolved after this long even if it still works
+_STATE: dict[tuple[str, int], _HostState] = {}
 _RELAYS: tuple[str, dict[str, tuple[str, int]]] = ("", {})
 
 
 def parse_relays(raw: str) -> dict[str, tuple[str, int]]:
-    """``host=ip:port[,host=ip:port]`` -> {host: (ip, port)}; malformed entries are ignored."""
+    """``host=ip:port[,host=ip:port]`` -> {host: (ip, port)}; malformed entries are ignored.
+    Operator-only (env); not tenant-writable."""
     out: dict[str, tuple[str, int]] = {}
     for item in (raw or "").split(","):
         host, _, dest = item.strip().partition("=")
@@ -73,12 +79,16 @@ def _url(scheme: str, ip: str, port: int, path: str) -> str:
     return f"{scheme}://{h}{'' if port == default else f':{port}'}{path}"
 
 
-def route_order(host: str, has_relay: bool) -> list[str]:
+def route_order(host: str, has_relay: bool, port: int = 443) -> list[str]:
     if not has_relay:
         return ["direct"]
-    st = _STATE.get(host)
+    st = _STATE.get((host, port))
     first = st.preferred if st else "direct"
     return [first, "relay" if first == "direct" else "direct"]
+
+
+class _OutOfTime(Exception):
+    pass
 
 
 async def send(
@@ -90,25 +100,35 @@ async def send(
     fresh_ip: Callable[[], Awaitable[str]],
     exchange: Callable[[str, float | None], Awaitable[T]],
     never_dispatched: Callable[[BaseException], bool],
+    connect_deadline_s: float = 4.0,
 ) -> T:
     """Run ``exchange(url, connect_timeout)`` over the best path.
 
-    ``fresh_ip`` resolves and vets the gateway host (only called when no remembered address works);
-    ``exchange`` performs exactly one HTTP request to ``url`` (Host/SNI = ``host`` are the caller's
-    job); ``never_dispatched`` says whether an exception happened before any byte was sent.
+    ``fresh_ip`` resolves and vets the gateway host (public addresses only); ``exchange`` performs
+    exactly one HTTP request to ``url`` (Host/SNI = ``host`` are the caller's job);
+    ``never_dispatched`` says whether an exception happened before any byte was sent.
+    ``connect_deadline_s`` bounds the time spent opening connections across all paths, so the
+    caller's overall timeout never cuts a connect (which would turn "provably not sent" into
+    "unknown"). When it runs out, the last connect error is raised (still "not sent").
     """
     host_key = host.lower()
     relay = relays().get(host_key)
-    st = _STATE.setdefault(host_key, _HostState())
-    remembered = st.ip
-    ip = remembered or await fresh_ip()
-    order = route_order(host_key, relay is not None)
+    st = _STATE.setdefault((host_key, port), _HostState())
+    started = time.monotonic()
     last: BaseException | None = None
 
-    async def one(route: str, addr: str, connect: float | None) -> tuple[bool, T | None]:
+    def remaining() -> float:
+        return connect_deadline_s - (time.monotonic() - started)
+
+    async def one(route: str, addr: str | None, budget: float | None) -> tuple[bool, T | None]:
         nonlocal last
+        left = remaining()
+        if left < 0.2:
+            raise _OutOfTime
+        # httpx applies the connect timeout per phase (TCP, then TLS): halve what is left
+        connect = min(budget, left / 2) if budget else left / 2
         dest = (addr, port) if route == "direct" else relay
-        assert dest is not None
+        assert dest is not None and dest[0] is not None
         try:
             return True, await exchange(_url(scheme, dest[0], dest[1], path), connect)
         except BaseException as exc:
@@ -118,26 +138,43 @@ async def send(
             log.info("gateway %s: %s path not reachable", host_key, route)
             return False, None
 
-    # one try per path; with two paths the first gets FIRST_PATH_CONNECT_S, the second 1.5 s
-    budgets = [FIRST_PATH_CONNECT_S, 1.5] if len(order) == 2 else [None]
-    for route, connect in zip(order, budgets, strict=True):
-        ok, result = await one(route, ip, connect)
-        if ok:
-            st.preferred = route  # stick with what worked
-            st.ip = ip
-            return result  # type: ignore[return-value]
-    # every path failed with a remembered address: look the domain up again and retry direct once
-    # (a moved load balancer); the relay dials the gateway by name itself, so it needs no retry
-    st.ip = None
-    if remembered is not None:
-        fresh = await fresh_ip()
-        if fresh != remembered:
-            ok, result = await one("direct", fresh, FIRST_PATH_CONNECT_S if relay else None)
+    now = time.monotonic()
+    remembered = st.ip if st.ip and now - st.ip_at < IP_TTL_S else None
+    ip = remembered
+    if ip is None:
+        try:
+            ip = await fresh_ip()
+        except BaseException as exc:
+            if relay is None or not never_dispatched(exc):
+                raise
+            last = exc  # DNS failed: the relay dials the gateway by name itself
+    order = route_order(host_key, relay is not None, port)
+    if ip is None:
+        order = ["relay"]
+    budgets: list[float | None] = [FIRST_PATH_CONNECT_S, 1.5] if len(order) == 2 else [None]
+    try:
+        for route, budget in zip(order, budgets, strict=True):
+            ok, result = await one(route, ip, budget)
             if ok:
-                st.preferred = "direct"
-                st.ip = fresh
+                st.preferred = route  # stick with what worked
+                if ip is not None and (route == "direct" or st.ip is None):
+                    st.ip, st.ip_at = ip, time.monotonic()
                 return result  # type: ignore[return-value]
-    assert last is not None
+        # every path failed with a remembered address: re-resolve and retry direct once (moved
+        # load balancer); the relay dials the gateway by name itself, so it needs no retry
+        st.ip = None
+        if remembered is not None:
+            fresh = await fresh_ip()
+            if fresh != remembered:
+                ok, result = await one("direct", fresh, FIRST_PATH_CONNECT_S if relay else None)
+                if ok:
+                    st.preferred = "direct"
+                    st.ip, st.ip_at = fresh, time.monotonic()
+                    return result  # type: ignore[return-value]
+    except _OutOfTime:
+        pass
+    if last is None:  # nothing was sent: report it as a connect timeout ("not dispatched")
+        raise httpx.ConnectTimeout("no time left to open a gateway connection")
     raise last
 
 
