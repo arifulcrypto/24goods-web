@@ -34,6 +34,25 @@ class ZPayQueryError(Exception):
     """Re-query failed (transport / protocol). Message never contains the key or URL."""
 
 
+class ZPayUnreachable(ZPayQueryError):
+    """The request provably never reached the gateway (DNS failure, connect error/timeout).
+
+    Distinct from a read timeout or a protocol error, after which the gateway may have created
+    the order. The original exception stays reachable via ``__cause__``."""
+
+
+def _never_dispatched(exc: BaseException) -> bool:
+    from app.core import safefetch
+
+    if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout)):
+        return True
+    return (
+        isinstance(exc, safefetch.FetchError)
+        and not isinstance(exc, safefetch.UnsafeURL)
+        and (isinstance(exc.__cause__, OSError) or exc.message == "host could not be resolved")
+    )
+
+
 @dataclass(frozen=True)
 class ZPayConfig:
     pid: str
@@ -104,6 +123,8 @@ def parse_query_response(data: Any) -> QueryResult:
 
 
 QUERY_TIMEOUT_S = 3.0
+# connect fails first (before the overall wait_for) so a dead host is told apart from a slow one
+_TIMEOUT = httpx.Timeout(QUERY_TIMEOUT_S, connect=QUERY_TIMEOUT_S * 0.7)
 
 
 class ZPayClient:
@@ -154,7 +175,7 @@ class ZPayClient:
                         params=None if post else params,
                         headers={"Host": target.host, "Accept-Encoding": "identity"},
                         extensions={"sni_hostname": target.host},
-                        timeout=QUERY_TIMEOUT_S,
+                        timeout=_TIMEOUT,
                     ) as response:
                         raw = await response_bytes(response, 256 * 1024)
                         return json.loads(
@@ -166,11 +187,13 @@ class ZPayClient:
                 data=params if post else None,
                 params=None if post else params,
                 headers={"Accept-Encoding": "identity"},
-                timeout=QUERY_TIMEOUT_S,
+                timeout=_TIMEOUT,
             ) as response:
                 raw = await response_bytes(response, 256 * 1024)
                 return json.loads(raw, parse_float=bounded_decimal, parse_int=bounded_integer)
-        except (httpx.HTTPError, ValueError, safefetch.FetchError):
+        except (httpx.HTTPError, ValueError, safefetch.FetchError) as exc:
+            if _never_dispatched(exc):
+                raise ZPayUnreachable("gateway unreachable") from exc
             raise ZPayQueryError("gateway request failed") from None
 
     async def create_payment(
@@ -207,6 +230,24 @@ class ZPayClient:
         ):
             raise ZPayQueryError("unsupported payment presentation")
         return {"kind": kind, "payload": value, "trade_no": str(data.get("trade_no") or "")[:128]}
+
+    async def probe_order(self, order_no: str) -> dict[str, str]:
+        """Admin self-test: a signed order query; returns the gateway's code/msg verbatim.
+
+        Never echoes the key (it is redacted from the message) and never raises for a gateway
+        answer, only for transport problems (ZPayUnreachable / ZPayQueryError)."""
+        c = self.config
+        query = {"act": "order", "pid": c.pid, "key": c.key, "out_trade_no": order_no}
+        try:
+            data = await asyncio.wait_for(self._json("/api.php", query), timeout=5.0)
+        except asyncio.TimeoutError:
+            raise ZPayQueryError("query timed out") from None
+        if not isinstance(data, dict):
+            raise ZPayQueryError("unexpected response")
+        msg = str(data.get("msg") or "")[:200]
+        if c.key:
+            msg = msg.replace(c.key, "***")
+        return {"code": str(data.get("code", ""))[:16], "msg": msg}
 
     async def query_order(self, order_no: str) -> QueryResult:
         c = self.config

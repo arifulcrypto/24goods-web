@@ -14,12 +14,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import secretbox
 from app.core.audit import audit
-from app.core.errors import InvalidState, Unavailable, Validation
+from app.core.errors import ChannelUnreachable, InvalidState, Unavailable, Validation
 from app.core.money import to_decimal
 from app.core.resources import Resources
 from app.models import Checkout, LegacyPayUrl, Order, PaymentAttempt, PaymentGateway, Tenant
 from app.modules.content.site import tenant_settings
-from app.payments.zpay import ZPayClient, ZPayConfig, ZPayQueryError
+from app.payments.zpay import ZPayClient, ZPayConfig, ZPayQueryError, ZPayUnreachable
 
 
 def normalize_gateway(value: str) -> str:
@@ -212,6 +212,27 @@ async def prepare(
             if mode == "redirect"
             else await client.create_payment(remote_no, title, to_decimal(amount_minor), ip or "")
         )
+    except ZPayUnreachable:
+        # The request provably never reached the gateway: nothing can have been created there, so
+        # this is a clean failure, not an unknown outcome. The payable stays payable.
+        current = await db.scalar(
+            select(PaymentAttempt)
+            .where(PaymentAttempt.id == att_id, PaymentAttempt.tenant_id == tid)
+            .with_for_update()
+        )
+        if current:
+            current.status = "failed"
+            current.data = {"reason": "gateway_unreachable"}
+            await audit(
+                db,
+                tenant_id=tid,
+                action="payment.attempt_failed",
+                target="payment_attempt:" + str(att_id),
+                severity="warning",
+                detail={"reason": "gateway_unreachable", "provider_id": str(pid)},
+            )
+            await db.commit()
+        raise ChannelUnreachable() from None
     except (ZPayQueryError, asyncio.TimeoutError):
         current = await db.scalar(
             select(PaymentAttempt)

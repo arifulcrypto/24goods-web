@@ -135,6 +135,12 @@ class Unavailable(ApiError):
     status, code = 503, "unavailable"
 
 
+class ChannelUnreachable(Unavailable):
+    """This payment method is unavailable right now. Please choose another method."""
+
+    code = "channel_unreachable"
+
+
 class ChannelUnavailable(Unavailable):
     """The requested payment channel is not enabled"""
 

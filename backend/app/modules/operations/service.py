@@ -390,6 +390,7 @@ async def record_event(
     ip: str | None = None,
     user_agent: str | None = None,
     detail: dict[str, Any] | None = None,
+    severity: str | None = None,
 ) -> None:
     """Caller commits with its operation. Only typed metadata is accepted, never raw errors/body."""
     if family not in ("operation", "login", "security", "system", "task", "payment"):
@@ -422,7 +423,7 @@ async def record_event(
             ip=ip[:64] if ip else None,
             user_agent=sanitized_ua(user_agent),
             detail=safe,
-            severity="warning" if outcome in ("failed", "denied") else "info",
+            severity=severity or ("warning" if outcome in ("failed", "denied") else "info"),
             occurred_at=utcnow(),
         )
     )

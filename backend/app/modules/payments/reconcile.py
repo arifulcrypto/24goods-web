@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import inspect, or_, select
+from sqlalchemy import and_, inspect, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import tenant_session
@@ -120,7 +120,8 @@ async def requery_attempts(
                 PaymentAttempt.provider_id.is_not(None),
                 # An already-settled original is decided: re-querying it on every retry only
                 # replays the duplicate-payment audit trail and re-broadcasts the same order.
-                PaymentAttempt.status != "settled",
+                # failed = never dispatched (gateway unreachable) or resolved not-paid by staff
+                PaymentAttempt.status.notin_(("settled", "failed")),
             )
             .order_by(PaymentAttempt.created_at)
             .limit(11)
@@ -199,20 +200,34 @@ async def run(res: Resources) -> int:
     if tids:
         offset = int(await res.redis.incr("sec:reconcile-tenant")) % len(tids)
         tids = tids[offset:] + tids[:offset]
-    cutoff = datetime.now(timezone.utc) - timedelta(minutes=2)
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(minutes=2)
+    slow_cutoff = now - timedelta(hours=1)
     for tid in tids:
         if time.monotonic() - started >= 20:
             break
         async with tenant_session(res.maker, tid) as db:
+            await alert_stale_unknown(res, db, tid, now)
             refs = list(
                 await db.scalars(
                     select(PaymentAttempt.local_ref)
                     .where(
                         PaymentAttempt.tenant_id == tid,
                         PaymentAttempt.status.in_(("ready", "preparing", "unknown", "superseded")),
+                        # back off: every 2 min for the first hour of an attempt's life, then hourly
                         or_(
-                            PaymentAttempt.checked_at.is_(None), PaymentAttempt.checked_at < cutoff
+                            PaymentAttempt.checked_at.is_(None),
+                            and_(
+                                PaymentAttempt.checked_at < cutoff,
+                                PaymentAttempt.created_at >= slow_cutoff,
+                            ),
+                            and_(
+                                PaymentAttempt.checked_at < slow_cutoff,
+                                PaymentAttempt.created_at < slow_cutoff,
+                            ),
                         ),
+                        # an alerted-out unknown attempt is staff's now; stop polling forever
+                        PaymentAttempt.data["stale_alerted"].as_string().is_(None),
                     )
                     .order_by(
                         PaymentAttempt.checked_at.asc().nullsfirst(), PaymentAttempt.created_at
@@ -264,6 +279,63 @@ async def run(res: Resources) -> int:
                     row.attempts += 1
                 await db.commit()
     return total
+
+
+STALE_UNKNOWN = timedelta(hours=24)
+
+
+async def alert_stale_unknown(
+    res: Resources, db: AsyncSession, tid: uuid.UUID, now: datetime
+) -> int:
+    """One high-severity operation event + staff notification per attempt still ``unknown`` after
+    24 h (instead of re-querying it forever). Flagged in ``data`` so it fires once."""
+    from app.core import notify_tg
+    from app.modules.operations.service import record_event
+
+    rows = list(
+        await db.scalars(
+            select(PaymentAttempt)
+            .where(
+                PaymentAttempt.tenant_id == tid,
+                PaymentAttempt.status == "unknown",
+                PaymentAttempt.created_at < now - STALE_UNKNOWN,
+                PaymentAttempt.data["stale_alerted"].as_string().is_(None),
+            )
+            .order_by(PaymentAttempt.created_at)
+            .limit(20)
+            .with_for_update(skip_locked=True)
+        )
+    )
+    alerts: list[str] = []
+    for att in rows:
+        att.data = {**(att.data or {}), "stale_alerted": now.isoformat()}
+        await record_event(
+            db,
+            tenant_id=tid,
+            environment=res.settings.env,
+            family="payment",
+            action="payment.attempt_stale_unknown",
+            outcome="unknown",
+            reason="unresolved_24h",
+            resource_id=str(att.id),
+            severity="critical",
+        )
+        alerts.append(att.local_ref)
+    if rows:
+        await db.commit()
+        for no in alerts:
+            notify_tg.notify_bg(
+                res,
+                tid,
+                "payment_review",
+                [
+                    f"Payment attempt for {no} has been unresolved for 24 h",
+                    "Check the gateway console",
+                ],
+                link=notify_tg.admin_link(res, "orders"),
+                once=(f"stale_unknown:{no}", 7 * 86400),
+            )
+    return len(rows)
 
 
 async def merge_outcomes(

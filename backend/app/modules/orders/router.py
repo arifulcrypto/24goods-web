@@ -11,6 +11,7 @@ from app.core.storefront import Storefront, get_storefront
 from app.models import User
 from app.modules.challenges import service as challenge_service
 from app.modules.orders import cancel as cancel_svc
+from app.modules.orders import expedite as expedite_svc
 from app.modules.orders import service
 from app.modules.orders.riskctl import guard_order_create
 from app.modules.orders.schemas import BuyerCancelIn, BuyNowIn, InputIn, PayIn
@@ -164,6 +165,25 @@ async def cancel(
         ip=client_ip(request),
     )
     await db.refresh(order)
+    return await service.one_view(db, order, uid, lang)
+
+
+@router.post("/{ref}/expedite")
+async def expedite(
+    ref: str,
+    request: Request,
+    lang: str = Depends(get_lang),
+    user: User = Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+    res: Resources = Depends(get_res),
+) -> dict:
+    """Buyer nudges the seller about a paid manual order (30 min cooldown, max 3)."""
+    await enforce(res.redis, "order:expedite", str(user.id), *ORDER_ACTIONS)
+    uid = user.id
+    order, msg = await expedite_svc.expedite(db, ref, user, client_ip(request))
+    await db.commit()
+    await service.broadcast_order(res, db, order, [msg] if msg else None)
+    expedite_svc.alert_staff(res, order, str(await expedite_svc.count(db, order)))
     return await service.one_view(db, order, uid, lang)
 
 
