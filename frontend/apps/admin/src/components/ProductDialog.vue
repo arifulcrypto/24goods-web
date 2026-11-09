@@ -25,19 +25,20 @@ import { marginMinor, marginPct, minorToYuan, yuanToMinor } from '../lib/money'
 import MarkdownEditor from './MarkdownEditor.vue'
 import { promptChips, validateBuyerInput } from '../lib/buyerInput'
 import {
-  AFTER_SALES_PRESETS,
+  AFTER_SALES_UNITS,
   DEFAULT_SEPARATOR,
   FORMAT_PRESETS,
   SEPARATORS,
-  SITE_DEFAULT_AFTER_SALES_HOURS,
-  afterSalesPresetFor,
+  afterSalesFromForm,
+  afterSalesToForm,
+  afterSalesValid,
   formatLabels,
   isSeparator,
   isValidRedeemUrl,
   joinFormat,
   presetFor,
   splitCard,
-  type AfterSalesPresetKey,
+  type AfterSalesUnit,
   type FormatPresetKey,
 } from '../lib/delivery'
 import { toastError, toastOk } from '../ui'
@@ -112,7 +113,9 @@ const usageTab = ref<'en' | 'zh-CN'>('en')
 const preset = ref<FormatPresetKey>('card')
 const labelsText = ref('')
 const sample = ref('')
-const asPreset = ref<AfterSalesPresetKey>('default')
+const asUnit = ref<AfterSalesUnit>('default')
+const asValue = ref(1)
+const sub = reactive({ on: false, policy: 'calendar_month' as 'calendar_month' | 'fixed_days', days: 30, grace: 0, email: true, telegram: true })
 const saving = ref(false)
 const uploading = ref(false)
 const errors = ref<Record<string, string>>({})
@@ -133,7 +136,6 @@ const form = reactive({
   redeem_url: '',
   usage_en: '',
   usage_zh: '',
-  after_sales_hours: null as number | null,
   bi: structuredClone(BUYER_INPUT_DEFAULT) as BuyerInputForm,
 })
 const eta = ref<number | null>(null)
@@ -181,12 +183,20 @@ watch(
     form.usage_en = p?.usage_i18n?.en ?? ''
     form.usage_zh = p?.usage_i18n?.['zh-CN'] ?? ''
     usageTab.value = 'en'
-    form.after_sales_hours = p?.after_sales_hours ?? null
     manualStock.value = p ? (p.manual_stock ?? null) : 1
     eta.value = p ? (p.delivery_eta_hours ?? null) : d ? (props.defaultEtaHours ?? 24) : null
     cost.value = p?.cost_minor != null ? minorToYuan(p.cost_minor) : d?.cost_minor != null ? minorToYuan(d.cost_minor) : ''
     sourceUrl.value = p?.source_url ?? d?.source_url ?? ''
-    asPreset.value = afterSalesPresetFor(form.after_sales_hours)
+    const asf = afterSalesToForm(p?.after_sales_hours, p?.after_sales_months)
+    asUnit.value = asf.unit
+    asValue.value = asf.value
+    const sb = p?.subscription
+    sub.on = !!sb
+    sub.policy = sb?.period_policy ?? 'calendar_month'
+    sub.days = sb?.period_days ?? 30
+    sub.grace = sb?.grace_days ?? 0
+    sub.email = sb?.email_reminders ?? true
+    sub.telegram = sb?.telegram_reminders ?? true
     const b = p?.buyer_input
     form.bi = {
       ...structuredClone(BUYER_INPUT_DEFAULT),
@@ -223,10 +233,8 @@ function onPreset(k: FormatPresetKey) {
 }
 const sampleLine = computed(() => sample.value || (labels.value.length ? labels.value.map((_, i) => `value${i + 1}`).join(form.separator) : 'ABCD-1234'))
 const preview = computed(() => splitCard(sampleLine.value, labels.value, form.separator, (n) => t('delivery.fieldN', { n })))
-function onAfterSales(k: AfterSalesPresetKey) {
-  const p = AFTER_SALES_PRESETS.find((x) => x.key === k)
-  if (p) form.after_sales_hours = p.hours
-  else if (form.after_sales_hours === null) form.after_sales_hours = SITE_DEFAULT_AFTER_SALES_HOURS
+function onAfterSalesUnit(u: AfterSalesUnit) {
+  asValue.value = u === 'hours' ? 24 : 1
 }
 
 function validate(): boolean {
@@ -237,9 +245,9 @@ function validate(): boolean {
   else if (!e.price && compareAmount(form.floor_price, form.price) === 1) e.floor_price = t('products.v.floorAbovePrice')
   if (!form.category) e.category = t('products.v.categoryRequired')
   if (!isValidRedeemUrl(form.redeem_url)) e.redeem_url = t('delivery.redeemInvalid')
-  if (form.after_sales_hours !== null && (!Number.isInteger(form.after_sales_hours) || form.after_sales_hours < 0 || form.after_sales_hours > 8760)) {
-    e.after_sales = t('delivery.hoursInvalid')
-  }
+  if (!afterSalesValid(asUnit.value, asValue.value)) e.after_sales = t(`delivery.invalid.${asUnit.value}`)
+  if (sub.on && (!Number.isInteger(sub.grace) || sub.grace < 0 || sub.grace > 30)) e.sub = t('subscription.graceInvalid')
+  if (sub.on && sub.policy === 'fixed_days' && (!Number.isInteger(sub.days) || sub.days < 1 || sub.days > 366)) e.sub = t('subscription.daysInvalid')
   if (cost.value.trim() && yuanToMinor(cost.value) === null) e.cost = t('v5.amountInvalid')
   if (sourceUrl.value.trim() && !/^https?:\/\/\S+$/i.test(sourceUrl.value.trim())) e.source = t('delivery.redeemInvalid')
   if (eta.value !== null && (!Number.isInteger(eta.value) || eta.value < 1 || eta.value > 720)) e.eta = t('v5.payment.etaInvalid')
@@ -267,7 +275,10 @@ function payload(): AdminProductInputV3 & { manual_stock: number | null; buyer_i
     delivery_separator: form.separator,
     redeem_url: form.redeem_url.trim() || null,
     usage_i18n: usage,
-    after_sales_hours: form.after_sales_hours,
+    ...afterSalesFromForm(asUnit.value, asValue.value),
+    subscription: sub.on
+      ? { period_policy: sub.policy, period_days: sub.days, grace_days: sub.grace, email_reminders: sub.email, telegram_reminders: sub.telegram }
+      : null,
     title_i18n: { en: form.title_en.trim(), 'zh-CN': form.title_zh.trim() },
     description_i18n: { en: form.desc_en.trim(), 'zh-CN': form.desc_zh.trim() },
     price: normalizeAmount(form.price)!,
@@ -520,12 +531,32 @@ async function removeImage(url: string) {
         <div class="hint muted">{{ t('delivery.usageHint') }}</div>
       </el-form-item>
       <el-form-item :label="t('delivery.afterSales')" :error="errors.after_sales">
-        <el-select v-model="asPreset" style="width: 240px" @change="onAfterSales">
-          <el-option v-for="p in AFTER_SALES_PRESETS" :key="p.key" :value="p.key" :label="t(`delivery.as.${p.key}`, { d: SITE_DEFAULT_AFTER_SALES_HOURS / 24 })" />
-          <el-option value="custom" :label="t('delivery.as.custom')" />
+        <el-select v-model="asUnit" style="width: 200px" @change="onAfterSalesUnit">
+          <el-option v-for="u in AFTER_SALES_UNITS" :key="u" :value="u" :label="t(`delivery.unit.${u}`)" />
         </el-select>
-        <el-input-number v-if="asPreset === 'custom'" v-model="form.after_sales_hours" :min="1" :max="8760" class="hours" />
+        <el-input-number v-if="asUnit !== 'default'" v-model="asValue" :min="asUnit === 'hours' ? 0 : 1" :max="asUnit === 'hours' ? 8760 : asUnit === 'days' ? 365 : 12" class="hours" />
+        <div v-if="asUnit === 'hours' && asValue === 0" class="hint muted">{{ t('delivery.as.none') }}</div>
       </el-form-item>
+
+      <h3 class="sec">{{ t('subscription.section') }}</h3>
+      <el-form-item :label="t('subscription.enabled')" :error="errors.sub">
+        <el-switch v-model="sub.on" />
+        <span class="hint muted sw">{{ t('subscription.enabledHint') }}</span>
+      </el-form-item>
+      <template v-if="sub.on">
+        <el-form-item :label="t('services.policy')">
+          <el-select v-model="sub.policy" style="width: 200px">
+            <el-option value="calendar_month" :label="t('services.month')" />
+            <el-option value="fixed_days" :label="t('services.days')" />
+          </el-select>
+          <el-input-number v-if="sub.policy === 'fixed_days'" v-model="sub.days" :min="1" :max="366" class="hours" />
+        </el-form-item>
+        <el-form-item :label="t('subscription.grace')"><el-input-number v-model="sub.grace" :min="0" :max="30" /></el-form-item>
+        <el-form-item>
+          <el-checkbox v-model="sub.email">{{ t('subscription.email') }}</el-checkbox>
+          <el-checkbox v-model="sub.telegram">{{ t('subscription.telegram') }}</el-checkbox>
+        </el-form-item>
+      </template>
 
       <h3 class="sec">{{ t('products.bi.section') }}</h3>
       <el-form-item :label="t('products.bi.enabled')">

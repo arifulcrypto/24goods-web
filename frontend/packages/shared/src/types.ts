@@ -33,6 +33,8 @@ export interface ProductSummary {
   sold: number
   /** v3: resolved after-sales window in hours (site default applied); 0 = no after-sales. */
   after_sales_hours?: number | null
+  /** v7: set when the resolved period is whole calendar months (hours is then months x 720, approximate). */
+  after_sales_months?: number | null
   /** v5 §11: manual products only; promised shipping window in hours. */
   delivery_eta_hours?: number | null
   /** Order-information form (null = off). Lists carry it too, so quick buy asks for it (issue 49 B). */
@@ -220,6 +222,8 @@ export interface Order {
   after_sales_until?: string | null
   auto_confirm_at?: string | null
   after_sales?: AfterSales | null
+  /** v7: the service this order activated or renewed (own orders only), else null. */
+  service?: { status: 'pending' | 'active' | 'cancelled'; starts_at: string | null; ends_at: string | null } | null
   delivery_info?: DeliveryInfo | null
   source?: string | null
   // ---- v4 (review-v4 §12) ----
@@ -403,6 +407,7 @@ export interface SiteInfo {
   brand: string
   announcement: Announcement | null
   after_sales_default_hours: number
+  after_sales_default?: { unit: 'month' | 'hour'; value: number }
   support_hours: string | null
   pages: { slug: string; title: string }[]
   /** v4: welcome bubble + quick-question chips (resolved to the request locale). */
