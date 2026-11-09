@@ -3,8 +3,9 @@ import { useI18n } from 'vue-i18n'
 import { BRAND, brandName } from '@24goods/shared'
 import { useSiteStore } from '../stores/site'
 
-// Brand, governing law and the support address only (owner decision 2026-11-09). White-label
-// storefronts carry their own name, so the platform line is not shown there.
+// Brand + the support address (#58): the ONLY place the storefront shows the contact email; policy
+// pages point here instead of repeating it. White-label storefronts carry their own name, so the
+// platform line is not shown there.
 const { locale } = useI18n()
 const site = useSiteStore()
 </script>

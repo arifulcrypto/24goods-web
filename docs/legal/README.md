@@ -66,6 +66,12 @@ What protects this work is the license, enforceable terms, and the server-side l
 shipped to the browser — the card vault, the notify pipeline and the tenant isolation, which is
 where this project's real value already lives.
 
+## Update (#58, 2026-11-09)
+
+No governing-law jurisdiction is named for now (owner); §15 keeps contact-first resolution and
+individual claims only; the liability fallback cap is USD 100. Page bodies carry no contact
+address: the site footer is the single place that shows support@kesiv.com.
+
 ## Policy pages v2 (2026-11-09, owner direction)
 
 Source: `backend/app/devtools/legal_content.py` (Terms, Privacy, After-sales, Platform rules) and

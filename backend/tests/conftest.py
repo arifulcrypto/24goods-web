@@ -185,6 +185,10 @@ def make_settings(s: Services, **over):
         public_base_url="http://testserver",
         mockpay_notify_base="http://testserver",
         trusted_proxies="127.0.0.1/32",
+        # suites predate the #58 limits; tests/test_riskctl_v8.py covers the new ones
+        max_pending_orders=5,
+        order_create_per_user=1000,
+        order_create_per_ip=10000,
     )
     base.update(over)
     return Settings(**base)

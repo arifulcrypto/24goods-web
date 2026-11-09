@@ -341,7 +341,7 @@ export default {
       tutorial: 'Tutorials',
       notice: 'Notices',
     },
-    footer: '{brand} · Governing law: Singapore · {email}',
+    footer: '{brand} · Contact: {email}',
   },
   cart: {
     manage: 'Manage',

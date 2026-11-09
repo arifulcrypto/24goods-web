@@ -2,9 +2,9 @@
 
 Positioning (owner decision 2026-11-09): Kesiv is a venue/intermediary — it provides listing,
 matching, communication, order-management and payment-collection services; the Seller of a
-listing is responsible for the product. Governing law: Singapore. Pages show only the brand, the
-governing law and the support address; no entity details, hosting locations, vendors or technical
-measures. Clauses consumer law does not let a business exclude are preserved ("to the extent
+listing is responsible for the product. No governing-law jurisdiction is named for now (owner,
+#58). Pages carry no entity details, hosting locations, vendors or technical measures, and no
+contact address: the site footer (SiteFooter.vue) is the single place that shows it. Clauses consumer law does not let a business exclude are preserved ("to the extent
 permitted by law"): an unenforceable clause protects nobody.
 
 Changing this text on a live site: edit the page in Admin -> Articles (pages are seeded once and
@@ -40,11 +40,8 @@ def _flow(text: str) -> str:
     return "\n".join(out) + "\n"
 
 
-SUPPORT_EMAIL = "support@kesiv.com"
 EFFECTIVE_EN = "Effective date: 9 November 2026"
 EFFECTIVE_ZH = "生效日期：2026 年 11 月 9 日"
-FOOTER_EN = f"---\n\n**Kesiv** · Governing law: Singapore · Contact: {SUPPORT_EMAIL}"
-FOOTER_ZH = f"---\n\n**Kesiv 客思维** · 适用法律：新加坡法律 · 联系邮箱：{SUPPORT_EMAIL}"
 
 TERMS_EN = f"""_{EFFECTIVE_EN}_
 
@@ -162,7 +159,7 @@ We do not guarantee uninterrupted service or the conduct of any user.
 
 11.2 To the extent permitted by law: (a) we are not liable for indirect or consequential loss, or
 for loss of profit, data, business or goodwill; and (b) our total liability for any claim relating
-to an order is limited to the amount you paid for that order, and for any other claim to SGD 100.
+to an order is limited to the amount you paid for that order, and for any other claim to USD 100.
 
 11.3 Nothing in these Terms limits liability that cannot be limited by law, including for fraud or
 for death or personal injury caused by negligence.
@@ -183,21 +180,16 @@ We may change the Platform or these Terms. The version on this page applies from
 date; continuing to use the Platform after that means you accept it. Orders already placed remain
 under the Terms in force when they were placed.
 
-## 15. Governing law and disputes
+## 15. Disputes
 
-15.1 These Terms and any dispute arising from them are governed by the laws of the Republic of
-Singapore.
+15.1 Please contact us first; we will try to resolve any dispute within 30 days.
 
-15.2 Please contact us first; we will try to resolve the matter within 30 days. Failing that, the
-courts of Singapore have exclusive jurisdiction, though we may seek urgent relief in any court. To
-the extent permitted by law, claims may be brought only individually, not as a class or
-representative action.
+15.2 To the extent permitted by law, claims may be brought only individually, not as a class or
+representative action, and we may seek urgent relief in any competent court.
 
 15.3 If any provision is unenforceable, the rest remains in effect. Not enforcing a right is not a
 waiver. We may transfer our rights and obligations under these Terms. If a translation differs from
 the English version, the English version prevails.
-
-{FOOTER_EN}
 """
 
 TERMS_ZH = f"""_{EFFECTIVE_ZH}_
@@ -289,7 +281,7 @@ TERMS_ZH = f"""_{EFFECTIVE_ZH}_
 11.1 本平台按“现状”及“现有”基础提供。商品信息由卖家提供。我们不保证服务不中断，也不保证任何用户的行为。
 
 11.2 在法律允许的范围内：（a）我们不对间接或附带损失，或利润、数据、业务、商誉损失承担责任；（b）对任一订单相关的
-索赔，我们的累计责任以您为该订单支付的金额为限，其他索赔以 100 新加坡元为限。
+索赔，我们的累计责任以您为该订单支付的金额为限，其他索赔以 100 美元为限。
 
 11.3 本条款不限制依法不得限制的责任，包括欺诈责任以及因过失导致人身伤亡的责任。
 
@@ -305,17 +297,14 @@ TERMS_ZH = f"""_{EFFECTIVE_ZH}_
 
 我们可变更本平台或本条款。本页所示版本自生效日期起适用，您继续使用即表示接受。已下单的订单仍适用下单时有效的条款。
 
-## 15. 适用法律与争议解决
+## 15. 争议解决
 
-15.1 本条款及由此产生的任何争议均适用新加坡共和国法律。
+15.1 请先联系我们，我们将在 30 日内尽力解决任何争议。
 
-15.2 请先联系我们，我们将在 30 日内尽力解决。协商不成的，由新加坡法院专属管辖，但我们可向任何法院申请紧急救济。
-在法律允许的范围内，索赔仅可以个人名义提出，不得以集体或代表诉讼方式提出。
+15.2 在法律允许的范围内，索赔仅可以个人名义提出，不得以集体或代表诉讼方式提出；我们可向任何有管辖权的法院申请紧急救济。
 
 15.3 任何条款无法执行的，不影响其余条款的效力。未行使权利不构成弃权。我们可转让本条款下的权利和义务。
 译文与英文版本不一致的，以英文版本为准。
-
-{FOOTER_ZH}
 """
 
 PRIVACY_EN = f"""_{EFFECTIVE_EN}_
@@ -389,9 +378,8 @@ We may update this policy. This page always shows the current version and its ef
 
 ## 10. Contact
 
-For privacy and data-protection requests, email {SUPPORT_EMAIL}.
-
-{FOOTER_EN}
+For privacy and data-protection requests, use customer service or the contact email at the
+bottom of this page.
 """
 
 PRIVACY_ZH = f"""_{EFFECTIVE_ZH}_
@@ -451,9 +439,7 @@ PRIVACY_ZH = f"""_{EFFECTIVE_ZH}_
 
 ## 10. 联系我们
 
-如有隐私或个人信息相关请求，请发送邮件至 {SUPPORT_EMAIL}。
-
-{FOOTER_ZH}
+如有隐私或个人信息相关请求，请联系客服或发送邮件至本页底部的联系邮箱。
 """
 
 AFTER_SALES_EN = f"""_{EFFECTIVE_EN}_
@@ -528,8 +514,6 @@ may lead to account suspension, revocation of deliveries where possible and reco
 ## 8. Your legal rights
 
 Nothing in this policy affects rights you have under applicable law that cannot be excluded.
-
-{FOOTER_EN}
 """
 
 AFTER_SALES_ZH = f"""_{EFFECTIVE_ZH}_
@@ -590,8 +574,6 @@ AFTER_SALES_ZH = f"""_{EFFECTIVE_ZH}_
 ## 8. 法定权利
 
 本政策不影响您依适用法律享有且不可排除的权利。
-
-{FOOTER_ZH}
 """
 
 RULES_EN = f"""_{EFFECTIVE_EN}_
@@ -640,8 +622,6 @@ customer service.
 ## 6. Changes
 
 We may update these rules. The version on this page applies.
-
-{FOOTER_EN}
 """
 
 RULES_ZH = f"""_{EFFECTIVE_ZH}_
@@ -685,8 +665,6 @@ RULES_ZH = f"""_{EFFECTIVE_ZH}_
 ## 6. 规则变更
 
 我们可能更新本规则，以本页所示版本为准。
-
-{FOOTER_ZH}
 """
 
 

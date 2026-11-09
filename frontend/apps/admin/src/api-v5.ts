@@ -526,7 +526,7 @@ export function createAdminV5Api(c: ApiClient) {
       },
     },
     orders: {
-      list: (q: { status?: string; q?: string; reseller_id?: string; overdue_manual?: boolean; page?: number; page_size?: number }) =>
+      list: (q: { status?: string; q?: string; reseller_id?: string; overdue_manual?: boolean; channel?: string; page?: number; page_size?: number }) =>
         c.get<Paginated<AdminOrderV5>>('/admin/orders', clean(q)),
     },
   }

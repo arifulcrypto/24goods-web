@@ -19,15 +19,17 @@ from typing import Any
 DEFAULT_CHANNEL = "zpay_alipay"
 DEFAULT_SURCHARGE_PERMILLE = 30
 MAX_SURCHARGE_PERMILLE = 200
+# Display priority (owner, #58): X Layer -> Arbitrum One -> TRC20 (highest network fees last).
+# Dict order is the order buyers and staff see; ids and trade types are unchanged.
 USDT_CHANNELS: dict[str, str] = {  # channel id -> BEpusdt trade_type
-    "usdt_arbitrum": "usdt.arbitrum",
     "usdt_xlayer": "usdt.xlayer",
+    "usdt_arbitrum": "usdt.arbitrum",
     "usdt_trc20": "usdt.trc20",
 }
 LABELS: dict[str, dict[str, str]] = {
     DEFAULT_CHANNEL: {"en": "Alipay", "zh-CN": "支付宝"},
-    "usdt_arbitrum": {"en": "USDT (Arbitrum One)", "zh-CN": "USDT（Arbitrum One）"},
     "usdt_xlayer": {"en": "USDT (X Layer)", "zh-CN": "USDT（X Layer）"},
+    "usdt_arbitrum": {"en": "USDT (Arbitrum One)", "zh-CN": "USDT（Arbitrum One）"},
     "usdt_trc20": {"en": "USDT (TRON TRC20)", "zh-CN": "USDT（波场 TRC20）"},
 }
 

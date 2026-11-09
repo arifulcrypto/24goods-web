@@ -10,6 +10,15 @@ no migrations. Pre-deploy backup with the installed v1 script, sha256-verified o
 retag `ghcr.io/arifulcrypto/goods24-{api,web}:rollback-e1fb9e7` to `:main` and `up -d`. Smoke all
 pass; api->BEpusdt 200. Demo also on `a8160cb`.
 
+**#58 quick items (2026-11-09, `fix/issue-58-quick`):** policy pages name no governing-law
+jurisdiction (owner: no Singapore for now) and carry no contact address; `SiteFooter`
+("Kesiv · Contact: support@kesiv.com") is the single place, now also on article pages. USDT order
+X Layer -> Arbitrum One -> TRC20. Admin Orders: payment-method column + filter (`channel`, `none`).
+Unpaid-order cap default 2; order creation throttled per account (3/60 s) and per IP (10/300 s,
+looser for carrier NAT) on buy-now, checkout and quote accept, with one high-severity
+`risk.order_flood_detected` audit row per identity and window (`orders/riskctl.py`). Declined:
+EPay amount jitter (see #58 comment).
+
 **Production deployed 2026-11-09 04:00 UTC: `42de235`** (#53 policy pages/help + #56 subscriptions,
 migration 0014; owner-approved). Backup `/root/kesiv-backups/predeploy-20261109T035854Z/` (sha256
 match, 40 tables); rollback images `:rollback-a8160cb`. **Cloudflare Redirect Rules (#54):**

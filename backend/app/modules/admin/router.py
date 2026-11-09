@@ -20,6 +20,7 @@ from app.core.deps import (
     require_admin,
     require_staff,
 )
+from app.core.errors import Validation
 from app.core.ratelimit import enforce
 from app.core.resources import Resources
 from app.models import User
@@ -43,6 +44,7 @@ from app.modules.inventory import service as inventory
 from app.modules.orders import admin as order_admin
 from app.modules.orders.schemas import CancelIn, DeliverIn, PriceIn
 from app.modules.orders.service import broadcast_order
+from app.modules.payments.channels import LABELS as CHANNEL_LABELS
 from app.modules.realtime.publish import publish_agent_status
 from app.modules.uploads.service import image_from_upload, store_attachment
 from app.modules.uploads.storage import FileStore
@@ -255,10 +257,13 @@ async def list_orders(
     buyer_id: uuid.UUID | None = None,
     reseller_id: uuid.UUID | None = None,
     overdue_manual: bool = False,
+    channel: str | None = Query(None, max_length=32),
     page: Page = Depends(get_page),
     staff: User = Depends(require_staff),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
+    if channel is not None and channel != "none" and channel not in CHANNEL_LABELS:
+        raise Validation("Unknown payment channel")
     return await order_admin.list_orders(
         db,
         page,
@@ -268,6 +273,7 @@ async def list_orders(
         buyer_id,
         reseller_id=reseller_id,
         overdue_manual=overdue_manual,
+        channel=channel,
     )
 
 

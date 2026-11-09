@@ -232,8 +232,13 @@ async def list_orders(
     buyer_id: uuid.UUID | None = None,
     reseller_id: uuid.UUID | None = None,
     overdue_manual: bool = False,
+    channel: str | None = None,
 ) -> dict[str, Any]:
     stmt = select(Order).where(Order.tenant_id == tenant_id)
+    if channel == "none":  # no payment method chosen yet
+        stmt = stmt.where(Order.channel.is_(None))
+    elif channel:
+        stmt = stmt.where(Order.channel == channel)
     if overdue_manual:  # manual orders still awaiting delivery past paid_at + ETA
         default_eta = section(await tenant_settings(db, tenant_id), "delivery")["manual_eta_hours"]
         eta = func.coalesce(

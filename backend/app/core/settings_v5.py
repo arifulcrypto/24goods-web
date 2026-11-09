@@ -80,7 +80,7 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     # User defaults
     "defaults": {
         "locale": "en",
-        "max_pending_orders": 5,
+        "max_pending_orders": 2,
         "order_timeout_minutes": 30,
     },
     # Email (SMTP). Password is the smtp_password secret.

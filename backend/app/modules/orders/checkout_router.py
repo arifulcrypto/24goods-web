@@ -23,6 +23,7 @@ from app.models import User
 from app.modules.challenges import service as challenge_service
 from app.modules.orders import cancel as cancel_svc
 from app.modules.orders import checkout as svc
+from app.modules.orders.riskctl import guard_order_create
 from app.modules.orders.schemas import BuyerCancelIn, CartQuoteIn, CheckoutIn, PayIn
 
 router = APIRouter(tags=["checkout"])
@@ -75,7 +76,7 @@ async def checkout(
     res: Resources = Depends(get_res),
     sf: Storefront | None = Depends(get_storefront),
 ) -> dict:
-    await enforce(res.redis, "order:create", str(user.id), *ACTIONS)
+    await guard_order_create(res, db, user, client_ip(request))
     out = await svc.create_checkout(
         db,
         res.settings,

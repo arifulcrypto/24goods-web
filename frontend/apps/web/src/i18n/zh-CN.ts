@@ -341,7 +341,7 @@ const zhCN: WebMessages = {
       tutorial: '教程',
       notice: '公告',
     },
-    footer: '{brand} · 适用法律：新加坡法律 · {email}',
+    footer: '{brand} · 联系邮箱：{email}',
   },
   cart: {
     manage: '管理',
