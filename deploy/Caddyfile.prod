@@ -10,6 +10,9 @@
 #   - API gets the real visitor IP (CF-Connecting-IP, only trusted from Cloudflare ranges)
 #   - /admin, /admin/*, /api/v1/admin/* only from ADMIN_ALLOW_IPS (space-separated IPs/CIDRs)
 #
+# http:// -> https:// is done at Cloudflare (Redirect Rule, #54), not here: a plain-HTTP hit on
+# :8088 must keep failing so the origin never answers anyone who skips Cloudflare.
+#
 # Required env (docker-compose.prod.yml): ADMIN_ALLOW_IPS
 # Required files in ./certs (read-only mount at /certs): origin.pem, origin.key (Cloudflare Origin CA),
 #   cf-origin-pull-ca.pem (the CA that signed the client cert Cloudflare presents for this hostname;
@@ -21,26 +24,12 @@
 	# TLS is configured explicitly per site; no ACME, no automatic redirects.
 	auto_https off
 
-	# :8088 only (the internal :80 must keep serving plain HTTP). A plain-HTTP request on the TLS
-	# port (Cloudflare forwards http:// visits to the same origin port) gets a redirect to https://
-	# instead of Go's "400 client sent an HTTP request to an HTTPS server". No content is served
-	# without TLS + the Cloudflare client certificate.
-	servers :8088 {
-		listener_wrappers {
-			http_redirect
-			tls
-		}
+	servers {
 		# Cloudflare ranges, fetched 2026-11-06 from https://www.cloudflare.com/ips-v4 and /ips-v6.
 		# Refresh occasionally (they change rarely): docs/production.md.
 		trusted_proxies static 173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 103.31.4.0/22 141.101.64.0/18 108.162.192.0/18 190.93.240.0/20 188.114.96.0/20 197.234.240.0/22 198.41.128.0/17 162.158.0.0/15 104.16.0.0/13 104.24.0.0/14 172.64.0.0/13 131.0.72.0/22 2400:cb00::/32 2606:4700::/32 2803:f800::/32 2405:b500::/32 2405:8100::/32 2a06:98c0::/29 2c0f:f248::/32
 		client_ip_headers CF-Connecting-IP
 		trusted_proxies_strict
-		timeouts {
-			read_header 10s
-			idle 2m
-		}
-	}
-	servers {
 		timeouts {
 			read_header 10s
 			idle 2m

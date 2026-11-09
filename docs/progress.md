@@ -10,6 +10,13 @@ no migrations. Pre-deploy backup with the installed v1 script, sha256-verified o
 retag `ghcr.io/arifulcrypto/goods24-{api,web}:rollback-e1fb9e7` to `:main` and `up -d`. Smoke all
 pass; api->BEpusdt 200. Demo also on `a8160cb`.
 
+**Production deployed 2026-11-09 04:00 UTC: `42de235`** (#53 policy pages/help + #56 subscriptions,
+migration 0014; owner-approved). Backup `/root/kesiv-backups/predeploy-20261109T035854Z/` (sha256
+match, 40 tables); rollback images `:rollback-a8160cb`. **Cloudflare Redirect Rules (#54):**
+`kesiv.com`/`www` -> `https://shop.kesiv.com{path}` (302, query kept) and `http://shop` -> https
+(301). HTTP->HTTPS lives at Cloudflare, so the origin's `http_redirect` from #53 was reverted
+(a plaintext hit on :8088 fails again, as `prod.sh smoke` expects).
+
 **Subscriptions v7 (2026-11-09, `feat/subscriptions`, spec `docs/review-v7-subscriptions.md`):**
 products can be marked as subscriptions (`products.subscription`); after-sales defaults to one
 calendar month (`products.after_sales_months`, tenant `after_sales_default {unit,value}`; legacy hours
