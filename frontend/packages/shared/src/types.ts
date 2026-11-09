@@ -408,6 +408,9 @@ export interface Announcement {
   title: string
   body_html: string
   enabled?: boolean
+  /** v9: how it is shown (default modal) and whether the buyer must acknowledge it. */
+  display?: 'modal' | 'banner' | 'both'
+  require_ack?: boolean
 }
 export interface SiteInfo {
   brand: string

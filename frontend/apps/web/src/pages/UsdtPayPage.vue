@@ -114,7 +114,9 @@ async function retry() {
           </div>
           <p class="state wait"><van-loading size="16" /> {{ t('pay.waiting') }}</p>
           <p class="muted small">{{ t('pay.exact') }}</p>
+          <p class="muted small" data-testid="usdt-confirm-tip">{{ t('pay.confirmTip') }}</p>
           <van-button round block @click="copy(view.address)">{{ t('pay.copy') }}</van-button>
+          <van-button round block plain type="primary" @click="orderLink">{{ t('pay.viewOrder') }}</van-button>
           <a v-if="view.sim_url" class="sim" :href="view.sim_url">{{ t('pay.simulate') }}</a>
         </template>
       </div>

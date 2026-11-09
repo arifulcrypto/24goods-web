@@ -160,6 +160,8 @@ export type AdminArticleInput = Pick<AdminArticle, 'slug' | 'kind' | 'category' 
 export interface SiteAnnouncement {
   version: number
   enabled: boolean
+  display?: 'modal' | 'banner' | 'both'
+  require_ack?: boolean
   title_i18n: I18nText
   body_i18n: I18nText
   body_html_i18n?: I18nText

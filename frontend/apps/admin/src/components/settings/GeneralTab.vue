@@ -16,7 +16,7 @@ const lang = ref<'en' | 'zh-CN'>('en')
 const errors = ref<Record<string, string>>({})
 const f = reactive({
   name_en: '', name_zh: '', sub_en: '', sub_zh: '', logo: '', contact_en: '', contact_zh: '', footer_en: '', footer_zh: '',
-  ann_on: false, ann_title_en: '', ann_title_zh: '', ann_body_en: '', ann_body_zh: '',
+  ann_on: false, ann_display: 'modal' as 'modal' | 'banner' | 'both', ann_ack: false, ann_title_en: '', ann_title_zh: '', ann_body_en: '', ann_body_zh: '',
   support_en: '', support_zh: '', welcome_en: '', welcome_zh: '', qq_en: '', qq_zh: '',
 })
 watch(
@@ -34,6 +34,8 @@ watch(
     f.footer_zh = g?.footer_i18n?.['zh-CN'] ?? ''
     const a = s.announcement
     f.ann_on = a?.enabled ?? false
+    f.ann_display = a?.display ?? 'modal'
+    f.ann_ack = a?.require_ack ?? false
     f.ann_title_en = a?.title_i18n.en ?? ''
     f.ann_title_zh = a?.title_i18n['zh-CN'] ?? ''
     f.ann_body_en = a?.body_i18n.en ?? ''
@@ -73,6 +75,8 @@ async function save() {
       },
       announcement: {
         enabled: f.ann_on,
+        display: f.ann_display,
+        require_ack: f.ann_ack,
         title_i18n: trim2(f.ann_title_en, f.ann_title_zh),
         body_i18n: { en: f.ann_body_en, 'zh-CN': f.ann_body_zh },
       },
@@ -113,6 +117,19 @@ async function save() {
       <div class="toggle" :class="{ on: f.ann_on }">
         <el-switch v-model="f.ann_on" size="large" :active-text="t('site.enabledOn')" :inactive-text="t('site.enabledOff')" />
         <span class="muted small">{{ f.ann_on ? t('site.enabledNoteOn') : t('site.enabledNoteOff') }}</span>
+      </div>
+      <div class="grid">
+        <el-form-item :label="t('site.display')">
+          <el-radio-group v-model="f.ann_display">
+            <el-radio-button value="modal">{{ t('site.displayModal') }}</el-radio-button>
+            <el-radio-button value="banner">{{ t('site.displayBanner') }}</el-radio-button>
+            <el-radio-button value="both">{{ t('site.displayBoth') }}</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item :label="t('site.requireAck')">
+          <el-switch v-model="f.ann_ack" />
+          <div class="muted small">{{ t('site.requireAckNote') }}</div>
+        </el-form-item>
       </div>
       <el-tabs v-model="lang">
         <el-tab-pane :label="t('products.form.tabEn')" name="en">

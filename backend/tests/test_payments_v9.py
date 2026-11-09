@@ -145,6 +145,8 @@ async def test_admin_resolve_unknown_attempt(env, monkeypatch):
     assert (await admin.post(url, json={**body, "note": "short"})).status_code == 422
     assert (await admin.post(url, json={**body, "outcome": "paid"})).status_code == 422
     assert (await _attempts(env))[0].status == "unknown"
+    detail = (await admin.get(f"/api/v1/admin/orders/{order['id']}")).json()
+    assert [u["id"] for u in detail["unresolved_attempts"]] == [str(att.id)]
 
     r = await admin.post(url, json=body)
     assert r.status_code == 200 and r.json()["status"] == "failed", r.text
@@ -162,6 +164,8 @@ async def test_admin_resolve_unknown_attempt(env, monkeypatch):
     )
     # only unknown/preparing attempts can be resolved
     assert (await admin.post(url, json=body)).status_code == 409
+    detail = (await admin.get(f"/api/v1/admin/orders/{order['id']}")).json()
+    assert detail["unresolved_attempts"] == []
     # the cancel now succeeds without any gateway evidence
     r = await buyer.post(f"/api/v1/orders/{order['id']}/cancel", json={})
     assert r.status_code == 200 and r.json()["status"] == "cancelled", r.text

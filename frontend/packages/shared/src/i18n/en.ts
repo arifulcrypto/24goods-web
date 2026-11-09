@@ -71,6 +71,7 @@ export default {
     ip_blocked: 'Access denied',
     fee_channel_mismatch: 'Payment fee changed, please retry',
     channel_unavailable: 'This payment method is not available right now. Please pick another.',
+    channel_unreachable: 'This payment method is unavailable right now. Please choose another method.',
     too_many_unpaid: 'You have too many unpaid orders. Pay or cancel one first, or wait for it to expire.',
     buyer_input_too_long: 'The order information is too long. Please shorten it.',
     pay_via_checkout: 'This order is part of a combined checkout',
@@ -270,6 +271,7 @@ export default {
     },
     system: {
       price_changed: 'Price changed to {amount}',
+      delivery_expedite: 'The buyer asks the seller to ship this order as soon as possible',
       delivered: 'Order delivered',
       paid: 'Payment received',
       agent_joined: '{name} joined the conversation',

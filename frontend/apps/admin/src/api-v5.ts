@@ -177,7 +177,7 @@ export type SiteSectionPatch = Partial<{ [K in keyof SiteSections]: Partial<Site
   Partial<{
     /** null resets that template to its default */
     email_templates: Partial<Record<keyof EmailTemplates, EmailTemplate | null>>
-    announcement: { enabled: boolean; title_i18n: I18nText; body_i18n: I18nText }
+    announcement: { enabled: boolean; display?: 'modal' | 'banner' | 'both'; require_ack?: boolean; title_i18n: I18nText; body_i18n: I18nText }
     after_sales_default_hours: number
     after_sales_default: { unit: 'month' | 'hour'; value: number }
     auto_confirm_hours: { manual: number; auto_card: number }

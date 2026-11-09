@@ -24,6 +24,7 @@ export const API_ERROR_CODES = [
   'fee_channel_mismatch',
   'too_many_unpaid',
   'channel_unavailable',
+  'channel_unreachable',
   'buyer_input_too_long',
   'pay_via_checkout',
   'already_paid',
