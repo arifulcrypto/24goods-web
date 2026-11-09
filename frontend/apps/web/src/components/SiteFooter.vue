@@ -29,8 +29,8 @@ const site = useSiteStore()
 .site-footer a {
   color: inherit;
   text-decoration: underline;
-  display: inline-block;
-  min-height: 24px;
-  line-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
 }
 </style>
