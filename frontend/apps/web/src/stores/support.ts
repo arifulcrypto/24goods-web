@@ -1,7 +1,8 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import type { AgentStatus } from '@24goods/shared'
 import { api } from '../api'
+import { siteAccessCleared } from '../lib/securityChallenge'
 
 export const useSupportStore = defineStore('support', () => {
   const status = ref<AgentStatus | null>(null)
@@ -15,6 +16,10 @@ export const useSupportStore = defineStore('support', () => {
       /* non-critical */
     }
   }
+  // a 428 left the status empty: fetch it again once the visitor has cleared the access check
+  watch(siteAccessCleared, () => {
+    if (!status.value) void load(true)
+  })
   function set(s: AgentStatus) {
     status.value = s
     fetchedAt = Date.now()

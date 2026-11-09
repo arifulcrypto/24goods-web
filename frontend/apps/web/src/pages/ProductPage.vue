@@ -24,6 +24,7 @@ import MiniStrip from '../components/MiniStrip.vue'
 import { cleanSrc, rememberSrc } from '../lib/attribution'
 import { openSupport as support } from '../lib/support'
 import { useCartStore } from '../stores/cart'
+import { isSoldOut } from '../lib/stock'
 import { useSiteStore } from '../stores/site'
 import { showImagePreview, showSuccessToast, showToast, toastError } from '../ui'
 
@@ -82,7 +83,7 @@ const images = computed(() => {
 })
 const price = computed(() => (product.value ? moneyParts(product.value.price, product.value.currency, locale.value) : null))
 const isAuto = computed(() => product.value?.delivery_mode === 'auto_card')
-const soldOut = computed(() => (isAuto.value ? (product.value?.stock ?? 0) <= 0 : product.value?.stock === 0))
+const soldOut = computed(() => (product.value ? isSoldOut(product.value) : false))
 const as = computed(() => afterSalesBadge(product.value?.after_sales_hours))
 const labels = computed(() => formatLabels(product.value?.delivery_format, product.value?.delivery_separator))
 const redeem = computed(() => safeLinkUrl(product.value?.redeem_url))
@@ -192,7 +193,7 @@ function back() {
           <strong>{{ t('product.deliveryFormat') }}</strong> {{ labels.join(' · ') }}
         </p>
         <p v-if="isAuto" class="hint muted">{{ t('product.instantHint') }}</p>
-        <ManualPromise v-else class="hint" :eta="product.delivery_eta_hours" />
+        <ManualPromise v-else class="hint" :eta="product.delivery_eta_hours" note-only />
       </section>
 
       <section class="section card ask">

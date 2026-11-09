@@ -1,4 +1,5 @@
 import { defineConfig } from 'vite'
+import { noRemoteAssets } from '../../scripts/vite-no-remote-assets.mjs'
 import vue from '@vitejs/plugin-vue'
 import Components from 'unplugin-vue-components/vite'
 import { VantResolver } from '@vant/auto-import-resolver'
@@ -8,6 +9,7 @@ const BACKEND = process.env.VITE_BACKEND ?? 'http://127.0.0.1:18000'
 export default defineConfig({
   base: '/',
   plugins: [
+    noRemoteAssets(),
     vue(),
     // Vant components are imported on demand (with their CSS) when used in templates.
     Components({

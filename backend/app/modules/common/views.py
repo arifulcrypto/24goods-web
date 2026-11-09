@@ -83,6 +83,8 @@ def product_summary(
         "delivery_eta_hours": manual_eta_hours(tenant_settings, p.delivery_eta_hours)
         if p.delivery_mode == "manual"
         else None,
+        # lists carry the order-information form too: quick buy from Home/Search must ask for it
+        "buyer_input": public_config(p.buyer_input, lang),
     }
 
 
@@ -96,7 +98,6 @@ def product_view(
         description=description,
         # markdown rendered at write time; rendered on the fly for rows not yet backfilled
         description_html=html or (render(description) if description else ""),
-        buyer_input=public_config(p.buyer_input, lang),
         images=list(p.images),
         status=p.status,
         delivery_format=p.delivery_format,

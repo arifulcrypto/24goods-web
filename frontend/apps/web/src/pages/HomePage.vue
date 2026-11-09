@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onActivated, onMounted, ref } from 'vue'
+import { computed, onActivated, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { LogoMark } from '@24goods/shared/ui'
@@ -55,26 +55,45 @@ function setView(v: 'list' | 'grid') {
   }
 }
 
+// a newer load (or a language switch) supersedes older responses, so old-locale text never lands
+let stripSeq = 0
 async function loadStrips() {
+  const mine = ++stripSeq
   const ids = recentIds()
+  let r: ProductSummary[] = []
   try {
-    recent.value = ids.length ? (await api.productsByIds(ids)).items : []
+    r = ids.length ? (await api.productsByIds(ids)).items : []
   } catch {
-    recent.value = []
+    r = []
   }
+  if (mine !== stripSeq) return
+  recent.value = r
+  let rec: ProductSummary[] = []
   try {
-    recommended.value = (await api.recommended({ recent: ids, limit: 8 })).items
+    rec = (await api.recommended({ recent: ids, limit: 8 })).items
   } catch {
-    recommended.value = []
+    rec = []
   }
+  if (mine === stripSeq) recommended.value = rec
 }
-onMounted(async () => {
-  void loadStrips()
+let catSeq = 0
+async function loadCategories() {
+  const mine = ++catSeq
   try {
-    categories.value = await api.categories()
+    const c = await api.categories()
+    if (mine === catSeq) categories.value = c
   } catch {
     /* chips are optional */
   }
+}
+onMounted(() => {
+  void loadStrips()
+  void loadCategories()
+})
+// server-localized strips and chips follow the language (the feed refetches itself); keep the category
+watch(locale, () => {
+  void loadStrips()
+  void loadCategories()
 })
 // kept alive: refresh the recently-viewed strip when coming back from a product page
 let first = true

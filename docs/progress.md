@@ -4,6 +4,42 @@ Update this file in every PR. Phases are defined in [review-v2.md §8](review-v2
 
 ## Current state — hand-off (read this first in a new session)
 
+**Issues #48 / #49 triage + fixes (2026-11-09 UTC, `fix/issues-48-49`).** #49 is the more accurate
+review; where they disagree #49's reading of the code was right. Fixed, with regressions:
+
+- **49 A** cart `buyer_input` (may hold a session token) no longer touches `localStorage`: only
+  ids/qty/ticks persist, legacy values are purged on load, and inputs are dropped on sign-out or an
+  account switch (guest -> signed in keeps them: same person, same tab).
+- **49 B** list summaries now carry `buyer_input` (null = off), so Home/Search quick buy shows the
+  form; BuySheet treats a missing field as unknown and fetches the product before allowing submit.
+- **49 C** one stock rule (`lib/stock.ts`) for row/card/detail/quick buy: null unlimited, 0 sold
+  out, positive caps quantity -- manual stock 0 no longer shows an enabled Buy.
+- **49 D** catalog feed, Home strips/categories and My Account's recent strip refetch on a language
+  switch; responses from the old locale are discarded.
+- **48 §1.1** Vant's icon CSS `//at.alicdn.com` woff fallback is stripped at build time and the
+  build now **fails** if any emitted CSS loads a remote `url()` or mentions alicdn (both SPAs).
+- **48 §1.2** a 428 on a non-catalog route (My Account, chat, cart) shows an inline access banner
+  instead of a silent failure; reads retry after clearance. No blanket gate over recovery routes.
+- **48 §2.1/2.2/2.3** one manual-delivery badge + one note per card (BuySheet badge only); admin
+  Services page padding; `/me/settings` (language, media prefs, credentials, delete account; closes
+  #38) and zh `自动（浏览器）` -> `自动`.
+
+Not done, deliberately: SSE `withCredentials: true` (same-origin EventSource already sends
+cookies; #49 is right); Turnstile `connect-src data:` (unverified console line); random payment
+tail and USDT rate buffer (no provider evidence; need a pricing decision, AGENTS §1.3); legal
+banner removal (needs approved text, #40); agent skill (exists: `skills/24goods-admin`). Image
+thumbnails for product grids are a real win but need the public-read vs CPU-admission split #49
+describes -- separate change. **Owner:** disable Cloudflare Web Analytics automatic setup for
+shop.kesiv.com in the dashboard (our API token has no RUM scope); do not whitelist the beacon.
+
+**USDT receiving wallets replaced on production (2026-11-09 00:36 UTC, owner request).** BEpusdt on
+c4: Arbitrum One and X Layer -> `0x5bde040754d531a6c25027845adc99b2d8100741`, TRON TRC20 ->
+`TTAWAWPXTouM5Pztv6Tu5dhqFZXJtSh1N2`. The owner supplied X Layer as `XKO5bde…`; `XKO` is OKX's
+display prefix for the same EVM `0x` address. Done with zero waiting BEpusdt orders; SQLite
+backup first (`/opt/kesiv/backups/bepusdt-prewallet-20261109T003615Z.db`). The old wallets
+(`0xe2dc…653c`, `TQkeo…vMu5`) are no longer watched -- any late transfer to them must be
+reconciled by hand.
+
 **v6 blockers closed + owner UX round (2026-11-08 UTC).** Read [HANDOFF-v6.md](HANDOFF-v6.md) for the
 implementation inventory. Since that checkpoint, on `feat/issues-25-30-hardening`:
 
@@ -123,7 +159,7 @@ _Last updated 2026-11-08 UTC._
   most: `PaymentAttempt` is the durable attempt binding the USDT reconcile path depends on, so real
   USDT testing on prod today exercises v5.2, not the current pipeline. **Real BEpusdt v1.24.3 is
   already running there** (compose profile `usdt`) with the owner's three wallets configured —
-  Arbitrum One and X Layer share `0xe2dc…653c`, TRC20 is `TQkeo…vMu5`. Nothing to configure; the
+  (replaced 2026-11-09: Arbitrum One and X Layer share `0x5bde…0741`, TRC20 is `TTAWA…1N2`). Nothing to configure; the
   gap is the deploy. c4 has ~1.8 GB RAM free vs this box's ~180 MB.
 - **Demo** https://demo.kesiv.com runs `:main` — updated **manually** via
   `/opt/24goods-demo/deploy/demo-update.sh`; there is **no** `goods24-demo-update` systemd timer on

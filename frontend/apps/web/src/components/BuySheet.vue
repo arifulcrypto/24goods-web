@@ -25,8 +25,9 @@ import { useTurnstile } from '../composables/useTurnstile'
 import CredentialsSheet from './CredentialsSheet.vue'
 import PowStatus from './PowStatus.vue'
 import { toastError } from '../ui'
+import { isSoldOut, maxOrderQty } from '../lib/stock'
+import { siteAccessCleared } from '../lib/securityChallenge'
 
-const MAX_QTY = 10
 const props = defineProps<{ show: boolean; product: (ProductSummary & { buyer_input?: BuyerInputConfig | null }) | null; qty?: number; src?: string | null }>()
 const emit = defineEmits<{ 'update:show': [v: boolean] }>()
 const { t, locale } = useI18n()
@@ -45,14 +46,40 @@ const showInput = ref(false)
 /** The order-information value collected by the §4 popup for this purchase. */
 const inputValue = ref<string | null>(null)
 
-const p = computed(() => props.product)
-const price = computed(() => (p.value ? moneyParts(p.value.price, p.value.currency, locale.value) : null))
-const maxQty = computed(() => {
-  const x = p.value
-  if (!x) return 1
-  if (x.delivery_mode === 'auto_card' && x.stock !== null) return Math.max(1, Math.min(MAX_QTY, x.stock))
-  return MAX_QTY
+/**
+ * The order-information form config. A summary without the field (an older cached list, a chat
+ * card) is "unknown", not "off": fetch the product before any order can be placed (issue 49 B).
+ */
+const resolved = ref<{ id: string; config: BuyerInputConfig | null } | null>(null)
+const resolving = ref(false)
+const resolveFailed = ref(false)
+const p = computed(() => {
+  const x = props.product
+  if (!x || x.buyer_input !== undefined) return x
+  return resolved.value?.id === x.id ? { ...x, buyer_input: resolved.value.config } : x
 })
+const configKnown = computed(() => p.value?.buyer_input !== undefined)
+async function resolveConfig() {
+  const x = props.product
+  if (!x || x.buyer_input !== undefined || resolving.value) return
+  resolving.value = true
+  resolveFailed.value = false
+  try {
+    const full = await api.product(x.id)
+    if (props.product?.id === x.id) resolved.value = { id: x.id, config: full.buyer_input ?? null }
+  } catch {
+    resolveFailed.value = true
+  } finally {
+    resolving.value = false
+  }
+}
+watch(siteAccessCleared, () => {
+  if (props.show && resolveFailed.value) void resolveConfig()
+})
+const soldOut = computed(() => (p.value ? isSoldOut(p.value) : false))
+const canSubmit = computed(() => configKnown.value && !soldOut.value)
+const price = computed(() => (p.value ? moneyParts(p.value.price, p.value.currency, locale.value) : null))
+const maxQty = computed(() => (p.value ? maxOrderQty(p.value) : 1))
 const subtotal = computed(() => (p.value ? (multiplyAmount(p.value.price, qty.value) ?? p.value.price) : '0.00'))
 const discountMinor = computed(() => (promo.value && !promo.value.stale ? promo.value.discount_minor : 0))
 const bd = computed(() => feeBreakdown(subtotal.value, discountMinor.value, site.permille))
@@ -67,6 +94,7 @@ watch(
       inputValue.value = null
       promo.value = null
       void site.loadChannels()
+      void resolveConfig()
     }
   },
 )
@@ -85,7 +113,7 @@ function signIn() {
 
 async function placeOrder() {
   const x = p.value
-  if (!x || submitting.value) return
+  if (!x || submitting.value || !canSubmit.value) return
   submitting.value = true
   try {
     // Price is decided by the server; only product id + qty (+ attribution tag) are sent.
@@ -102,6 +130,7 @@ async function placeOrder() {
 
 /** Buy now: the order-information popup (if enabled) comes first, then the order is created. */
 function begin(guest: boolean) {
+  if (!canSubmit.value) return
   if (needsInput.value && inputValue.value === null) {
     pendingGuest = guest
     showInput.value = true
@@ -166,7 +195,12 @@ async function credsDone() {
         </div>
         <van-stepper v-model="qty" :min="1" :max="maxQty" integer :input-width="48" :button-size="36" />
       </div>
-      <ManualPromise v-if="p.delivery_mode === 'manual'" class="sheet-manual" :eta="p.delivery_eta_hours" />
+      <ManualPromise v-if="p.delivery_mode === 'manual'" class="sheet-manual" :eta="p.delivery_eta_hours" compact />
+      <p v-if="soldOut" class="muted small sheet-note" role="alert">{{ t('product.outOfStock') }}</p>
+      <div v-else-if="resolveFailed" class="sheet-note sheet-retry" role="alert">
+        <span>{{ t('buy.configFailed') }}</span>
+        <van-button size="small" plain round class="retry" @click="resolveConfig">{{ t('buy.retry') }}</van-button>
+      </div>
       <PromoField v-model="promo" :items="promoItems" />
       <p v-if="promo?.stale" class="muted small">{{ t('promo.stale') }}</p>
       <div class="sheet-fees">
@@ -181,7 +215,7 @@ async function credsDone() {
       </div>
 
       <template v-if="auth.loggedIn">
-        <van-button block round type="primary" size="large" :loading="submitting" @click="begin(false)">
+        <van-button block round type="primary" size="large" :loading="submitting || resolving" :disabled="!canSubmit" @click="begin(false)">
           {{ t('product.placeOrder') }}
         </van-button>
       </template>
@@ -195,7 +229,8 @@ async function credsDone() {
           round
           type="primary"
           size="large"
-          :loading="submitting"
+          :loading="submitting || resolving"
+          :disabled="!canSubmit"
           @click="begin(true)"
         >
           {{ t('buy.continueGuest') }}
@@ -252,6 +287,19 @@ async function credsDone() {
 }
 .small {
   font-size: 12px;
+}
+.sheet-note {
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+.sheet-retry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.retry {
+  flex-shrink: 0;
+  min-height: 44px;
 }
 .guest-note {
   margin: 0 0 4px;
