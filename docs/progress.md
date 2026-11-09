@@ -4,6 +4,22 @@ Update this file in every PR. Phases are defined in [review-v2.md §8](review-v2
 
 ## Current state — hand-off (read this first in a new session)
 
+**CI/local speed-up (2026-11-09, `ci/faster-pipeline`).** Measured on its own PR run: backend tests 616 s -> 107 s. Before: ~16 min, backend pytest
+616 s on the critical path, then image builds waited on it (web 119 s, mostly a single-threaded
+xcaddy compile), then E2E. Changes:
+
+- `create_app` reuses a once-per-process analysed route table (`_route_table`). FastAPI's
+  `include_router` re-analysed every endpoint (~0.5 s) and the suite builds one app per test:
+  the same 41 tests went 40.8 s -> 15.0 s locally. Each test still gets its own app/middleware.
+- Images build in parallel with the tests (nothing is pushed until `publish`, which now needs
+  backend + frontend + e2e + semgrep + gitleaks), with a buildx GHA layer cache; the web
+  Dockerfile installs dependencies from manifests before copying sources. A weekly
+  `OS_PATCH_EPOCH` build arg keeps cached `apk/apt upgrade` layers from going stale.
+- A `changes` job skips backend/frontend/image/E2E work a PR does not touch (pushes to `main`
+  always run everything). The image matrix skips per step, never at job level, so its
+  per-matrix required checks still report.
+- Backend installs with uv (`uv pip install --system`), pytest prints `--durations=15`.
+- `scripts/dev.sh check`: changed-files-only local loop under `.dev/heavy.lock`.
 **Issues #48 / #49 triage + fixes (2026-11-09 UTC, `fix/issues-48-49`).** #49 is the more accurate
 review; where they disagree #49's reading of the code was right. Fixed, with regressions:
 
