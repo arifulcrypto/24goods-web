@@ -33,8 +33,14 @@ def bounded_integer(value: str) -> int:
     return int(value)
 
 
-async def response_bytes(response: httpx.Response, maximum: int) -> bytes:
-    response.raise_for_status()
+async def response_bytes(
+    response: httpx.Response, maximum: int, *, body_statuses: frozenset[int] = frozenset()
+) -> bytes:
+    """Bounded body read. Non-2xx raises, except ``body_statuses``: gateways that answer an
+    application-level error with a JSON body on a 4xx (e.g. EPay forks: 404 + "order not found")
+    hand that body to the caller's parser, which still decides what it means."""
+    if response.status_code not in body_statuses:
+        response.raise_for_status()
     # Never let a small compressed response expand before the cap can inspect its bytes.
     if response.headers.get("content-encoding", "identity").lower() not in ("", "identity"):
         raise ValueError("compressed payment responses are not supported")

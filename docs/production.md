@@ -124,6 +124,24 @@ reaches `manual_review` (amount or re-query mismatch, late payment) is resolved 
 transaction hash is in the payment record (`block_transaction_id`). Back up the `bepusdt_data` volume with
 the other volumes (it only holds addresses, settings and trade history, no private keys).
 
+## Xiaodou EPay relay (since 2026-11-09)
+
+c4's route into mainland China loses packets in both directions (measured against Xiaodou and a
+Tencent Cloud Guangzhou VPS at the same moments; the same targets are fine from other networks).
+Outbound TCP to Xiaodou's API therefore goes through a relay on the dev/demo box:
+
+- dev box: `kesiv-xiaodou-relay.service` (socat, port 20443, accepts c4's IPv4 only via `range=`
+  plus a ufw rule) -> `pay.xiaodouap.cn:443`. TLS is end to end between the c4 app and Xiaodou;
+  the relay only forwards encrypted bytes. The dev box IP is on Xiaodou's merchant whitelist.
+- c4: `kesiv-xiaodou-route.service` runs `/usr/local/sbin/kesiv-xiaodou-route.sh add`, a DNAT of
+  `159.75.195.113:443` (nat OUTPUT + PREROUTING, so host and containers) to the relay.
+  `kesiv-xiaodou-route.sh status|del` to inspect or remove. If Xiaodou's IP changes
+  (`getent ahosts pay.xiaodouap.cn`), update `XD_IP` in that script.
+- Buyers never use the relay: their browsers open Xiaodou's pay page directly.
+- Check: Admin -> Settings -> Payment -> Test now (expects `-1 订单不存在` for the random probe),
+  or `curl -sS -o /dev/null -w '%{http_code} %{time_total}\n' https://pay.xiaodouap.cn/api.php` on c4.
+- Remove when c4 moves to a host with good China routing, or when the route recovers.
+
 ## SEO and Google Search Console (review-v5.2 §6, ADR-024)
 
 - Public pages (`/`, `/p/*`, `/a/*`, `/help`) are rendered by the API into the SPA shell for crawlers;
