@@ -428,6 +428,7 @@ async def test_test_payment_create_notify_paid_idempotent_and_isolated(env, monk
     test = r.json()
     assert test["status"] == "pending" and test["amount"] == "0.01"
     assert test["qr_content"].startswith("https://qr.alipay.com/T") and test["seconds_left"] > 0
+    assert test["qr_svg"].lstrip().startswith("<svg") and "<script" not in test["qr_svg"]
     assert test["out_trade_no"].startswith("T") and test["gateway_label"] == "gw gwa"
     params = _notify_params(test, key)
     for _ in range(2):  # the second notify is idempotent

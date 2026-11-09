@@ -30,6 +30,7 @@ from app.models import PaymentGateway, PaymentTest
 from app.modules.payments.gateways import _gateway_failed, client_for, mark_gateway_ok
 from app.modules.payments.ledger import Line, post_txn
 from app.modules.payments.settle import FAIL, SUCCESS, NotifyOutcome, safe_params
+from app.modules.payments.usdt import qr_svg
 from app.payments import epay
 from app.payments.zpay import ZPayQueryError, ZPayRefused, ZPayUnreachable
 
@@ -75,6 +76,7 @@ def view(row: PaymentTest, label: str | None = None) -> dict[str, Any]:
         "currency": row.currency,
         "status": row.status,
         "qr_content": data.get("payload") if kind else None,
+        "qr_svg": qr_svg(str(data["payload"])) if kind and row.status == "pending" else None,
         "redirect_url": data.get("payload") if kind == "redirect" else None,
         "reason": data.get("reason"),
         "message": data.get("message"),
