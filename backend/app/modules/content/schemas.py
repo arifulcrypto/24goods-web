@@ -110,6 +110,8 @@ class ArticlePatch(BaseModel):
 
 class AnnouncementIn(BaseModel):
     enabled: bool | None = None
+    display: Literal["modal", "banner", "both"] | None = None
+    require_ack: bool | None = None
     title_i18n: dict[str, str] | None = None
     body_i18n: dict[str, str] | None = None
 

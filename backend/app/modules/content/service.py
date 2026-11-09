@@ -63,6 +63,8 @@ def _announcement_admin(raw: dict[str, Any] | None) -> dict[str, Any]:
     return {
         "version": int(a.get("version") or 0),
         "enabled": bool(a.get("enabled", False)),
+        "display": a.get("display") if a.get("display") in ("modal", "banner", "both") else "modal",
+        "require_ack": bool(a.get("require_ack", False)),
         "title_i18n": _full(a.get("title_i18n")),
         "body_i18n": _full(a.get("body_i18n")),
         "body_html_i18n": _full(a.get("body_html_i18n")),
@@ -98,6 +100,8 @@ async def public_site(
             "title": pick(a["title_i18n"], lang),
             "body_html": pick(a["body_html_i18n"], lang),
             "enabled": True,
+            "display": a["display"],
+            "require_ack": a["require_ack"],
         }
     sup = _support_cfg(ts)
     pages = (
@@ -263,14 +267,19 @@ async def update_site(
         title = _full(inc.title_i18n) if inc.title_i18n is not None else old["title_i18n"]
         text = _full(inc.body_i18n) if inc.body_i18n is not None else old["body_i18n"]
         enabled = inc.enabled if inc.enabled is not None else old["enabled"]
+        display = inc.display if inc.display is not None else old["display"]
+        require_ack = inc.require_ack if inc.require_ack is not None else old["require_ack"]
         changed = (
             title != old["title_i18n"]
             or text != old["body_i18n"]
             or (enabled and not old["enabled"])
+            or (require_ack and not old["require_ack"])  # a new obligation must reach everyone
         )
         new["announcement"] = {
             "version": old["version"] + 1 if changed else old["version"],
             "enabled": enabled,
+            "display": display,
+            "require_ack": require_ack,
             "title_i18n": title,
             "body_i18n": text,
             "body_html_i18n": render_i18n(text)
