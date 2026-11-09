@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from sqlalchemy import and_, func, select, text, update
+from sqlalchemy import and_, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -112,7 +112,11 @@ async def conversation_views(
     if viewer == "buyer":
         cond = and_(Message.id > Conversation.buyer_last_read_id, Message.sender_role != "buyer")
     else:
-        cond = and_(Message.id > Conversation.staff_last_read_id, Message.sender_role == "buyer")
+        # a new order card is as unread-worthy as a buyer message (CS must see every order)
+        cond = and_(
+            Message.id > Conversation.staff_last_read_id,
+            or_(Message.sender_role == "buyer", Message.type == "order_card"),
+        )
     unread_rows = await db.execute(
         select(Message.conversation_id, func.count(Message.id))
         .join(Conversation, Conversation.id == Message.conversation_id)
