@@ -9,6 +9,7 @@
 #   scripts/dev.sh logs X    tail a process log (api|delivery|mockpay|web|admin)
 #   scripts/dev.sh restart X restart one process (delivery/mockpay have no hot reload of their own)
 #   scripts/dev.sh test      backend tests against the dev containers (own DB), frontend checks
+#   scripts/dev.sh check     fast loop: lint + only the tests/apps this branch touches (CI runs all)
 #   scripts/dev.sh reset     drop the dev database volume and secrets (fresh seed on next `up`)
 #   scripts/dev.sh creds     print the seeded demo logins
 #
@@ -331,6 +332,57 @@ cmd_test() {
   (cd "$ROOT/frontend" && export NODE_OPTIONS=--max-old-space-size=768 && pnpm lint && pnpm typecheck && pnpm test)
 }
 
+# Fast inner loop (AGENTS.md §7): only what this branch changed vs origin/main, plus uncommitted
+# work. Backend: ruff on changed files; pytest on changed test files and on tests that import a
+# changed app module. Frontend: policy lint + typecheck/vitest for the touched app(s) only. Heavy
+# steps take .dev/heavy.lock. The full suites stay in CI.
+cmd_check() {
+  local base files py tests=() mods apps=()
+  base=$(git -C "$ROOT" merge-base HEAD origin/main 2>/dev/null || echo HEAD)
+  files=$( { git -C "$ROOT" diff --name-only "$base"; git -C "$ROOT" ls-files --others --exclude-standard; } | sort -u)
+  [[ -n "$files" ]] || { c_ok "nothing changed vs origin/main"; return; }
+  local lock="$ROOT/.dev/heavy.lock"; mkdir -p "$ROOT/.dev"
+  py=$(grep -E '^backend/.*\.py$' <<<"$files" | sed 's#^backend/##' || true)
+  if [[ -n "$py" ]]; then
+    local existing; existing=$(cd "$ROOT/backend" && for f in $py; do [[ -f $f ]] && echo "$f"; done)
+    if [[ -n "$existing" ]]; then
+      # shellcheck disable=SC2086
+      (cd "$ROOT/backend" && "$VENV/bin/ruff" check $existing && "$VENV/bin/ruff" format --check $existing)
+    fi
+    mapfile -t tests < <(grep -E '^tests/test_.*\.py$' <<<"$existing" || true)
+    # app/modules/orders/service.py -> tests that import app.modules.orders (or the module itself)
+    mods=$(grep -E '^app/.*\.py$' <<<"$existing" | sed -E 's#/__init__\.py$##; s#\.py$##; s#/#.#g' \
+      | awk -F. '{ if ($2 == "modules" && NF > 3) print $1"."$2"."$3; else print }' | sort -u || true)
+    for m in $mods; do
+      mapfile -t -O "${#tests[@]}" tests < <(cd "$ROOT/backend" && grep -lF "$m" tests/test_*.py || true)
+    done
+    if ((${#tests[@]})); then
+      mapfile -t tests < <(printf '%s\n' "${tests[@]}" | sort -u)
+      echo "pytest: ${#tests[@]} file(s): ${tests[*]}"
+      ensure_containers
+      local su; su=$(secret PG_SUPERUSER_PASSWORD)
+      [[ "$(docker exec "$PG_NAME" psql -U postgres -tAc "SELECT 1 FROM pg_database WHERE datname='test'")" == 1 ]] \
+        || docker exec "$PG_NAME" createdb -U postgres test
+      (cd "$ROOT/backend" \
+        && export TEST_DATABASE_URL="postgresql+asyncpg://postgres:$su@127.0.0.1:$PG_PORT/test" \
+           TEST_REDIS_URL="redis://default:$(secret REDIS_PASSWORD)@127.0.0.1:$REDIS_PORT/15" \
+           TEST_REQUIRE_SERVICES=1 \
+        && flock "$lock" "$PY" -m pytest -q "${tests[@]}")
+    fi
+  fi
+  grep -qE '^frontend/' <<<"$files" || { c_ok "check passed"; return; }
+  (cd "$ROOT/frontend" && pnpm lint)
+  # a shared-package change can break either app
+  grep -qE '^frontend/(apps/web|packages)/' <<<"$files" && apps+=(web)
+  grep -qE '^frontend/(apps/admin|packages)/' <<<"$files" && apps+=(admin)
+  local a
+  for a in "${apps[@]}"; do
+    (cd "$ROOT/frontend" && export NODE_OPTIONS=--max-old-space-size=768 \
+      && flock "$lock" pnpm --filter "@24goods/$a" typecheck && flock "$lock" pnpm --filter "@24goods/$a" test)
+  done
+  c_ok "check passed"
+}
+
 cmd_reset() {
   cmd_down
   docker rm -f "$PG_NAME" "$REDIS_NAME" >/dev/null 2>&1 || true
@@ -348,6 +400,7 @@ case "${1:-}" in
   logs) [[ -n "${2:-}" ]] || die "logs <process>"; tail -n 100 -f "$LOGS/$2.log" ;;
   creds) cmd_creds ;;
   test) shift; cmd_test "$@" ;;
+  check) cmd_check ;;
   reset) cmd_reset ;;
   *) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

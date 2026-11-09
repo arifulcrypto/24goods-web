@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import logging
 import re
 import time
@@ -161,6 +162,20 @@ def api_router() -> APIRouter:
     return r
 
 
+@functools.cache
+def _route_table() -> APIRouter:
+    """All API + crawler routes, analysed once per process.
+
+    ``include_router`` re-runs FastAPI's dependency analysis for every endpoint (~0.5 s here).
+    Production builds one app, but the test suite builds one per test, so each app gets a fresh
+    copy of this (immutable) route list instead -- its own app, middleware and state as before.
+    """
+    table = APIRouter()
+    table.include_router(api_router())
+    table.include_router(seo_router)  # root-level crawler HTML, sitemap, robots (ADR-024)
+    return table
+
+
 def create_app(res: Resources | None = None, *, background: bool = True) -> FastAPI:
     """``res`` given: resources are shared/owned by the caller (serve.py, tests)."""
     settings = res.settings if res is not None else get_settings()
@@ -196,8 +211,7 @@ def create_app(res: Resources | None = None, *, background: bool = True) -> Fast
     )
     app.state.res = res
     install_error_handlers(app)
-    app.include_router(api_router())
-    app.include_router(seo_router)  # root-level crawler HTML, sitemap, robots (ADR-024)
+    app.router.routes.extend(_route_table().routes)  # a per-app list: later includes stay local
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:

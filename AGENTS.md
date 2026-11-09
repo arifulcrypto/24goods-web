@@ -44,7 +44,9 @@ docs/               analysis, review-v2 (current decisions), architecture, api-c
 
 ## 3. Validation commands (run before every commit)
 
-Shortcut on a dev machine: `scripts/dev.sh test` (ruff + pytest against the dev containers + frontend lint/typecheck/test). Dev stack: [`docs/dev-setup.md`](docs/dev-setup.md).
+Shortcut on a dev machine: `scripts/dev.sh check` (inner loop: ruff on changed files, only the
+tests that touch changed modules, typecheck/vitest for the touched app) or `scripts/dev.sh test`
+(ruff + full pytest against the dev containers + frontend lint/typecheck/test). Dev stack: [`docs/dev-setup.md`](docs/dev-setup.md).
 
 ```bash
 # backend — needs PG + Redis (throwaway containers are fine)
@@ -96,8 +98,9 @@ CI runs all of the above plus Semgrep, gitleaks, Trivy, and (when `ENABLE_CODEQL
 The full backend suite peaks at ~1 GB RSS and takes 7–8 min when the box swaps. Rules:
 
 1. **Full test suite runs in GitHub CI, not locally.** Push the branch / open the PR and let CI
-   (backend, frontend, E2E) be the gate. Locally run only the test files you touched:
-   `pytest -q tests/test_x.py` (+ `ruff`), and frontend checks only for the app you changed.
+   (backend, frontend, E2E) be the gate. Locally run only what you touched:
+   `scripts/dev.sh check` (or `pytest -q tests/test_x.py` + `ruff` by hand). CI skips the
+   backend/frontend/image jobs a PR does not touch (docs-only PRs finish in ~1 min).
 2. **At most 2 agents at a time** (normally 1 implementer + the orchestrator). Reviews
    (security-reviewer, payment-auditor) are read-only and may run while no tests are running.
 3. **Heavy finite commands only under the lock:** `flock .dev/heavy.lock <cmd>` for pytest,
