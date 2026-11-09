@@ -128,20 +128,21 @@ the other volumes (it only holds addresses, settings and trade history, no priva
 
 c4's route into mainland China loses packets in both directions (measured against Xiaodou and a
 Tencent Cloud Guangzhou VPS at the same moments; the same targets are fine from other networks).
-Outbound TCP to Xiaodou's API therefore goes through a relay on the dev/demo box:
+The ZPay client therefore has a fallback path (`backend/app/payments/egress.py`):
 
-- dev box: `kesiv-xiaodou-relay.service` (socat, port 20443, accepts c4's IPv4 only via `range=`
-  plus a ufw rule) -> `pay.xiaodouap.cn:443`. TLS is end to end between the c4 app and Xiaodou;
-  the relay only forwards encrypted bytes. The dev box IP is on Xiaodou's merchant whitelist.
-- c4: `/usr/local/sbin/kesiv-xiaodou-route.sh` DNATs Xiaodou's API IPs (port 443; nat OUTPUT +
-  PREROUTING, so host and containers) to the relay. The IPs are resolved from `pay.xiaodouap.cn`
-  on every run: `kesiv-xiaodou-route.service` syncs at boot and `kesiv-xiaodou-route-sync.timer`
-  every 5 minutes (adds new IPs, removes stale ones, keeps the rules if DNS fails; changes are
-  logged with `journalctl -t kesiv-xiaodou-relay`). `kesiv-xiaodou-route.sh status|sync|del`.
+- **Sticky route, per gateway host:** the path that worked last goes first; the other is tried
+  only when its connection cannot be opened (never after a request may have been sent, so no
+  duplicate create/query). Direct (from c4) is the default; a failure moves the preference to the
+  relay and only a relay failure moves it back. The last working IP is remembered; when every path
+  fails, the domain is resolved again and direct retried once (moved load balancer).
+- **Config (c4 `deploy/env/api.env`, not in git):** `APP_ZPAY_RELAYS=pay.xiaodouap.cn=107.173.10.79:20443`.
+  Empty = direct only.
+- **Relay (dev box):** `kesiv-xiaodou-relay.service` (socat :20443, accepts c4's IPv4 only via
+  `range=` + ufw) dials `pay.xiaodouap.cn:443` by name. TLS is end to end between the app and
+  Xiaodou; the relay forwards ciphertext. The dev box IP is on Xiaodou's merchant whitelist.
 - Buyers never use the relay: their browsers open Xiaodou's pay page directly.
-- Check: Admin -> Settings -> Payment -> Test now (expects `-1 订单不存在` for the random probe),
-  or `curl -sS -o /dev/null -w '%{http_code} %{time_total}\n' https://pay.xiaodouap.cn/api.php` on c4.
-- Remove when c4 moves to a host with good China routing, or when the route recovers.
+- Check: Admin -> Settings -> Payment -> Test now (expects `-1 订单不存在` for the random probe).
+- Removal: clear `APP_ZPAY_RELAYS`, redeploy the api, stop the relay service.
 
 ## SEO and Google Search Console (review-v5.2 §6, ADR-024)
 
