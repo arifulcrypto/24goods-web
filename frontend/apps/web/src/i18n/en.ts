@@ -177,6 +177,9 @@ export default {
     cancelledHint: 'This order was cancelled.',
     expiredHint: 'This order expired before payment.',
     refundedHint: 'This order was refunded.',
+    refundedTo: 'Refunded to the original payment method · ref {ref}',
+    notReceived: 'Not received yet? Tell us',
+    notReceivedWait: 'You can report a missing delivery after {time}.',
     channels: {
       zpay_alipay: 'Alipay',
       usdt_arbitrum: 'USDT (Arbitrum One)',
@@ -412,6 +415,7 @@ export default {
     balAvailable: 'Available',
     balPending: 'Pending',
     balPaid: 'Paid out',
+    balDisputed: 'Held (open disputes)',
     today: 'Today',
     week: 'Last 7 days',
     ordersN: '{n} orders',

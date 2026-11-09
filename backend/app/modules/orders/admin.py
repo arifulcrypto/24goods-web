@@ -11,19 +11,25 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import audit
 from app.core.deps import Page
-from app.core.errors import InvalidState, NotFound, Validation
+from app.core.errors import InvalidState, NotFound, OutOfStock, Validation
 from app.core.money import MoneyError, fmt, parse_amount
 from app.core.resources import Resources
 from app.core.settings_v5 import section
-from app.models import Attachment, Checkout, Message, Order, OrderEvent, Product, User
+from app.models import Attachment, Checkout, Message, Order, OrderEvent, Outbox, Product, User
+from app.modules.aftersales import service as aftersales_svc
 from app.modules.catalog.service import escape_like
 from app.modules.chat.messages import post_system
-from app.modules.common.sitedefaults import delivery_deadlines
+from app.modules.common.sitedefaults import delivery_deadlines, order_terms
 from app.modules.common.views import iso
 from app.modules.content.site import tenant_settings
 from app.modules.orders import cancel as cancel_svc
 from app.modules.orders.events import add_event, snapshot
-from app.modules.orders.service import order_views
+from app.modules.orders.service import (
+    available_stock,
+    lock_manual_products,
+    order_views,
+    reserved_auto_stock,
+)
 from app.modules.payments.channels import split_amount
 from app.modules.payments.settle import payment_for_order
 from app.modules.promo import service as promo_svc
@@ -153,11 +159,12 @@ async def deliver_manual(
     before = snapshot(order)
     now = datetime.now(timezone.utc)
     product = await db.get(Product, order.product_id) if order.product_id else None
+    t_hours, t_months = order_terms(order, product)
     until, confirm_at = delivery_deadlines(
         now,
         mode=order.delivery_mode,
-        product_hours=product.after_sales_hours if product else None,
-        product_months=product.after_sales_months if product else None,
+        product_hours=t_hours,
+        product_months=t_months,
         tenant_settings=await tenant_settings(db, order.tenant_id),
     )
     order.status = "delivered"
@@ -187,6 +194,102 @@ async def deliver_manual(
         event="delivered",
         order_id=str(order.id),
         delivered_at=iso(order.delivered_at),
+    )
+    await db.commit()
+    return order, msg
+
+
+async def requeue_delivery(
+    db: AsyncSession, order_id: uuid.UUID, agent: User, ip: str | None
+) -> tuple[Order, Message | None]:
+    """v8 A.2: put a held (out-of-stock) auto-card order back on the delivery queue once cards
+    exist again. Never infers payment from the status: a succeeded payment covering the
+    order and its booked ledger entry are re-checked here; the delivery worker then runs the
+    normal path (it locks the order and re-claims cards)."""
+    order = await lock_order(db, order_id, agent.tenant_id)
+    if order.kind != "goods" or order.delivery_mode != "auto_card":
+        raise InvalidState("Only auto-delivery goods orders can be requeued")
+    if order.status != "manual_review":
+        raise InvalidState("Only an order held for review can be requeued")
+    pay = await payment_for_order(db, order)
+    if (
+        pay is None
+        or pay.status != "succeeded"
+        or pay.currency != order.currency
+        or pay.amount_minor < order.amount_minor
+        or order.paid_at is None
+        or not await aftersales_svc._has_open_ledger(db, order)
+    ):
+        raise InvalidState("A verified payment covering this order is required")
+    if order.product_id is None:
+        raise InvalidState("The order has no product to deliver")
+    await lock_manual_products(db, order.tenant_id, [order.product_id])
+    free = await available_stock(db, order.product_id) - await reserved_auto_stock(
+        db, order.tenant_id, order.product_id
+    )
+    if free < order.qty:
+        raise OutOfStock("Not enough stock to deliver this order yet")
+    before = snapshot(order)
+    order.status = "paid"
+    order.version += 1
+    await add_event(
+        db, order, "manual_review", "paid", actor_id=agent.id, reason="delivery_requeued"
+    )
+    db.add(
+        Outbox(
+            tenant_id=order.tenant_id,
+            topic="order.paid",
+            key=f"{order.id}:requeue:{order.version}",  # one event per requeue, never twice
+            payload={"order_id": str(order.id), "tenant_id": str(order.tenant_id)},
+        )
+    )
+    await audit(
+        db,
+        tenant_id=order.tenant_id,
+        action="order.delivery_requeued",
+        actor_id=agent.id,
+        actor_role=agent.role,
+        target=f"order:{order.id}",
+        before=before,
+        after=snapshot(order),
+        ip=ip,
+        detail={"payment_id": str(pay.id)},
+        severity="warning",
+    )
+    msg = await post_system(
+        db,
+        tenant_id=order.tenant_id,
+        conversation_id=order.conversation_id,
+        event="delivery_requeued",
+        order_id=str(order.id),
+    )
+    await db.commit()
+    return order, msg
+
+
+async def refund_undelivered(
+    db: AsyncSession,
+    order_id: uuid.UUID,
+    reference: str,
+    note: str | None,
+    agent: User,
+    ip: str | None,
+) -> tuple[Order, Message | None]:
+    """v8 A.3: refund a paid-but-undelivered goods order (admin only, see the router). Same
+    routine and reference rule as after-sales refunds."""
+    ref = aftersales_svc.clean_reference(reference)
+    order = await lock_order(db, order_id, agent.tenant_id)
+    if order.kind != "goods" or order.status not in aftersales_svc.UNDELIVERED:
+        raise InvalidState("Only a paid, undelivered order can be refunded here")
+    await aftersales_svc.refund_order(db, order, agent, ip, ref, note, source="admin")
+    msg = await post_system(
+        db,
+        tenant_id=order.tenant_id,
+        conversation_id=order.conversation_id,
+        event="order_refunded",
+        order_id=str(order.id),
+        reference=ref,
+        note=(note or "").strip() or None,
     )
     await db.commit()
     return order, msg

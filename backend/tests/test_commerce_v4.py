@@ -140,7 +140,8 @@ async def test_fee_ledger_and_refund_reversal_balance(env):
     )
     assert t.status_code == 200, t.text
     r = await admin.post(
-        f"/api/v1/admin/after-sales/{t.json()['id']}/action", json={"action": "refund"}
+        f"/api/v1/admin/after-sales/{t.json()['id']}/action",
+        json={"action": "refund", "reference": "REF-TEST-1"},
     )
     assert r.status_code == 200
     assert (

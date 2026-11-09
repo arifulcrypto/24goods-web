@@ -34,6 +34,7 @@ from app.modules.admin.schemas import (
     ProductPatch,
     ReplyTemplateIn,
 )
+from app.modules.aftersales.schemas import RefundIn
 from app.modules.catalog.service import support_status
 from app.modules.chat import quotes as quote_svc
 from app.modules.chat import service as chat
@@ -322,6 +323,33 @@ async def deliver(
 ) -> dict:
     order, msg = await order_admin.deliver_manual(
         db, order_id, body.text, body.attachment_id, staff, client_ip(request)
+    )
+    return await _order_reply(res, db, order, msg)
+
+
+@router.post("/orders/{order_id}/requeue-delivery")
+async def requeue_delivery(
+    order_id: uuid.UUID,
+    request: Request,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+    res: Resources = Depends(get_res),
+) -> dict:
+    order, msg = await order_admin.requeue_delivery(db, order_id, admin, client_ip(request))
+    return await _order_reply(res, db, order, msg)
+
+
+@router.post("/orders/{order_id}/refund")
+async def refund_order(
+    order_id: uuid.UUID,
+    body: RefundIn,
+    request: Request,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+    res: Resources = Depends(get_res),
+) -> dict:
+    order, msg = await order_admin.refund_undelivered(
+        db, order_id, body.reference, body.note, admin, client_ip(request)
     )
     return await _order_reply(res, db, order, msg)
 

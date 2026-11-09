@@ -27,5 +27,23 @@ class ActionIn(BaseModel):
     action: Literal["processing", "replace", "refund", "reject", "resolve"]
     note: str | None = Field(None, max_length=2000)
     delivery_text: str | None = Field(None, max_length=5000)
+    # refund: the staff's confirmation that the money was sent back (provider refund id,
+    # transaction hash or transfer note); required for action=refund (checked in the service)
+    reference: str | None = Field(None, max_length=200)
     # auto_card replace: which delivered cards to void and replace (default: all of the order)
     card_ids: list[uuid.UUID] | None = Field(None, max_length=100)
+
+
+class RefundIn(BaseModel):
+    """Staff confirmation that the money was returned (v8 B)."""
+
+    reference: str = Field(min_length=3, max_length=200)
+    note: str | None = Field(None, max_length=2000)
+
+    @field_validator("reference")
+    @classmethod
+    def _r(cls, v: str) -> str:
+        v = v.strip()
+        if not 3 <= len(v) <= 200:
+            raise ValueError("reference must be 3-200 characters")
+        return v

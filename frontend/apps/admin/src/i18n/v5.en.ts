@@ -515,6 +515,7 @@ export default {
     done: "Payout updated",
     requestedAt: "Requested",
     paidHint: "Transfer the money first, then confirm. This books the ledger entry.",
+    disputed: "Held back by open after-sales tickets: {amount}. It is not part of what this store can withdraw until the tickets close.",
     status: {
       requested: "Requested",
       paid: "Paid",

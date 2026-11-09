@@ -23,11 +23,13 @@ import {
 import { api, apiV4 } from '../api'
 import type { AdminOrderDetailV4 as AdminOrderDetailBase, SiblingOrder } from '../api-v4'
 import type { OrderV5Fields } from '../api-v5'
+import { isValidRefundReference } from '../lib/afterSales'
+import { useAuthStore } from '../stores/auth'
 import { marginMinor, minorToYuan, yuanToMinor } from '../lib/money'
 import CloseOrderDialog from './CloseOrderDialog.vue'
 import { buildBuyerTemplate, clockTime, htmlToText } from '../lib/orderText'
 import OrderStatusTag from './OrderStatusTag.vue'
-import { toastError, toastOk } from '../ui'
+import { confirmBox, toastError, toastOk } from '../ui'
 
 type AdminOrderDetail = AdminOrderDetailBase & Partial<OrderV5Fields>
 const props = defineProps<{ orderId: string | null }>()
@@ -271,6 +273,53 @@ async function copyInput() {
   if (v) toastCopy(await copyText(v))
 }
 
+// ---- v8: requeue a held auto-card order / refund before delivery (admin only) ----
+const auth = useAuthStore()
+const canRequeue = computed(() => auth.isAdmin && order.value?.status === 'manual_review' && order.value.delivery_mode === 'auto_card')
+const canRefund = computed(() => auth.isAdmin && (order.value?.status === 'paid' || order.value?.status === 'manual_review') && order.value.kind !== 'reseller_signup')
+const requeueBusy = ref(false)
+async function requeue() {
+  const o = order.value
+  if (!o || requeueBusy.value) return
+  if (!(await confirmBox(t('orders.requeueConfirm'), t('orders.requeue')))) return
+  requeueBusy.value = true
+  try {
+    applyUpdate(await apiV4.orders.requeueDelivery(o.id))
+    toastOk(t('orders.requeued'))
+  } catch (e) {
+    toastError(e)
+  } finally {
+    requeueBusy.value = false
+  }
+}
+const refundDlg = ref(false)
+const refund = reactive({ reference: '', note: '', busy: false, error: '' })
+function openRefund() {
+  refund.reference = ''
+  refund.note = ''
+  refund.error = ''
+  refundDlg.value = true
+}
+async function submitRefund() {
+  const o = order.value
+  if (!o || refund.busy) return
+  if (!isValidRefundReference(refund.reference)) {
+    refund.error = t('afterSales.v.referenceRequired')
+    return
+  }
+  if (!(await confirmBox(t('orders.refundConfirm'), t('orders.refund')))) return
+  refund.busy = true
+  try {
+    applyUpdate(await apiV4.orders.refund(o.id, { reference: refund.reference.trim(), note: refund.note.trim() || undefined }))
+    toastOk(t('orders.refunded'))
+    refundDlg.value = false
+  } catch (e) {
+    toastError(e)
+  } finally {
+    refund.busy = false
+  }
+}
+
 const canChangePrice = computed(() => order.value?.status === 'pending_payment')
 const canClose = computed(() => order.value?.status === 'pending_payment')
 const canDeliver = computed(() => order.value?.status === 'paid' && order.value.delivery_mode === 'manual')
@@ -294,6 +343,8 @@ defineExpose({ reload: () => props.orderId && load(props.orderId) })
         <div class="actions">
           <el-button v-if="canChangePrice" type="primary" plain @click="openPrice">{{ t('orders.changePrice') }}</el-button>
           <el-button v-if="canDeliver" type="success" @click="openDeliver">{{ t('orders.deliver') }}</el-button>
+          <el-button v-if="canRequeue" type="warning" plain :loading="requeueBusy" @click="requeue">{{ t('orders.requeue') }}</el-button>
+          <el-button v-if="canRefund" type="danger" plain @click="openRefund">{{ t('orders.refund') }}</el-button>
           <el-button v-if="canClose" type="danger" plain @click="closeDlg = true">{{ t('orders.close') }}</el-button>
         </div>
 
@@ -317,6 +368,7 @@ defineExpose({ reload: () => props.orderId && load(props.orderId) })
             <span class="mono small">{{ order.checkout_no }}</span>
             <div v-for="s in siblings" :key="s.id" class="small"><span class="mono">{{ s.order_no }}</span> · {{ s.title }} · {{ money(s.amount) }} · {{ t(`orderStatus.${s.status}`) }}</div>
           </el-descriptions-item>
+          <el-descriptions-item v-if="order.refund_reference" :label="t('orders.info.refundReference')"><span class="pre mono">{{ order.refund_reference }}</span></el-descriptions-item>
           <el-descriptions-item v-if="order.cancel_reason" :label="t('orders.info.cancelReason')"><span class="pre">{{ order.cancel_reason }}</span></el-descriptions-item>
           <el-descriptions-item v-if="order.buyer_input" :label="t('orders.info.buyerInput')">
             <p class="pre mono">{{ order.buyer_input }}</p>
@@ -430,6 +482,23 @@ defineExpose({ reload: () => props.orderId && load(props.orderId) })
       </template>
     </el-dialog>
 
+    <el-dialog v-model="refundDlg" :title="t('orders.refund')" width="min(460px, 94vw)" append-to-body>
+      <el-alert type="warning" :closable="false" show-icon :title="t('orders.refundHint')" class="gap" />
+      <el-form label-position="top" @submit.prevent="submitRefund">
+        <el-form-item :label="t('afterSales.refundReference')" :error="refund.error">
+          <el-input v-model="refund.reference" maxlength="200" show-word-limit :placeholder="t('afterSales.refundReferenceHint')" />
+          <div class="small muted hint">{{ t('afterSales.refundReferenceVisible') }}</div>
+        </el-form-item>
+        <el-form-item :label="t('afterSales.note')">
+          <el-input v-model="refund.note" type="textarea" :rows="2" maxlength="500" show-word-limit />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="refundDlg = false">{{ t('common.cancel') }}</el-button>
+        <el-button type="danger" :loading="refund.busy" @click="submitRefund">{{ t('afterSales.refundConfirmBtn') }}</el-button>
+      </template>
+    </el-dialog>
+
     <CloseOrderDialog v-model="closeDlg" :order-id="order?.id ?? null" :checkout-no="order?.checkout_no" @closed="onClosed" />
   </el-drawer>
 </template>
@@ -487,6 +556,9 @@ defineExpose({ reload: () => props.orderId && load(props.orderId) })
   gap: 8px;
   flex-wrap: wrap;
   margin-top: 8px;
+}
+.gap {
+  margin-bottom: 12px;
 }
 .att {
   width: 96px;

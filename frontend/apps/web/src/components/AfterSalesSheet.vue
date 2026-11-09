@@ -14,7 +14,7 @@ import { api } from '../api'
 import { showSuccessToast, showToast, toastError } from '../ui'
 
 const MAX_IMAGES = 4
-const props = defineProps<{ show: boolean; orderId: string }>()
+const props = defineProps<{ show: boolean; orderId: string; fixedReason?: AfterSalesReason }>()
 const emit = defineEmits<{ 'update:show': [v: boolean]; created: [t: AfterSales] }>()
 const { t } = useI18n()
 
@@ -30,7 +30,7 @@ watch(
   () => props.show,
   (v) => {
     if (v) {
-      reason.value = 'invalid_code'
+      reason.value = props.fixedReason ?? 'invalid_code'
       description.value = ''
       images.value = []
     }
@@ -93,7 +93,7 @@ async function submit() {
   <van-popup :show="show" position="bottom" round closeable safe-area-inset-bottom teleport="body" class="buy-sheet" @update:show="emit('update:show', $event)">
     <form class="as" @submit.prevent="submit">
       <h2>{{ t('afterSales.title') }}</h2>
-      <fieldset class="reasons">
+      <fieldset v-if="!fixedReason" class="reasons">
         <legend class="sr-only">{{ t('afterSales.reason') }}</legend>
         <label v-for="r in AFTER_SALES_REASONS" :key="r" class="reason" :class="{ on: reason === r }">
           <input v-model="reason" type="radio" name="reason" :value="r" />

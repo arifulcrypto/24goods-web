@@ -177,6 +177,9 @@ const zhCN: WebMessages = {
     cancelledHint: '该订单已取消。',
     expiredHint: '该订单因超时未付款已过期。',
     refundedHint: '该订单已退款。',
+    refundedTo: '已退回原支付方式 · 凭证 {ref}',
+    notReceived: '还没收到？告诉我们',
+    notReceivedWait: '{time} 之后可反馈未收到货。',
     channels: {
       zpay_alipay: '支付宝',
       usdt_arbitrum: 'USDT（Arbitrum One）',
@@ -412,6 +415,7 @@ const zhCN: WebMessages = {
     balAvailable: '可提现',
     balPending: '待结算',
     balPaid: '已提现',
+    balDisputed: '冻结（售后中）',
     today: '今日',
     week: '近 7 天',
     ordersN: '{n} 单',

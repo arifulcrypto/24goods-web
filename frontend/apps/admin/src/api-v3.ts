@@ -118,6 +118,8 @@ export interface AfterSalesActionBody {
   action: TicketAction
   note?: string
   delivery_text?: string
+  /** refund: how the money was returned (provider refund id, tx hash, transfer note); 3-200 chars */
+  reference?: string
 }
 
 // ---------------- orders (§6, §7) ----------------

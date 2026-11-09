@@ -124,7 +124,8 @@ async def test_refund_of_one_member_reverses_only_its_lines(env, gw):
     )
     assert t.status_code == 200, t.text
     r = await admin.post(
-        f"/api/v1/admin/after-sales/{t.json()['id']}/action", json={"action": "refund"}
+        f"/api/v1/admin/after-sales/{t.json()['id']}/action",
+        json={"action": "refund", "reference": "REF-TEST-1"},
     )
     assert r.status_code == 200
     sums = {

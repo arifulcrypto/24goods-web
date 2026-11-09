@@ -54,6 +54,7 @@ class ServiceEntitlement(Base):
     version: Mapped[int] = mapped_column(Integer, default=1)
     email_reminders: Mapped[bool] = mapped_column(default=False)
     telegram_reminders: Mapped[bool] = mapped_column(default=False)
+    source_reversed_at: Mapped[datetime | None]  # v8 C: source order's periods taken back
     created_at: Mapped[datetime] = created_at()
     updated_at: Mapped[datetime] = updated_at()
 
@@ -69,6 +70,7 @@ class ServiceRenewal(Base):
     period_version: Mapped[int] = mapped_column(Integer)
     starts_at: Mapped[datetime]
     ends_at: Mapped[datetime]
+    reversed_at: Mapped[datetime | None]  # v8 C: this renewal's periods taken back (refund)
     created_at: Mapped[datetime] = created_at()
 
 

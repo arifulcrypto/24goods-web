@@ -10,7 +10,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.money import fmt
 from app.core.settings_v5 import section
-from app.models import AfterSales, Attachment, Checkout, Order, Product, PromoCode, Reseller
+from app.models import (
+    AfterSales,
+    Attachment,
+    Checkout,
+    Order,
+    OrderEvent,
+    Product,
+    PromoCode,
+    Reseller,
+)
 from app.modules.common.views import after_sales_view, order_view
 from app.modules.content.site import tenant_settings
 from app.modules.payments.channels import totals_by_channel
@@ -50,6 +59,30 @@ async def latest_tickets(db: AsyncSession, order_ids: list[uuid.UUID]) -> dict[u
     return {
         oid: after_sales_view(t, [atts[a] for a in t.attachment_ids if a in atts])
         for oid, t in latest.items()
+    }
+
+
+REFUND_PREFIX = "refund sent - ref "
+
+
+async def refund_references(db: AsyncSession, orders: list[Order]) -> dict[uuid.UUID, str]:
+    """order id -> the reference staff entered when confirming the money was sent back
+    (latest ``refunded`` event; legacy refunds have none)."""
+    if not orders:
+        return {}
+    rows = await db.execute(
+        select(OrderEvent.order_id, OrderEvent.reason)
+        .where(
+            OrderEvent.order_id.in_([o.id for o in orders]),
+            OrderEvent.tenant_id.in_({o.tenant_id for o in orders}),
+            OrderEvent.to_status == "refunded",
+        )
+        .order_by(OrderEvent.id)
+    )
+    return {
+        oid: reason[len(REFUND_PREFIX) :]
+        for oid, reason in rows.all()
+        if reason and reason.startswith(REFUND_PREFIX)
     }
 
 
@@ -122,9 +155,11 @@ async def order_views(
     for o in orders:
         if o.status == "pending_payment" and o.tenant_id not in ts_by_tenant:
             ts_by_tenant[o.tenant_id] = await tenant_settings(db, o.tenant_id)
+    refunds = await refund_references(db, [o for o in orders if o.status == "refunded"])
     return [
         order_view(
             o,
+            refund_reference=refunds.get(o.id),
             channel_totals=channel_totals_view(
                 totals_by_channel(ts_by_tenant[o.tenant_id], [(o.subtotal_minor, o.discount_minor)])
             )

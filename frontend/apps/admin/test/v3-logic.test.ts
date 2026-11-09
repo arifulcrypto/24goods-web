@@ -9,7 +9,7 @@ import {
   splitCard,
 } from '../src/lib/delivery'
 import { createSeenSet, createThrottle, isRelevant, titleWithCount } from '../src/lib/notifyPolicy'
-import { availableActions, isOpenStatus, needsConfirm, validateAction } from '../src/lib/afterSales'
+import { availableActions, isOpenStatus, isValidRefundReference, needsConfirm, validateAction } from '../src/lib/afterSales'
 import { buildCardQuery, canVoid, cleanLines, countLines, emptyCardFilters } from '../src/lib/cards'
 
 describe('delivery format split preview', () => {
@@ -119,6 +119,10 @@ describe('after-sales action availability', () => {
     expect(validateAction('reject', { note: 'dup' }, 'manual')).toBeNull()
     expect(validateAction('replace', {}, 'manual')).toBe('afterSales.v.deliveryRequired')
     expect(validateAction('replace', {}, 'auto_card')).toBeNull()
+    expect(validateAction('refund', {}, 'manual')).toBe('afterSales.v.referenceRequired')
+    expect(validateAction('refund', { reference: ' ab ' }, 'manual')).toBe('afterSales.v.referenceRequired')
+    expect(validateAction('refund', { reference: 'TXN-1' }, 'manual')).toBeNull()
+    expect(isValidRefundReference('x'.repeat(201))).toBe(false)
     expect(needsConfirm('refund')).toBe(true)
     expect(needsConfirm('resolve')).toBe(false)
   })

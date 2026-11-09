@@ -105,3 +105,15 @@ def delivery_deadlines(
     else:
         until = now + timedelta(hours=value) if value > 0 else None
     return until, now + timedelta(hours=auto_confirm_hours(tenant_settings, mode))
+
+
+def order_terms(order: Any, product: Any) -> tuple[int | None, int | None]:
+    """``(after_sales_hours, after_sales_months)`` an order was sold under: the purchase
+    snapshot (``orders.terms``, v8 F) when present, the product's current values for legacy
+    orders. ``None`` values mean "tenant default at delivery"."""
+    t = getattr(order, "terms", None)
+    if isinstance(t, dict):
+        return t.get("after_sales_hours"), t.get("after_sales_months")
+    if product is None:
+        return None, None
+    return product.after_sales_hours, product.after_sales_months

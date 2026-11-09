@@ -26,6 +26,15 @@ match, 40 tables); rollback images `:rollback-a8160cb`. **Cloudflare Redirect Ru
 (301). HTTP->HTTPS lives at Cloudflare, so the origin's `http_redirect` from #53 was reverted
 (a plaintext hit on :8088 fails again, as `prod.sh smoke` expects).
 
+**Integrity v8 (2026-11-09, `fix/integrity-v8`, spec `docs/review-v8-integrity.md`, issue #59 A-D/F/G):**
+auto-card stock is reserved per order (no oversell of the last card), admins can requeue a held
+order or refund a paid-undelivered one, buyers can report `not_received` after the delivery ETA;
+every refund needs a reference (the staff confirm the money went back) shown on the order;
+subscription refunds take back only the refunded periods; open after-sales tickets hold reseller
+markup (`disputed_minor`); `orders.terms` snapshots purchase terms; manual stock release returns
+only what was reserved (`orders.stock_reserved`). Migration `0015_order_integrity` (additive).
+Not built: provider refund APIs (#55), vaulting manual delivery text (#59 E / #8).
+
 **Subscriptions v7 (2026-11-09, `feat/subscriptions`, spec `docs/review-v7-subscriptions.md`):**
 products can be marked as subscriptions (`products.subscription`); after-sales defaults to one
 calendar month (`products.after_sales_months`, tenant `after_sales_default {unit,value}`; legacy hours
@@ -33,8 +42,7 @@ still honoured); job `sync_subscriptions` turns delivered subscription orders in
 renewed, audited as `system`); Services page shows order no./product/buyer/source/days left,
 renewal candidates and a date picker instead of pasted UUIDs; buyers see their service period on
 the order. Migration `0014_subscriptions` (additive). Not built: buyer self-service renew, recurring
-charge. Follow-up (security review): a refunded *renewal* order does not yet shorten the
-service — staff adjust the due date by hand; with two open services for one buyer+product the job
+charge. Follow-up: (refunded renewals now shorten the service, see Integrity v8); with two open services for one buyer+product the job
 skips the order and logs it for staff.
 
 **Policy pages v2 + help center (2026-11-09, `docs/legal-help-sg`):** Terms / Privacy /

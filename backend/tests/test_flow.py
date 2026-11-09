@@ -185,23 +185,22 @@ async def test_buy_now_checks_stock(env):
 
 
 async def test_paid_but_out_of_stock_goes_to_manual_review(env):
+    # v8: the last card is reserved at order creation, so a second buyer is refused up front;
+    # an order only ends up held when the stock disappears AFTER payment (e.g. cards voided)
     product = await env.product(mode="auto_card")
     await env.import_codes(product, ["ONLY-ONE-CODE"])
     b1, _ = await env.login("buyer")
     b2, _ = await env.login("buyer")
-    orders = []
-    for b in (b1, b2):
-        o = (await b.post("/api/v1/orders", json={"product_id": str(product.id), "qty": 1})).json()
-        url = (
-            await b.post(f"/api/v1/orders/{o['id']}/pay", json={"channel": "zpay_alipay"})
-        ).json()
-        await simulate_gateway_payment(env, url["pay_url"])
-        orders.append((b, o))
-    assert await env.drain() == 2
-    statuses = sorted(
-        [(await b.get(f"/api/v1/orders/{o['id']}")).json()["status"] for b, o in orders]
-    )
-    assert statuses == ["delivered", "manual_review"]
+    o = (await b1.post("/api/v1/orders", json={"product_id": str(product.id), "qty": 1})).json()
+    r = await b2.post("/api/v1/orders", json={"product_id": str(product.id), "qty": 1})
+    assert r.status_code == 409 and r.json()["error"]["code"] == "out_of_stock"
+    url = (await b1.post(f"/api/v1/orders/{o['id']}/pay", json={"channel": "zpay_alipay"})).json()
+    await simulate_gateway_payment(env, url["pay_url"])
+    async with env.owner_session() as db:
+        await db.execute(text("UPDATE card_stock SET status='void'"))
+        await db.commit()
+    assert await env.drain() == 1
+    assert (await b1.get(f"/api/v1/orders/{o['id']}")).json()["status"] == "manual_review"
     assert (
         await env.scalar("SELECT count(*) FROM audit_log WHERE action='delivery.out_of_stock'") == 1
     )

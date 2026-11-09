@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import and_, case, func, or_, select
+from sqlalchemy import and_, case, exists, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,6 +30,7 @@ from app.core.resources import Resources
 from app.core.security import STAFF_ROLES
 from app.core.settings_v5 import section
 from app.models import (
+    AfterSales,
     Order,
     Product,
     Reseller,
@@ -66,15 +67,24 @@ async def balances(
     ``settle_after_hours``; ``available`` = markup of completed orders older than that, minus
     payouts requested or paid (never below 0: a refund after payout is a clawback on the
     ledger, not a negative withdrawable). Refunded / cancelled / manual_review orders count
-    for nothing."""
+    for nothing. v8 D: markup of an order with an open after-sales ticket (open/processing) is
+    held back in ``disputed`` until the ticket closes (a refund then removes it for good), for
+    the request and the approval alike (both call this; no new locks: the payout/reseller row
+    lock order is unchanged, the ticket rows are only read)."""
     cutoff = _now() - timedelta(hours=rcfg["settle_after_hours"])
     mk = Order.reseller_markup_minor
-    pending, ready = (
+    in_dispute = exists().where(
+        AfterSales.order_id == Order.id,
+        AfterSales.tenant_id == r.tenant_id,
+        AfterSales.status.in_(("open", "processing")),
+    )
+    pending, ready, disputed = (
         await db.execute(
             select(
                 func.coalesce(
                     func.sum(
                         case(
+                            (in_dispute, 0),
                             (Order.status.in_(("paid", "delivered")), mk),
                             (and_(Order.status == "completed", Order.completed_at > cutoff), mk),
                             else_=0,
@@ -85,7 +95,22 @@ async def balances(
                 func.coalesce(
                     func.sum(
                         case(
+                            (in_dispute, 0),
                             (and_(Order.status == "completed", Order.completed_at <= cutoff), mk),
+                            else_=0,
+                        )
+                    ),
+                    0,
+                ),
+                func.coalesce(
+                    func.sum(
+                        case(
+                            (
+                                and_(
+                                    in_dispute, Order.status.in_(("paid", "delivered", "completed"))
+                                ),
+                                mk,
+                            ),
                             else_=0,
                         )
                     ),
@@ -117,6 +142,7 @@ async def balances(
         "pending_minor": int(pending),
         "available_minor": avail if raw else max(0, avail),
         "paid_minor": paid,
+        "disputed_minor": int(disputed),
     }
 
 
@@ -889,6 +915,16 @@ async def admin_payouts(
             "slug": r.slug if r else "",
             "store_name": r.store_name if r else "",
         }
+        # v8 D: markup held back by open after-sales tickets, shown in the decision dialog
+        v["disputed_minor"] = (
+            (
+                await balances(
+                    db, r, section(await tenant_settings(db, admin.tenant_id), "resellers")
+                )
+            )["disputed_minor"]
+            if r is not None and p.status == "requested"
+            else 0
+        )
         items.append(v)
     return page.wrap(items, int(total))
 

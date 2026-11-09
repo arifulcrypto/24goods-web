@@ -274,6 +274,8 @@ const zhCN: MessageSchema = {
       agent_left: '{name} 离开了会话',
       quote_withdrawn: '一个报价已被撤回',
       quote_accepted: '报价已被接受',
+      order_refunded: '订单已退款',
+      delivery_requeued: '已恢复发货',
       order_cancelled: '订单已取消',
       conversation_closed: '会话已关闭',
       conversation_reopened: '会话已重新打开',

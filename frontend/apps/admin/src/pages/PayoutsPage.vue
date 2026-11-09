@@ -88,6 +88,7 @@ async function submit() {
     <el-dialog v-model="dlg" :title="action === 'paid' ? t('v5.payouts.markPaid') : t('v5.payouts.reject')" width="min(440px, 96vw)">
       <p v-if="target">{{ target.store_name }} · <strong>¥{{ minorToYuan(target.amount_minor) }}</strong></p>
       <el-alert v-if="action === 'paid'" type="info" :closable="false" :title="t('v5.payouts.paidHint')" class="gap" />
+      <el-alert v-if="target?.disputed_minor" type="warning" :closable="false" show-icon :title="t('v5.payouts.disputed', { amount: '¥' + minorToYuan(target.disputed_minor) })" class="gap" />
       <el-form-item :label="t('v5.payouts.note')" :error="err">
         <el-input v-model="note" type="textarea" :rows="3" maxlength="200" show-word-limit :placeholder="action === 'paid' ? t('v5.payouts.notePaid') : t('v5.payouts.noteReject')" />
       </el-form-item>

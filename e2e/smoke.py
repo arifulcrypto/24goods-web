@@ -364,7 +364,7 @@ def v3_instant_and_after_sales(
     rt = inst.j("POST", f"orders/{ro['id']}/after-sales",
                 json={"reason": "wrong_item", "description": "Wrong item delivered", "attachment_ids": []})
     agent.req("POST", f"admin/after-sales/{rt['id']}/action", expect=403, json={"action": "refund"})
-    done = admin.j("POST", f"admin/after-sales/{rt['id']}/action", json={"action": "refund", "note": "refunded"})
+    done = admin.j("POST", f"admin/after-sales/{rt['id']}/action", json={"action": "refund", "note": "refunded", "reference": "SMOKE-REFUND-1"})
     check(done["status"] == "refunded" and done["resolved_by"], f"refund must close the ticket, got {done['status']}")
     check(inst.j("GET", f"orders/{ro['id']}")["status"] == "refunded", "refund must set the order refunded")
     admin.req("POST", f"admin/after-sales/{rt['id']}/action", expect=409, json={"action": "resolve"})
