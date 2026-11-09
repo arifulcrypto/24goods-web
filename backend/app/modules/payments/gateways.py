@@ -7,9 +7,10 @@ import secrets
 import uuid
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import secretbox
@@ -19,7 +20,14 @@ from app.core.money import to_decimal
 from app.core.resources import Resources
 from app.models import Checkout, LegacyPayUrl, Order, PaymentAttempt, PaymentGateway, Tenant
 from app.modules.content.site import tenant_settings
-from app.payments.zpay import ZPayClient, ZPayConfig, ZPayQueryError, ZPayUnreachable
+from app.modules.operations.service import record_event
+from app.payments.zpay import (
+    ZPayClient,
+    ZPayConfig,
+    ZPayQueryError,
+    ZPayRefused,
+    ZPayUnreachable,
+)
 
 
 def normalize_gateway(value: str) -> str:
@@ -52,9 +60,16 @@ def normalize_gateway(value: str) -> str:
 
 async def configured(db: AsyncSession, res: Resources, tid: uuid.UUID) -> bool:
     ts = await tenant_settings(db, tid)
+    if (ts.get("payments") or {}).get("epay_provider_id") or (
+        res.settings.zpay_pid and res.settings.zpay_key
+    ):
+        return True
     return bool(
-        (ts.get("payments") or {}).get("epay_provider_id")
-        or (res.settings.zpay_pid and res.settings.zpay_key)
+        await db.scalar(
+            select(PaymentGateway.id)
+            .where(PaymentGateway.tenant_id == tid, PaymentGateway.enabled.is_(True))
+            .limit(1)
+        )
     )
 
 
@@ -119,6 +134,66 @@ async def routed_resources(
     return replace(res, zpay=client_for(res, row)), att.local_ref
 
 
+ROUTING_MODES = ("sticky", "priority")
+
+
+def order_candidates(
+    rows: list[PaymentGateway], mode: str, primary_at: datetime | None = None
+) -> list[PaymentGateway]:
+    """Enabled gateways, best first. ``priority``: by priority number. ``sticky``: the gateway that
+    last succeeded goes first (unless it failed since, or an admin made another one primary after
+    it), the rest by priority."""
+    live = sorted((r for r in rows if r.enabled), key=lambda r: (r.priority, r.created_at, r.id))
+    if mode != "sticky":
+        return live
+    sticky = [
+        r
+        for r in live
+        if r.last_ok_at is not None
+        and (r.last_fail_at is None or r.last_fail_at < r.last_ok_at)
+        and (primary_at is None or r.last_ok_at > primary_at)
+    ]
+    if not sticky:
+        return live
+    best = max(sticky, key=lambda r: r.last_ok_at or datetime.min.replace(tzinfo=timezone.utc))
+    return [best] + [r for r in live if r.id != best.id]
+
+
+async def routing_mode(db: AsyncSession, tid: uuid.UUID) -> str:
+    mode = ((await tenant_settings(db, tid)).get("payments") or {}).get("epay_routing")
+    return mode if mode in ROUTING_MODES else "sticky"
+
+
+async def candidates(db: AsyncSession, tid: uuid.UUID) -> list[PaymentGateway]:
+    pay = (await tenant_settings(db, tid)).get("payments") or {}
+    mode = pay.get("epay_routing")
+    primary = pay.get("epay_primary_at")
+    rows = list(
+        await db.scalars(select(PaymentGateway).where(PaymentGateway.tenant_id == tid).limit(100))
+    )
+    return order_candidates(
+        rows,
+        mode if mode in ROUTING_MODES else "sticky",
+        datetime.fromisoformat(primary) if primary else None,
+    )
+
+
+async def _gateway_failed(db: AsyncSession, tid: uuid.UUID, pid: uuid.UUID, reason: str) -> None:
+    await db.execute(
+        update(PaymentGateway)
+        .where(PaymentGateway.id == pid, PaymentGateway.tenant_id == tid)
+        .values(last_fail_at=func.now(), last_fail_reason=reason)
+    )
+
+
+async def mark_gateway_ok(db: AsyncSession, tid: uuid.UUID, pid: uuid.UUID) -> None:
+    await db.execute(
+        update(PaymentGateway)
+        .where(PaymentGateway.id == pid, PaymentGateway.tenant_id == tid)
+        .values(last_ok_at=func.now())
+    )
+
+
 async def prepare(
     db: AsyncSession,
     res: Resources,
@@ -130,13 +205,18 @@ async def prepare(
     currency: str,
     ip: str | None,
 ) -> str | None:
-    """Caller released order locks. A transaction advisory lock serializes reservations only."""
-    row = await active_gateway(db, tid)
-    if row is None:
+    """Caller released order locks. A transaction advisory lock serializes reservations only.
+
+    Candidates are tried in routing order. A try that provably created nothing at the gateway
+    (connect failure / explicit refusal) fails its own attempt and falls through to the next
+    gateway; anything ambiguous stops here with an ``unknown`` attempt (review-v10 §A.3)."""
+    cands = await candidates(db, tid)
+    if not cands:
+        if ((await tenant_settings(db, tid)).get("payments") or {}).get("epay_provider_id"):
+            raise Unavailable("No payment gateway is enabled")
         return None  # existing environment-configured integration remains compatible
     if currency != "CNY":
         raise Unavailable("This gateway accepts CNY only")
-    client, pid, mode = client_for(res, row), row.id, row.mode
     await db.execute(
         text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
         {"key": str(tid) + ":epay:" + no},
@@ -171,7 +251,7 @@ async def prepare(
             raise Unavailable("Payment outcome is unknown; reconciliation is required")
         if (
             att.amount_minor == amount_minor
-            and att.provider_id == pid
+            and att.provider_id in {c.id for c in cands}
             and att.currency == currency
             and att.expires_at
             and att.expires_at > now
@@ -180,6 +260,48 @@ async def prepare(
             return "/pay/epay/" + no
         att.status = "superseded"
         await db.flush()
+    # plain values: every attempt commits, which expires the ORM rows
+    plan = [(c.id, client_for(res, c), c.mode) for c in cands]
+    for pid, client, mode in plan:
+        outcome = await _try_gateway(
+            db,
+            tid=tid,
+            no=no,
+            title=title,
+            amount_minor=amount_minor,
+            currency=currency,
+            ip=ip,
+            pid=pid,
+            client=client,
+            mode=mode,
+            model=model,
+            col=col,
+            target_version=target_version,
+        )
+        if outcome == "ok":
+            return "/pay/epay/" + no
+    raise ChannelUnreachable()
+
+
+async def _try_gateway(
+    db: AsyncSession,
+    *,
+    tid: uuid.UUID,
+    no: str,
+    title: str,
+    amount_minor: int,
+    currency: str,
+    ip: str | None,
+    pid: uuid.UUID,
+    client: ZPayClient,
+    mode: str,
+    model: Any,
+    col: Any,
+    target_version: str,
+) -> str:
+    """One reservation + gateway call. Returns ``"ok"`` or ``"failover"``; every other outcome
+    raises (and so ends the pay request)."""
+    now = datetime.now(timezone.utc)
     att = PaymentAttempt(
         tenant_id=tid,
         local_ref=no,
@@ -212,9 +334,10 @@ async def prepare(
             if mode == "redirect"
             else await client.create_payment(remote_no, title, to_decimal(amount_minor), ip or "")
         )
-    except ZPayUnreachable:
-        # The request provably never reached the gateway: nothing can have been created there, so
-        # this is a clean failure, not an unknown outcome. The payable stays payable.
+    except (ZPayUnreachable, ZPayRefused) as exc:
+        # The request provably created nothing at the gateway (never sent / explicitly refused):
+        # a clean failure, not an unknown outcome. The payable stays payable.
+        reason = "gateway_refused" if isinstance(exc, ZPayRefused) else "gateway_unreachable"
         current = await db.scalar(
             select(PaymentAttempt)
             .where(PaymentAttempt.id == att_id, PaymentAttempt.tenant_id == tid)
@@ -224,17 +347,32 @@ async def prepare(
         # only while still ours: staff may have released the attempt meanwhile (keep that record)
         if current and current.status == "preparing":
             current.status = "failed"
-            current.data = {"reason": "gateway_unreachable"}
+            current.data = {"reason": reason}
+            detail: dict[str, Any] = {"reason": reason, "provider_id": str(pid)}
+            if isinstance(exc, ZPayRefused):
+                detail["gateway_message"] = exc.gateway_message
             await audit(
                 db,
                 tenant_id=tid,
                 action="payment.attempt_failed",
                 target="payment_attempt:" + str(att_id),
                 severity="warning",
-                detail={"reason": "gateway_unreachable", "provider_id": str(pid)},
+                detail=detail,
+            )
+            await _gateway_failed(db, tid, pid, reason)
+            await record_event(
+                db,
+                tenant_id=tid,
+                environment="payment",
+                family="payment",
+                action="payment.gateway_failed",
+                outcome="failed",
+                reason=reason,
+                resource_id=str(pid),
+                ip=ip,
             )
             await db.commit()
-        raise ChannelUnreachable() from None
+        return "failover"
     except (ZPayQueryError, asyncio.TimeoutError):
         current = await db.scalar(
             select(PaymentAttempt)
@@ -283,27 +421,55 @@ async def prepare(
         or str(target.updated_at) != target_version
     )
     current.status = "superseded" if changed else "ready"
+    await mark_gateway_ok(db, tid, pid)
     await audit(
         db, tenant_id=tid, action="payment.attempt_ready", target="payment_attempt:" + str(att_id)
     )
     await db.commit()
     if changed:
         raise InvalidState("Order changed while payment was being prepared")
-    return "/pay/epay/" + no
+    return "ok"
 
 
 async def set_active(db: AsyncSession, tid: uuid.UUID, ref: uuid.UUID | None) -> None:
+    """Legacy "activate": enable ``ref``, make it the highest-priority gateway and the primary one
+    (sticky mode ignores earlier successes of the others). The rest stay as configured."""
     tenant = await db.scalar(select(Tenant).where(Tenant.id == tid).with_for_update())
     if tenant is None:
         raise Validation("Unknown tenant")
+    if ref is not None:
+        lowest = await db.scalar(
+            select(func.min(PaymentGateway.priority)).where(
+                PaymentGateway.tenant_id == tid, PaymentGateway.id != ref
+            )
+        )
+        await db.execute(
+            update(PaymentGateway)
+            .where(PaymentGateway.id == ref, PaymentGateway.tenant_id == tid)
+            .values(enabled=True, priority=min(10, (lowest if lowest is not None else 11) - 1))
+        )
     settings = dict(tenant.settings or {})
     settings["payments"] = {
         **(settings.get("payments") or {}),
+        "epay_primary_at": datetime.now(timezone.utc).isoformat(),
         "epay_provider_id": str(ref) if ref else None,
         "epay_legacy_cutover": (settings.get("payments") or {}).get("epay_legacy_cutover")
         or datetime.now(timezone.utc).isoformat(),
     }
     tenant.settings = settings
+
+
+async def set_routing_mode(db: AsyncSession, tid: uuid.UUID, mode: str) -> str:
+    """Persist the tenant's routing mode; returns the previous one."""
+    tenant = await db.scalar(select(Tenant).where(Tenant.id == tid).with_for_update())
+    if tenant is None or mode not in ROUTING_MODES:
+        raise Validation("Unknown tenant or routing mode")
+    settings = dict(tenant.settings or {})
+    pay = settings.get("payments") or {}
+    old = pay.get("epay_routing") if pay.get("epay_routing") in ROUTING_MODES else "sticky"
+    settings["payments"] = {**pay, "epay_routing": mode}
+    tenant.settings = settings
+    return str(old)
 
 
 async def legacy_allowed(db: AsyncSession, tid: uuid.UUID, no: str) -> bool:
