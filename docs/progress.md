@@ -10,6 +10,11 @@ no migrations. Pre-deploy backup with the installed v1 script, sha256-verified o
 retag `ghcr.io/arifulcrypto/goods24-{api,web}:rollback-e1fb9e7` to `:main` and `up -d`. Smoke all
 pass; api->BEpusdt 200. Demo also on `a8160cb`.
 
+**Gateway egress (2026-11-09, `feat/egress-sticky-relay`):** ZPay API calls pick the path per gateway
+host in the app — sticky last-success between direct and a configured relay (`APP_ZPAY_RELAYS`),
+fallback only on connect failures; replaces the c4 DNAT + 5-minute DNS timer. Next (owner):
+several EPay gateways with priority/sticky failover + admin test-payment QR (spec v10).
+
 **Production deployed 2026-11-09 08:22 UTC: `84b4dc0`** (#64, migration 0017). **Xiaodou EPay:** c4's route
 into mainland China is lossy (two-way tests vs a Tencent GZ VPS); API traffic now goes through a
 TLS-passthrough relay on the dev box (docs/production.md "Xiaodou EPay relay"); the ZPay client

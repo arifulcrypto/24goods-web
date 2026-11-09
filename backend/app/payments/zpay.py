@@ -21,7 +21,7 @@ from urllib.parse import urlencode, urlsplit
 
 import httpx
 
-from app.payments import epay
+from app.payments import egress, epay
 from app.payments.bounded import bounded_decimal, bounded_integer, response_bytes
 
 log = logging.getLogger("app.payments.zpay")
@@ -123,6 +123,8 @@ def parse_query_response(data: Any) -> QueryResult:
 
 
 QUERY_TIMEOUT_S = 3.0
+# creating a payment may try the direct path and then a configured relay (app/payments/egress.py)
+CREATE_TIMEOUT_S = 5.0
 # Xiaodou answers an unknown out_trade_no with HTTP 404 + {"code":-1,"msg":"订单不存在"}
 # and a bad signature with 400 + JSON. Parse those bodies (parse_query_response / create_payment
 # decide what they mean; nothing here can mark a payment paid) instead of treating them as
@@ -179,26 +181,48 @@ class ZPayClient:
         url = self.config.api_base.rstrip("/") + endpoint
         try:
             if self.config.safe_network:
-                target = await safefetch.vet_url(url)
-                if target.scheme != "https":
+                parts = urlsplit(url)
+                if parts.scheme != "https":
                     raise ZPayQueryError("HTTPS gateway required")
-                async with httpx.AsyncClient(trust_env=False, follow_redirects=False) as client:
-                    async with client.stream(
-                        "POST" if post else "GET",
-                        safefetch._pinned_url(target),
-                        data=params if post else None,
-                        params=None if post else params,
-                        headers={"Host": target.host, "Accept-Encoding": "identity"},
-                        extensions={"sni_hostname": target.host},
-                        timeout=_TIMEOUT,
-                    ) as response:
-                        raw = await response_bytes(
-                            response, 256 * 1024, body_statuses=_JSON_ERROR_STATUSES
-                        )
-                        return _error_status_guard(
-                            response.status_code,
-                            json.loads(raw, parse_float=bounded_decimal, parse_int=bounded_integer),
-                        )
+                host = (parts.hostname or "").rstrip(".")
+
+                async def fresh_ip() -> str:
+                    return (await safefetch.vet_url(url)).ip  # resolves + vets (public IP only)
+
+                async def exchange(pinned: str, connect: float | None) -> Any:
+                    timeout = _TIMEOUT
+                    if connect is not None:
+                        timeout = httpx.Timeout(QUERY_TIMEOUT_S, connect=connect)
+                    async with httpx.AsyncClient(trust_env=False, follow_redirects=False) as client:
+                        async with client.stream(
+                            "POST" if post else "GET",
+                            pinned,
+                            data=params if post else None,
+                            params=None if post else params,
+                            headers={"Host": host, "Accept-Encoding": "identity"},
+                            extensions={"sni_hostname": host},
+                            timeout=timeout,
+                        ) as response:
+                            raw = await response_bytes(
+                                response, 256 * 1024, body_statuses=_JSON_ERROR_STATUSES
+                            )
+                            return _error_status_guard(
+                                response.status_code,
+                                json.loads(
+                                    raw, parse_float=bounded_decimal, parse_int=bounded_integer
+                                ),
+                            )
+
+                # direct first, configured relay only if the direct connection cannot be opened
+                return await egress.send(
+                    scheme="https",
+                    host=host,
+                    port=parts.port or 443,
+                    path=parts.path or "/",
+                    fresh_ip=fresh_ip,
+                    exchange=exchange,
+                    never_dispatched=_never_dispatched,
+                )
             async with self._http.stream(
                 "POST" if post else "GET",
                 url,
@@ -224,7 +248,7 @@ class ZPayClient:
         params["clientip"] = client_ip
         params["device"] = "pc"
         params["sign"] = epay.sign(params, self.config.key)
-        data = await asyncio.wait_for(self._json("/mapi.php", params, post=True), QUERY_TIMEOUT_S)
+        data = await asyncio.wait_for(self._json("/mapi.php", params, post=True), CREATE_TIMEOUT_S)
         if not isinstance(data, dict) or str(data.get("code")) != "1":
             raise ZPayQueryError("gateway refused payment")
         qr, redirect = str(data.get("qrcode") or ""), str(data.get("payurl") or "")
