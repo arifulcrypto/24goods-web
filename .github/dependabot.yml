@@ -31,12 +31,22 @@ updates:
     groups:
       frontend-minor:
         update-types: [minor, patch]
+    ignore:
+      # vue-tsc 3.3.x needs typescript/lib/tsc (gone in TS 7; @volar/typescript peer is <7).
+      # Remove once a vue-tsc release supports `typescript` 7 natively (see #78).
+      - dependency-name: typescript
+        versions: ["7.x"]
   - package-ecosystem: docker
     directory: /deploy
     schedule:
       interval: weekly
     cooldown:
       default-days: 7
+    ignore:
+      # Build stage stays on an LTS Node line (see #74). Node 27 is "Current" until it
+      # enters LTS on 2027-10-20 (github.com/nodejs/Release); remove this entry then.
+      - dependency-name: node
+        versions: ["27.x"]
   - package-ecosystem: docker-compose
     directory: /deploy
     schedule:
