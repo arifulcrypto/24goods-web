@@ -28,6 +28,7 @@ const routes: RouteRecordRaw[] = [
       { path: 'orders', name: 'orders', component: () => import('./pages/OrdersPage.vue'), meta: { roles: STAFF, titleKey: 'nav.orders' } },
       { path: 'users', name: 'users', component: () => import('./pages/UsersPage.vue'), meta: { roles: STAFF, titleKey: 'v5.nav.users' } },
       { path: 'after-sales', name: 'after-sales', component: () => import('./pages/AfterSalesPage.vue'), meta: { roles: STAFF, titleKey: 'nav.afterSales' } },
+      { path: 'announcements', name: 'announcements', component: () => import('./pages/AnnouncementsPage.vue'), meta: { roles: STAFF, titleKey: 'news.title' } },
       { path: 'articles', name: 'articles', component: () => import('./pages/ArticlesPage.vue'), meta: { roles: ADMIN, titleKey: 'nav.articles' } },
       { path: 'site', redirect: '/settings' },
       { path: 'settings/:tab?', name: 'settings', component: () => import('./pages/SettingsPage.vue'), meta: { roles: ADMIN, titleKey: 'v5.nav.settings' } },

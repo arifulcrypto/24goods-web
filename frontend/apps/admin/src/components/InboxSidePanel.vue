@@ -9,6 +9,7 @@ import {
   isValidAmount,
   latestQuotes,
   normalizeAmount,
+  userAvatar,
   type AdminOrder,
   type Conversation,
   type Message,
@@ -132,7 +133,7 @@ defineExpose({ reloadOrders: loadOrders })
     <section class="block">
       <h3>{{ t('inbox.buyer') }}</h3>
       <div class="buyer">
-        <el-avatar :size="36">{{ conversation.buyer.display_name.charAt(0).toUpperCase() }}</el-avatar>
+        <el-avatar :size="36" :src="userAvatar(conversation.buyer)" />
         <div>
           <div class="name">{{ conversation.buyer.display_name }}</div>
           <div class="muted small mono">{{ conversation.buyer.id }}</div>

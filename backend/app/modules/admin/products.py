@@ -89,7 +89,12 @@ async def list_products(db: AsyncSession, page: Page, q: str | None, status: str
     total = await db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     rows = list(
         await db.scalars(
-            stmt.order_by(Product.created_at.desc(), Product.id)
+            stmt.order_by(
+                Product.pinned_at.desc().nullslast(),
+                Product.group_sort,
+                Product.created_at.desc(),
+                Product.id,
+            )
             .offset(page.offset)
             .limit(page.page_size)
         )

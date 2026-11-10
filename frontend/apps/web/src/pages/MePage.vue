@@ -2,7 +2,8 @@
 import { computed, onActivated, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { clearRecent, recentIds, safeAssetUrl, type Locale, type ProductSummary } from '@24goods/shared'
+import { clearRecent, recentIds, resolveAvatar, safeAssetUrl, type Locale, type ProductSummary } from '@24goods/shared'
+import { AvatarPicker } from '@24goods/shared/ui'
 import { api } from '../api'
 import MiniStrip from '../components/MiniStrip.vue'
 import SiteFooter from '../components/SiteFooter.vue'
@@ -20,8 +21,9 @@ const router = useRouter()
 const auth = useAuthStore()
 const convs = useConversationsStore()
 const site = useSiteStore()
-const initial = computed(() => (auth.user?.display_name || auth.user?.handle || auth.user?.email || '?').trim().charAt(0).toUpperCase())
-const avatarSrc = computed(() => safeAssetUrl(auth.user?.avatar_url))
+const uploaded = computed(() => !!safeAssetUrl(auth.user?.avatar_url))
+// uploaded picture > chosen preset > stable default from the user id (v11)
+const avatarSrc = computed(() => resolveAvatar({ url: safeAssetUrl(auth.user?.avatar_url), preset: auth.user?.avatar_preset, seed: auth.user?.id }))
 const identity = computed(() => auth.user?.email || auth.user?.handle || '')
 const recent = ref<ProductSummary[]>([])
 const ORDER_TABS = ['unpaid', 'toDeliver', 'delivered', 'afterSales'] as const
@@ -95,6 +97,18 @@ async function pickAvatar(ev: Event) {
     avatarBusy.value = false
   }
 }
+async function pickPreset(preset: string) {
+  if (avatarBusy.value) return
+  avatarBusy.value = true
+  try {
+    auth.setUser(await api.me.setAvatarPreset(preset))
+    showSuccessToast(t('common.saved'))
+  } catch (e) {
+    toastError(e)
+  } finally {
+    avatarBusy.value = false
+  }
+}
 async function removeAvatar() {
   if (avatarBusy.value) return
   avatarBusy.value = true
@@ -131,7 +145,7 @@ function secureAccount() {
   <div class="page with-tabbar">
     <header class="me-head">
       <template v-if="auth.user">
-        <span class="avatar" aria-hidden="true"><img v-if="avatarSrc" :src="avatarSrc" alt="" />{{ avatarSrc ? '' : initial }}</span>
+        <span class="avatar" aria-hidden="true"><img :src="avatarSrc" alt="" /></span>
         <div class="who">
           <div class="name">{{ auth.user.display_name }}</div>
           <div class="email">{{ identity }}</div>
@@ -212,12 +226,22 @@ function secureAccount() {
       <form class="sheet" @submit.prevent="saveProfile">
         <h2>{{ t('me.editProfile') }}</h2>
         <div class="av-row">
-          <span class="avatar" aria-hidden="true"><img v-if="avatarSrc" :src="avatarSrc" alt="" />{{ avatarSrc ? '' : initial }}</span>
+          <span class="avatar" aria-hidden="true"><img :src="avatarSrc" alt="" /></span>
           <label class="av-btn" :class="{ busy: avatarBusy }">
             {{ t('me.avatarChange') }}
             <input type="file" accept="image/jpeg,image/png,image/webp,image/gif" class="av-input" :disabled="avatarBusy" @change="pickAvatar" />
           </label>
-          <button v-if="avatarSrc" type="button" class="av-btn" :disabled="avatarBusy" @click="removeAvatar">{{ t('me.avatarRemove') }}</button>
+          <button v-if="uploaded" type="button" class="av-btn" :disabled="avatarBusy" @click="removeAvatar">{{ t('me.avatarRemove') }}</button>
+        </div>
+        <div class="av-presets">
+          <span class="av-presets-label">{{ t('me.avatarPresets') }}</span>
+          <AvatarPicker
+            :model-value="uploaded ? null : auth.user?.avatar_preset"
+            :label="t('me.avatarPresets')"
+            :item-label="(n: number) => t('me.avatarPresetN', { n })"
+            :disabled="avatarBusy"
+            @pick="pickPreset"
+          />
         </div>
         <van-field v-model="editName" maxlength="40" :label="t('auth.displayName')" :rules="[{ required: true }]" />
         <div class="lang-row">
@@ -248,6 +272,15 @@ function secureAccount() {
   align-items: center;
   gap: 12px;
   padding: 8px 16px;
+}
+.av-presets {
+  padding: 0 16px 8px;
+}
+.av-presets-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 13px;
+  color: var(--c-text-2);
 }
 .av-btn {
   position: relative;

@@ -300,7 +300,8 @@ async def test_admin_create_by_order_no_prefills_and_list_is_enriched(env):
         await admin.post(f"{API}/admin/services", json={"order_no": order["order_no"]})
     ).status_code == 409
     assert (await admin.post(f"{API}/admin/services", json={"order_no": "NOPE"})).status_code == 404
-    assert (await admin.post(f"{API}/admin/services", json={"label": "x"})).status_code in (
+    # neither a paid order nor a label (a standalone record needs one): refused
+    assert (await admin.post(f"{API}/admin/services", json={"contact": "x"})).status_code in (
         400,
         422,
     )

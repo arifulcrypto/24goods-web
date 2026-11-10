@@ -52,3 +52,10 @@ class EmailChangeConfirmIn(BaseModel):
 class DeleteIn(BaseModel):
     password: str | None = Field(None, max_length=128)
     confirm: Literal["DELETE"]
+
+
+class AvatarPresetIn(BaseModel):
+    preset: Literal[
+        "p01", "p02", "p03", "p04", "p05", "p06", "p07", "p08",
+        "p09", "p10", "p11", "p12", "p13", "p14", "p15", "p16",
+    ]  # fmt: skip

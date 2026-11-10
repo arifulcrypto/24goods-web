@@ -36,6 +36,7 @@ class Product(Base):
     # v7: null = not a subscription; else {period_policy, period_days, grace_days, ...}
     subscription: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True))
     group_sort: Mapped[int] = mapped_column(Integer, default=0)
+    pinned_at: Mapped[datetime | None]
     # v4: per-product "order information" popup config (review-v4 §4) and markdown render
     buyer_input: Mapped[dict[str, Any] | None]
     description_html_i18n: Mapped[dict[str, Any]] = mapped_column(default=dict)
@@ -70,6 +71,7 @@ class Category(Base):
     icon: Mapped[str | None] = mapped_column(String(32))
     sort: Mapped[int] = mapped_column(Integer, default=0)
     enabled: Mapped[bool] = mapped_column(default=True)
+    pinned_at: Mapped[datetime | None]
     created_at: Mapped[datetime] = created_at()
     updated_at: Mapped[datetime] = updated_at()
 

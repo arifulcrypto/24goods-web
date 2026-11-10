@@ -94,6 +94,7 @@ def _view(c: Category, products: int) -> dict:
         "icon": c.icon,
         "sort": c.sort,
         "enabled": c.enabled,
+        "pinned": c.pinned_at is not None,
         "products": products,
     }
 
@@ -134,7 +135,7 @@ async def list_categories(
     rows = await db.scalars(
         select(Category)
         .where(Category.tenant_id == admin.tenant_id)
-        .order_by(Category.sort, Category.slug)
+        .order_by(Category.pinned_at.desc().nullslast(), Category.sort, Category.slug)
     )
     return [_view(c, counts.get(c.slug, 0)) for c in rows]
 

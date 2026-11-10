@@ -56,6 +56,7 @@ def test_schedule_local_dates_and_stable_overdue():
         timezone="America/Los_Angeles",
         email_reminders=True,
         telegram_reminders=False,
+        reminder_lead_days=None,
     )
     plan = jobs.schedule(row, due + timedelta(days=2))
     assert len(plan) == 5 and len(set(plan)) == 5
@@ -305,6 +306,8 @@ async def test_invalid_reminder_configuration_never_sends(monkeypatch, channel):
         tenant_id=uuid.uuid4(),
         buyer_id=uuid.uuid4(),
         label="Monthly service",
+        ref="SV-ABC234",
+        customer_label=None,
         ends_at=service.utcnow(),
     )
     reminder = SimpleNamespace(id=uuid.uuid4(), kind=f"expiry:{channel}")

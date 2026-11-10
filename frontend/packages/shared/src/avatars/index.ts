@@ -5,6 +5,8 @@
  * (`users.avatar_preset`); a user with no upload and no preset gets a stable preset from their id.
  */
 
+import { safeAssetUrl } from '../api/endpoints'
+
 export const AVATAR_PRESETS = [
   'p01', 'p02', 'p03', 'p04', 'p05', 'p06', 'p07', 'p08',
   'p09', 'p10', 'p11', 'p12', 'p13', 'p14', 'p15', 'p16',
@@ -133,4 +135,9 @@ export function resolveAvatar(opts: { url?: string | null; preset?: string | nul
   if (opts.url) return opts.url
   if (opts.preset && isAvatarPreset(opts.preset)) return avatarPresetUrl(opts.preset)
   return avatarPresetUrl(defaultAvatarPreset(opts.seed))
+}
+
+/** Avatar of a user-like object from an API view (`avatar_url` is same-origin; presets are inline). */
+export function userAvatar(u: { id?: string | null; avatar_url?: string | null; avatar_preset?: string | null } | null | undefined): string {
+  return resolveAvatar({ url: safeAssetUrl(u?.avatar_url), preset: u?.avatar_preset, seed: u?.id })
 }

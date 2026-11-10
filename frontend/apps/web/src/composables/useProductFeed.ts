@@ -1,6 +1,6 @@
 import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import type { ProductSummary } from '@24goods/shared'
+import type { CatalogSort, ProductSummary } from '@24goods/shared'
 import { api } from '../api'
 
 /**
@@ -10,7 +10,7 @@ import { api } from '../api'
  * a language switch drops the cached pages and refetches the same query/category, and a response
  * still in flight from the old locale is discarded by the generation check (issue 49 D).
  */
-export function useProductFeed(params: () => { q?: string; category?: string }, pageSize = 20) {
+export function useProductFeed(params: () => { q?: string; category?: string; sort?: CatalogSort }, pageSize = 20) {
   const items = ref<ProductSummary[]>([])
   const loading = ref(false)
   const finished = ref(false)

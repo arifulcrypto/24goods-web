@@ -48,6 +48,14 @@ class ServiceIn(BaseModel):
     order_id: uuid.UUID | None = None
     owner_id: uuid.UUID | None = None
     label: str | None = Field(None, min_length=1, max_length=120)
+    # v11 standalone record (no payment check); order_no / buyer_email are optional links
+    customer_label: str | None = Field(None, max_length=120)
+    contact: str | None = Field(None, max_length=200)
+    notes: str | None = Field(None, max_length=4000)
+    buyer_email: str | None = Field(None, max_length=254)
+    starts_at: datetime | None = None
+    ends_at: datetime | None = None
+    reminder_lead_days: int | None = Field(None, ge=1, le=60)
     timezone: str = Field("UTC", max_length=64)
     period_policy: Literal["calendar_month", "fixed_days"] = "calendar_month"
     period_days: int = Field(30, ge=1, le=366)
@@ -65,10 +73,25 @@ class ServiceIn(BaseModel):
             raise ValueError("A plain service label is required")
         return value
 
+    @field_validator("customer_label", "contact")
+    @classmethod
+    def clean_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if any(ord(c) < 32 for c in value):
+            raise ValueError("Plain text only")
+        return value or None
+
+    @property
+    def is_record(self) -> bool:
+        has_order = bool(self.order_no or (self.buyer_id and self.order_id))
+        return not has_order or self.starts_at is not None or self.ends_at is not None
+
     @model_validator(mode="after")
     def need_order(self) -> ServiceIn:
-        if not self.order_no and not (self.buyer_id and self.order_id):
-            raise ValueError("order_no, or buyer_id and order_id, is required")
+        if self.is_record and not self.label:
+            raise ValueError("A label is required for a record without a paid order")
         return self
 
 
@@ -85,11 +108,20 @@ class ServicePatch(BaseModel):
     ends_at: datetime | None = None
     email_reminders: bool | None = None
     telegram_reminders: bool | None = None
+    customer_label: str | None = Field(None, max_length=120)
+    contact: str | None = Field(None, max_length=200)
+    notes: str | None = Field(None, max_length=4000)
+    reminder_lead_days: int | None = Field(None, ge=1, le=60)
 
     @field_validator("label")
     @classmethod
     def clean_label(cls, value: str | None) -> str | None:
         return ServiceIn.clean_label(value) if value is not None else None
+
+    @field_validator("customer_label", "contact")
+    @classmethod
+    def clean_text(cls, value: str | None) -> str | None:
+        return ServiceIn.clean_text(value)
 
 
 class ActivationIn(BaseModel):
@@ -97,7 +129,7 @@ class ActivationIn(BaseModel):
 
 
 class RenewalIn(BaseModel):
-    order_id: uuid.UUID
+    order_id: uuid.UUID | None = None  # omitted = manual renewal of a standalone record
     confirmed_at: datetime | None = None
     reason: str = Field(min_length=1, max_length=200)
 
@@ -171,6 +203,10 @@ async def services(
         term = q.strip()
         query = query.where(
             or_(
+                ServiceEntitlement.ref.icontains(term, autoescape=True),
+                ServiceEntitlement.customer_label.icontains(term, autoescape=True),
+                ServiceEntitlement.contact.icontains(term, autoescape=True),
+                ServiceEntitlement.label.icontains(term, autoescape=True),
                 ServiceEntitlement.order_id.in_(
                     select(Order.id).where(
                         Order.tenant_id == staff.tenant_id,

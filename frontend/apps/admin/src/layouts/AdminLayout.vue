@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { imageQuality, compressUploads, safeAssetUrl, setMediaPreference } from '@24goods/shared'
+import { imageQuality, compressUploads, resolveAvatar, safeAssetUrl, setMediaPreference } from '@24goods/shared'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
@@ -14,6 +14,7 @@ import {
   Goods,
   List,
   Menu,
+  Bell,
   Reading,
   Service,
   Setting,
@@ -83,6 +84,7 @@ const groups = computed(() => {
         { path: '/services', key: 'services.title', icon: List },
         { path: '/after-sales', key: 'nav.afterSales', icon: Service },
         { path: '/users', key: 'v5.nav.users', icon: User },
+        { path: '/announcements', key: 'news.title', icon: Bell },
       ],
     },
     {
@@ -212,7 +214,7 @@ async function logout() {
           </el-dropdown>
           <el-dropdown trigger="click">
             <el-button text class="user-btn">
-              <el-avatar :size="26" class="avatar" :src="safeAssetUrl(auth.user?.avatar_url) ?? undefined">{{ (auth.user?.display_name || '?').charAt(0).toUpperCase() }}</el-avatar>
+              <el-avatar :size="26" class="avatar" :src="resolveAvatar({ url: safeAssetUrl(auth.user?.avatar_url), preset: auth.user?.avatar_preset, seed: auth.user?.id })" />
               <span class="user-name">{{ auth.user?.display_name }}</span>
             </el-button>
             <template #dropdown>

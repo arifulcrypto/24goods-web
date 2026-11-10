@@ -3,7 +3,7 @@
 from app.models.base import Base
 from app.models.catalog import Category, Product, ProductVariant
 from app.models.chat import Attachment, Conversation, CsReplyTemplate, Message, Quote
-from app.models.content import AfterSales, Article
+from app.models.content import AfterSales, AnnouncementRead, Article
 from app.models.growth import (
     ApiToken,
     BlockedIP,
@@ -26,6 +26,7 @@ from app.models.users import AgentStatus, User
 __all__ = [
     "AfterSales",
     "AgentStatus",
+    "AnnouncementRead",
     "ApiToken",
     "Article",
     "Attachment",

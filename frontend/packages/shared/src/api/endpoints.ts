@@ -11,6 +11,9 @@ import type {
   UsdtPayView,
   Article,
   ArticleSummary,
+  AnnouncementDetail,
+  AnnouncementItem,
+  CatalogSort,
   InstantResult,
   LookupOrder,
   PowChallenge,
@@ -148,13 +151,23 @@ export function createBuyerApi(c: ApiClient) {
         return c.request<User>('PUT', '/me/avatar', { form: fd })
       },
       removeAvatar: () => c.delete<User>('/me/avatar'),
+      /** v11: pick a generic avatar (`p01`..`p16`); drops an uploaded picture. */
+      setAvatarPreset: (preset: string) => c.put<User>('/me/avatar/preset', { preset }),
       /** v9 §8: highest announcement version this user acknowledged (follows them across devices). */
       announcementAck: () => c.get<{ version: number }>('/me/announcement-ack'),
       acknowledgeAnnouncement: (version: number) => c.post<{ version: number }>('/me/announcement-ack', { version }),
     },
     categories: () => c.get<Category[]>('/categories'),
-    products: (q: { q?: string; category?: string; page?: number; page_size?: number }) =>
+    products: (q: { q?: string; category?: string; sort?: CatalogSort; page?: number; page_size?: number }) =>
       c.get<Paginated<ProductSummary>>('/products', q),
+    /** v11 W3: announcements (news). Read state needs a session; guests get `read: null`. */
+    announcements: {
+      list: (q: { page?: number; page_size?: number } = {}) =>
+        c.get<Paginated<AnnouncementItem> & { unread: number | null }>('/announcements', q),
+      get: (id: string) => c.get<AnnouncementDetail>(`/announcements/${seg(id)}`),
+      markRead: (id: string) => c.post<void>(`/announcements/${seg(id)}/read`, {}),
+      markAllRead: () => c.post<void>('/announcements/read-all', {}),
+    },
     /** v3: summaries for ≤20 ids, in the given order (recently viewed). */
     productsByIds: (ids: readonly string[]) =>
       c.get<{ items: ProductSummary[] }>('/products', { ids: ids.slice(0, 20).join(',') }),

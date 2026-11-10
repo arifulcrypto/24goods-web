@@ -6,6 +6,7 @@ import { ArrowLeft, InfoFilled } from '@element-plus/icons-vue'
 import {
   formatRelative,
   messagePreview,
+  userAvatar,
   type Conversation,
   type ConversationFilter,
   type Message,
@@ -346,7 +347,7 @@ function openProduct(id: string) {
           @click="select(c)"
         >
           <el-badge :value="c.unread" :hidden="!c.unread || c.id === activeId" :max="99">
-            <el-avatar :size="38">{{ c.buyer.display_name.charAt(0).toUpperCase() }}</el-avatar>
+            <el-avatar :size="38" :src="userAvatar(c.buyer)" />
           </el-badge>
           <span class="conv-main">
             <span class="conv-top">
@@ -408,6 +409,7 @@ function openProduct(id: string) {
       :self-id="auth.user?.id"
       :self-name="auth.user?.display_name"
       :self-avatar="auth.user?.avatar_url"
+      :self-preset="auth.user?.avatar_preset"
       @action="messageAction"
           :pins="pins"
           :older-loader="() => chat.loadOlder()"

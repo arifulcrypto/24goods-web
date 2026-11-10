@@ -56,6 +56,13 @@ def avatar_url(u: User | None) -> str | None:
     return f"/api/v1/avatars/{u.id}?v={u.avatar_key[:8]}"
 
 
+def avatar_preset(u: User | None) -> str | None:
+    """Generic preset id (``p01``..); only meaningful when no upload exists."""
+    if u is None or u.avatar_key:
+        return None
+    return u.avatar_preset
+
+
 def user_view(u: User) -> dict[str, Any]:
     # The `<handle>@instant.invalid` placeholder is an internal login key, never shown.
     email = "" if u.email.endswith("@instant.invalid") else u.email
@@ -68,6 +75,7 @@ def user_view(u: User) -> dict[str, Any]:
         "is_instant": u.is_instant,
         "handle": u.handle,
         "avatar_url": avatar_url(u),
+        "avatar_preset": avatar_preset(u),
     }
 
 
@@ -168,6 +176,7 @@ def admin_product_view(p: Product, stock: int | None) -> dict[str, Any]:
         "after_sales_months": p.after_sales_months,
         "subscription": p.subscription,
         "group_sort": p.group_sort,
+        "pinned": p.pinned_at is not None,
         "buyer_input": admin_config(p.buyer_input),
         # v5, staff-only: never part of buyer payloads
         "delivery_eta_hours": p.delivery_eta_hours,
@@ -324,6 +333,7 @@ def message_view(
     *,
     sender_name: str | None,
     sender_avatar: str | None = None,
+    sender_preset: str | None = None,
     attachment: Attachment | None = None,
     payload_overlay: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -340,6 +350,7 @@ def message_view(
                 "role": m.sender_role,
                 "display_name": sender_name or SYSTEM_NAME,
                 "avatar_url": None,
+                "avatar_preset": None,
             },
             "type": m.type,
             "text": None,
@@ -362,6 +373,7 @@ def message_view(
             "role": m.sender_role,
             "display_name": sender_name or SYSTEM_NAME,
             "avatar_url": sender_avatar,
+            "avatar_preset": sender_preset,
         },
         "type": m.type,
         "text": m.text,

@@ -125,6 +125,23 @@ _Implemented (wip/v11-chat). Notes: `notify_defaults` is stored as `notification
   — out of scope, documented.
 - **Recently viewed**: DONE (orchestrator) — removed from Home, kept on Me (refreshes on return).
 
+## W3 implementation notes
+- Migration `0022_v11_content_ops`. Announcements: `articles.kind='notice'` (admin Articles list hides
+  them; `/articles/{slug}` never serves them), `announcement_reads` RLS. API: buyer/staff
+  `GET /announcements`, `GET /announcements/{id}`, `POST /announcements/{id}/read`,
+  `POST /announcements/read-all`; admin `/admin/announcements` (+ `/settings`). `GET /site` gains
+  `announcements {prompt_new, show_badge, unread, newest}` and `catalog.default_sort`. "Unread" counts
+  only announcements published after the account was created (a new buyer does not inherit the archive);
+  guests start with everything read (localStorage baseline).
+- Service records: `POST /admin/services` without an order (or with `starts_at`/`ends_at`) creates an
+  active standalone record (`ref SV-XXXXXX`, no payment check); `renewals` without `order_id` is a manual
+  renewal (`service_renewals.order_id` NULL + `note`); `reminder_lead_days` replaces the 7/3/1 plan.
+- Pin & sort: `PUT /admin/{products|categories}/{id}/pin`, `POST /admin/{products|categories}/reorder`
+  (writes 10, 20, ... in the given order, audited with before/after), `GET|PUT /admin/catalog/settings`,
+  `GET /products?sort=`. Manual reorder in the admin UI is offered only when every product is on one page.
+- Avatars: `users.avatar_preset`; uploads clear the preset and a preset clears the upload; views expose
+  `avatar_preset` next to `avatar_url` (user, chat sender, inbox buyer/agent).
+
 ## Out of scope (recorded)
 Web Push with the browser closed; per-variant images; variant option matrices (two dimensions) —
 a flat variant list covers the catalogue today (e.g. "1 month / 3 months / 12 months").

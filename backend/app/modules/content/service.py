@@ -480,7 +480,11 @@ async def list_public(db: AsyncSession, lang: str, page: Page, category: str | N
 async def get_public(
     db: AsyncSession, redis: Redis, lang: str, slug: str, viewer_key: str
 ) -> dict[str, Any]:
-    a = await db.scalar(select(Article).where(Article.slug == slug, Article.status == "published"))
+    a = await db.scalar(
+        select(Article).where(
+            Article.slug == slug, Article.status == "published", Article.kind != "notice"
+        )
+    )
     if a is None:
         raise NotFound("Article not found")
     # Count a view once per viewer per 10 minutes (no write amplification from reloads/bots).
@@ -527,6 +531,8 @@ async def admin_list(
         stmt = stmt.where(Article.status == status)
     if kind:
         stmt = stmt.where(Article.kind == kind)
+    else:  # announcements have their own admin page
+        stmt = stmt.where(Article.kind != "notice")
     if category:
         stmt = stmt.where(Article.category == category)
     total = await db.scalar(select(func.count()).select_from(stmt.subquery())) or 0

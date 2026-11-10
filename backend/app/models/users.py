@@ -25,6 +25,7 @@ class User(Base):
     handle: Mapped[str | None] = mapped_column(String(16))
     google_sub: Mapped[str | None] = mapped_column(String(64))
     avatar_key: Mapped[str | None] = mapped_column(String(32))
+    avatar_preset: Mapped[str | None] = mapped_column(String(16))
     announcement_ack: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     last_login_at: Mapped[datetime | None]
     suspended_at: Mapped[datetime | None]

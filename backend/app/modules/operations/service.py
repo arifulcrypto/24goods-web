@@ -11,7 +11,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from sqlalchemy import exists, or_, select
+from sqlalchemy import exists, func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import audit
@@ -66,6 +67,9 @@ def period_end(start: datetime, policy: str, days: int, tz: str) -> datetime:
 
 def snapshot(row: ServiceEntitlement) -> dict[str, Any]:
     return {
+        "ref": row.ref,
+        "customer_label": row.customer_label,
+        "reminder_lead_days": row.reminder_lead_days,
         "status": row.status,
         "owner_id": str(row.owner_id),
         "version": row.version,
@@ -93,8 +97,11 @@ def view(row: ServiceEntitlement) -> dict[str, Any]:
     now = utcnow()
     return {
         "id": str(row.id),
-        "buyer_id": str(row.buyer_id),
-        "order_id": str(row.order_id),
+        "buyer_id": str(row.buyer_id) if row.buyer_id else None,
+        "order_id": str(row.order_id) if row.order_id else None,
+        "contact": row.contact,
+        "notes": row.notes,
+        "standalone": row.order_id is None,
         "product_id": str(row.product_id) if row.product_id else None,
         "source": row.source,
         "label": row.label,
@@ -197,6 +204,8 @@ async def changed(
 async def create(db: AsyncSession, actor: User, body: Any, ip: str | None) -> ServiceEntitlement:
     """Register a service from a paid order, given by id (+ buyer) or by order number.
     Buyer, owner, label and policy are prefilled from the order/product when omitted."""
+    if body.is_record:
+        return await create_record(db, actor, body, ip)
     tenant = actor.tenant_id
     if body.order_no:
         found = await db.scalar(
@@ -270,6 +279,91 @@ async def create(db: AsyncSession, actor: User, body: Any, ip: str | None) -> Se
     return row
 
 
+async def create_record(
+    db: AsyncSession, actor: User, body: Any, ip: str | None
+) -> ServiceEntitlement:
+    """A standalone record (calendar-reminder pattern): no payment verification, order and buyer
+    are optional links. Created active; edited and renewed manually by staff."""
+    tenant = actor.tenant_id
+    owner_id = body.owner_id or actor.id
+    await staff_owner(db, tenant, owner_id)
+    zone(body.timezone)
+    buyer_id: uuid.UUID | None = None
+    order_id: uuid.UUID | None = None
+    product_id: uuid.UUID | None = None
+    if body.order_no:
+        order = await db.scalar(
+            select(Order).where(Order.tenant_id == tenant, Order.order_no == body.order_no.strip())
+        )
+        if order is None:
+            raise NotFound("Order not found")
+        if await db.scalar(
+            select(ServiceEntitlement.id).where(
+                ServiceEntitlement.tenant_id == tenant, ServiceEntitlement.order_id == order.id
+            )
+        ) or await db.scalar(
+            select(ServiceRenewal.id).where(
+                ServiceRenewal.tenant_id == tenant, ServiceRenewal.order_id == order.id
+            )
+        ):
+            raise Conflict("This order is already linked to a service")
+        order_id, buyer_id, product_id = order.id, order.buyer_id, order.product_id
+    if body.buyer_email:
+        found = await db.scalar(
+            select(User).where(
+                User.tenant_id == tenant,
+                User.role == "buyer",
+                func.lower(User.email) == body.buyer_email.strip().lower(),
+            )
+        )
+        if found is not None:  # links to an account when it exists; otherwise just a record
+            buyer_id = found.id
+    start = aware(body.starts_at) if body.starts_at else utcnow()
+    if body.ends_at is not None:
+        end = aware(body.ends_at)
+        if end <= start:
+            raise Validation("End must be after start")
+    else:
+        end = period_end(start, body.period_policy, body.period_days, body.timezone)
+    row: ServiceEntitlement | None = None
+    for _ in range(5):  # a ref collision is astronomically rare; retry on the unique index
+        row = ServiceEntitlement(
+            tenant_id=tenant,
+            buyer_id=buyer_id,
+            order_id=order_id,
+            owner_id=owner_id,
+            product_id=product_id,
+            source="manual",
+            label=body.label or "",
+            customer_label=body.customer_label,
+            contact=body.contact,
+            notes=body.notes,
+            reminder_lead_days=body.reminder_lead_days,
+            timezone=body.timezone,
+            period_policy=body.period_policy,
+            period_days=body.period_days,
+            grace_days=body.grace_days,
+            email_reminders=body.email_reminders,
+            telegram_reminders=body.telegram_reminders,
+            status="active",
+            starts_at=start,
+            ends_at=end,
+            version=1,
+        )
+        try:
+            async with db.begin_nested():
+                db.add(row)
+                await db.flush()
+            break
+        except IntegrityError:
+            row = None
+    if row is None:
+        raise Conflict("Could not allocate a service reference; retry")
+    await changed(db, row, actor, "service.created", None, "staff_record", ip)
+    await db.commit()
+    return row
+
+
 async def activate(
     db: AsyncSession, actor: User, ident: uuid.UUID, when: datetime | None, ip: str | None
 ) -> ServiceEntitlement:
@@ -327,6 +421,8 @@ async def renew(
     row = await owned(db, actor.tenant_id, ident, lock=True)
     if row.starts_at is None or row.ends_at is None:
         raise InvalidState("Activate the service before renewal")
+    if body.order_id is None or row.buyer_id is None:
+        return await renew_manual(db, actor, row, body, ip)
     order = await paid_order(db, row.tenant_id, row.buyer_id, body.order_id)
     previous = await db.scalar(
         select(ServiceRenewal).where(
@@ -357,6 +453,39 @@ async def renew(
             tenant_id=row.tenant_id,
             entitlement_id=row.id,
             order_id=order.id,
+            confirmed_by=actor.id,
+            period_version=row.version,
+            starts_at=start,
+            ends_at=row.ends_at,
+        )
+    )
+    await changed(db, row, actor, "service.renewed", before, body.reason, ip)
+    await db.commit()
+    return row
+
+
+async def renew_manual(
+    db: AsyncSession, actor: User, row: ServiceEntitlement, body: Any, ip: str | None
+) -> ServiceEntitlement:
+    """Renewal confirmed by staff without a paid order (standalone records only)."""
+    if row.order_id is not None and row.buyer_id is not None:
+        raise Validation("A renewal order is required for this service")
+    if body.order_id is not None:
+        raise Validation("Standalone records are renewed without an order")
+    confirmed = aware(body.confirmed_at) if body.confirmed_at else utcnow()
+    if confirmed > utcnow() + timedelta(minutes=5):
+        raise Validation("Confirmation cannot be in the future")
+    start = confirmed if row.status == "cancelled" else max(row.ends_at, confirmed)  # type: ignore[type-var]
+    before = snapshot(row)
+    row.ends_at = period_end(start, row.period_policy, row.period_days, row.timezone)
+    row.version += 1
+    row.status = "active"
+    db.add(
+        ServiceRenewal(
+            tenant_id=row.tenant_id,
+            entitlement_id=row.id,
+            order_id=None,
+            note=SENSITIVE.sub("[redacted]", body.reason)[:200],
             confirmed_by=actor.id,
             period_version=row.version,
             starts_at=start,
@@ -472,7 +601,9 @@ async def linked_order_ids(
     db: AsyncSession, tenant: uuid.UUID, rows: list[ServiceEntitlement]
 ) -> dict[uuid.UUID, list[uuid.UUID]]:
     """entitlement id -> [source order id, renewal order ids...]."""
-    out = {r.id: [r.order_id] for r in rows}
+    out: dict[uuid.UUID, list[uuid.UUID]] = {
+        r.id: ([r.order_id] if r.order_id else []) for r in rows
+    }
     if rows:
         for ent_id, order_id in (
             await db.execute(
@@ -481,6 +612,7 @@ async def linked_order_ids(
                     ServiceRenewal.tenant_id == tenant,
                     ServiceRenewal.entitlement_id.in_(list(out)),
                 )
+                .where(ServiceRenewal.order_id.is_not(None))
                 .order_by(ServiceRenewal.created_at, ServiceRenewal.id)
             )
         ).all():
@@ -527,18 +659,18 @@ async def enriched_views(
         (
             await db.execute(
                 select(User.id, User.email).where(
-                    User.tenant_id == tenant, User.id.in_({r.buyer_id for r in rows})
+                    User.tenant_id == tenant, User.id.in_({r.buyer_id for r in rows if r.buyer_id})
                 )
             )
         ).all()
     )
     out = []
     for r in rows:
-        email = buyers.get(r.buyer_id, "")
+        email = buyers.get(r.buyer_id, "") if r.buyer_id else ""
         out.append(
             {
                 **view(r),
-                "order_no": order_no.get(r.order_id),
+                "order_no": order_no.get(r.order_id) if r.order_id else None,
                 "product_title": titles.get(r.product_id) if r.product_id else None,
                 "buyer_email": "" if email.endswith("@instant.invalid") else email,
                 "after_sales_open": any(oid in open_orders for oid in links[r.id]),
@@ -568,13 +700,13 @@ async def detail_view(
     ).all():
         ticket_status[oid] = status  # latest wins
     linked = []
-    for i, oid in enumerate(links):
+    for oid in links:
         o = orders.get(oid)
         if o is None:
             continue
         linked.append(
             {
-                "kind": "source" if i == 0 else "renewal",
+                "kind": "source" if oid == row.order_id else "renewal",
                 "order_id": str(o.id),
                 "order_no": o.order_no,
                 "paid_at": iso(o.paid_at),
@@ -584,14 +716,31 @@ async def detail_view(
                 "after_sales_status": ticket_status.get(oid),
             }
         )
-    return {**base, "orders": linked}
+    manual = [
+        {
+            "starts_at": iso(r.starts_at),
+            "ends_at": iso(r.ends_at),
+            "note": r.note,
+            "created_at": iso(r.created_at),
+        }
+        for r in await db.scalars(
+            select(ServiceRenewal)
+            .where(
+                ServiceRenewal.tenant_id == tenant,
+                ServiceRenewal.entitlement_id == row.id,
+                ServiceRenewal.order_id.is_(None),
+            )
+            .order_by(ServiceRenewal.created_at, ServiceRenewal.id)
+        )
+    ]
+    return {**base, "orders": linked, "manual_renewals": manual}
 
 
 async def renewal_candidates(
     db: AsyncSession, tenant: uuid.UUID, row: ServiceEntitlement
 ) -> list[dict[str, Any]]:
     """The buyer's verified-paid orders for the same product not yet used by any service."""
-    if row.product_id is None:
+    if row.product_id is None or row.buyer_id is None:
         return []
     paid_ok = exists().where(
         Payment.tenant_id == tenant,

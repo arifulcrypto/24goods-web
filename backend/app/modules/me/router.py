@@ -20,6 +20,7 @@ from app.modules.common.views import user_view
 from app.modules.content.site import tenant_settings
 from app.modules.me import service
 from app.modules.me.schemas import (
+    AvatarPresetIn,
     CredentialsIn,
     DeleteIn,
     EmailChangeConfirmIn,
@@ -172,6 +173,21 @@ async def put_avatar(
     await enforce(res.redis, "me:avatar", str(user.id), 20, 3600)
     processed = await avatar_from_upload(file)
     return user_view(await service.set_avatar(db, store, user, processed, client_ip(request)))
+
+
+@router.put("/avatar/preset")
+async def put_avatar_preset(
+    body: AvatarPresetIn,
+    request: Request,
+    user: User = Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+    res: Resources = Depends(get_res),
+    store: FileStore = Depends(get_store),
+) -> dict:
+    await enforce(res.redis, "me:avatar", str(user.id), 20, 3600)
+    return user_view(
+        await service.set_avatar_preset(db, store, user, body.preset, client_ip(request))
+    )
 
 
 @router.delete("/avatar")

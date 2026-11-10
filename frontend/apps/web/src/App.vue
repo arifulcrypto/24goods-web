@@ -6,6 +6,7 @@ import SecurityChallenge from './components/SecurityChallenge.vue'
 import StorefrontGate from './components/StorefrontGate.vue'
 import TabBar from './components/TabBar.vue'
 import CsBubble from './components/CsBubble.vue'
+import AnnouncementPrompt from './components/AnnouncementPrompt.vue'
 import { accessBlock, beep, desktopNotify, registerNotifyWorker, safeAssetUrl, titleWithCount, unlockAudioOnFirstGesture } from '@24goods/shared'
 import { AccessBlockedView } from '@24goods/shared/ui'
 import { useAuthStore } from './stores/auth'
@@ -148,6 +149,7 @@ watch(
     </RouterView></StorefrontGate>
     <TabBar v-if="showTabbar" />
     <CsBubble />
+    <AnnouncementPrompt />
     <AccessBlockedView v-if="accessBlock" :block="accessBlock" />
   </div>
 </template>
