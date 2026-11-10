@@ -17,8 +17,8 @@
 | 商城 | 移动优先的买家端（Vue 3 + Vant），中英文切换，搜索、分类、商品页、订单查询 |
 | 发货 | 加密卡密库自动发货；人工发货（文字 + 附件）；售后期 |
 | 聊天与报价 | 闲鱼式买家 ↔ 客服聊天，支持图片、语音消息、报价卡片、聊天内付款，客服工作台 |
-| 支付 | 易支付协议通道（ZPay / 支付宝）；自建 BEpusdt 收 USDT（开发中）；按通道设置手续费与开关 |
-| 代理商 | 白标店铺（`?store=slug`，子域名/自定义域名规划中）、加价、收益账本 |
+| 支付 | 易支付协议通道（ZPay / 支付宝）；自建 BEpusdt 收 USDT（Arbitrum One、X Layer、TRC20）；多个易支付通道按优先级 + 粘性故障切换；按通道设置手续费与开关 |
+| 代理商 | 白标店铺（`?store=slug`、子域名、已验证的自定义域名）、加价、收益账本 |
 | 管理后台 | PC 端（Vue 3 + Element Plus）：商品、按链接/页面导入商品、库存、订单、改价、优惠券、账本、审计日志、设置 |
 | 安全 | 卡密非对称信封加密、PostgreSQL 行级安全按租户隔离、支付回调多重校验、Turnstile、限流、客服 IP 白名单 |
 
@@ -32,7 +32,7 @@
                             └─► Redis     （会话、限流、发布订阅）
 ```
 
-- 后端：Python 3.12、FastAPI、SQLAlchemy 2（异步）、Alembic、PostgreSQL 16、Redis 7。
+- 后端：Python 3.12、FastAPI、SQLAlchemy 2（异步）、Alembic、PostgreSQL 17、Redis 7。
 - 前端：pnpm 工作区，两个纯静态 Vite 应用（`apps/web`、`apps/admin`）+ `packages/shared`，运行时不需要 Node。
 - 设计决策以 ADR 形式记录在 [docs/architecture.md](docs/architecture.md)。
 

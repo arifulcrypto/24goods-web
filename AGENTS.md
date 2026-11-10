@@ -25,7 +25,8 @@ Any change that violates one of these must be rejected in review.
 ```
 backend/            FastAPI modular monolith (Python ≥3.10 dev, 3.12 CI/prod)
   app/core/         config, db (RLS tenant pinning), security, middleware, cardvault
-  app/modules/      auth, catalog, chat (quotes), orders, payments (notify), inventory, uploads, realtime (SSE), admin
+  app/modules/      auth, catalog, chat (quotes), orders, payments (notify, reconcile, gateways), inventory, uploads,
+                    realtime (SSE), admin, aftersales, promo, reseller, operations, challenges, seo, content, lookup, me
   app/payments/     epay.py (protocol), zpay.py (adapter)
   app/delivery/     SEPARATE process: outbox consumer + internal reveal API (only holder of private keys)
   app/devtools/     mock_zpay (dev/test only), seed, keygen
