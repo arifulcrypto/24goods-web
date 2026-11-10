@@ -21,7 +21,7 @@ Only rate limits and PoW difficulty are relaxed, because in dev every request re
 
 ## First run
 
-Requirements: Docker, Node ≥ 20 with pnpm (`corepack enable`), `openssl`, and [`uv`](https://docs.astral.sh/uv/) (`pip install uv`). `uv` provides Python 3.12, the same version as CI and production.
+Requirements: Docker, Node 26 LTS (same as CI and the web image; ≥ 22.12 also works) with the pnpm version pinned in `frontend/package.json` `packageManager` (`npm install -g pnpm@<version>`; Node ≥ 25 no longer bundles Corepack), `openssl`, and [`uv`](https://docs.astral.sh/uv/) (`pip install uv`). `uv` provides Python 3.12, the same version as CI and production.
 
 ```bash
 scripts/dev.sh setup     # venv backend/.venv (Python 3.12), backend[dev], pnpm install, keys + env in .dev/

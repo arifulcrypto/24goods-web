@@ -4,6 +4,14 @@ Update this file in every PR. Phases are defined in [review-v2.md §8](review-v2
 
 ## Current state — hand-off (read this first in a new session)
 
+**Build toolchain (2026-11-10, branch `fix/node-lts-typescript-pins`, supersedes Dependabot #74/#78):**
+web image build stage and CI on **Node 26 Active LTS** (EOL 2029-04-30) instead of 22; pnpm installed
+with npm from `packageManager` (Node ≥ 25 images have no Corepack); **TypeScript 6.0.3** (newest that
+vue-tsc 3.3.14 supports; TS 7 waits for vue-tsc). Dependabot ignores `node` 27.x until it is LTS
+(2027-10-20) and `typescript` 7.x until vue-tsc supports it. Build tooling only: the runtime `caddy`
+stage and the app code are unchanged, so no deploy is required for it. Dev box still runs Node 20 (EOL):
+install Node 26 there when convenient.
+
 **Production deployed 2026-11-10 UTC: `5f709d3`** (owner-approved) from `5fb2575`: Dependabot #75
 (vue-i18n 11.4.17), #76 (vitest 5.1.0, dev) and #77 (@types/node 26, dev). Frontend dependencies only: no
 backend change, no migration. `scripts/prod.sh smoke` all pass; api/delivery/web report revision
