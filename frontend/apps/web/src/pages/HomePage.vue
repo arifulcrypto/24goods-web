@@ -3,7 +3,7 @@ import { computed, onActivated, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { LogoMark } from '@24goods/shared/ui'
-import { BRAND, clearRecent, recentIds, safeAssetUrl, storeInitial, type Category, type ProductSummary } from '@24goods/shared'
+import { BRAND, recentIds, safeAssetUrl, storeInitial, type Category, type ProductSummary } from '@24goods/shared'
 import { api } from '../api'
 import Announcement from '../components/Announcement.vue'
 import BuySheet from '../components/BuySheet.vue'
@@ -22,7 +22,6 @@ const category = ref('')
 const refreshing = ref(false)
 const view = ref<'list' | 'grid'>(readView())
 const feed = useProductFeed(() => ({ category: category.value || undefined }), 50)
-const recent = ref<ProductSummary[]>([])
 const recommended = ref<ProductSummary[]>([])
 const buying = ref<ProductSummary | null>(null)
 const buySheet = ref(false)
@@ -59,15 +58,9 @@ function setView(v: 'list' | 'grid') {
 let stripSeq = 0
 async function loadStrips() {
   const mine = ++stripSeq
+  // v11: "Recently viewed" lives on My account now (a shorter home); the viewed ids still steer
+  // the recommendations below
   const ids = recentIds()
-  let r: ProductSummary[] = []
-  try {
-    r = ids.length ? (await api.productsByIds(ids)).items : []
-  } catch {
-    r = []
-  }
-  if (mine !== stripSeq) return
-  recent.value = r
   let rec: ProductSummary[] = []
   try {
     rec = (await api.recommended({ recent: ids, limit: 8 })).items
@@ -95,7 +88,7 @@ watch(locale, () => {
   void loadStrips()
   void loadCategories()
 })
-// kept alive: refresh the recently-viewed strip when coming back from a product page
+// kept alive: refresh the recommendations when coming back from a product page
 let first = true
 onActivated(() => {
   if (first) first = false
@@ -113,10 +106,6 @@ async function onRefresh() {
   await feed.load()
   void loadStrips()
   refreshing.value = false
-}
-function clearViewed() {
-  clearRecent()
-  recent.value = []
 }
 function buy(p: ProductSummary) {
   buying.value = p
@@ -174,7 +163,6 @@ function openSupport() {
     <Announcement />
 
     <van-pull-refresh v-model="refreshing" @refresh="onRefresh">
-      <MiniStrip :title="t('home.recentlyViewed')" :items="recent" :clear-label="t('home.clear')" @clear="clearViewed" />
       <MiniStrip :title="t('home.recommended')" :items="recommended" />
 
       <div class="list-head">

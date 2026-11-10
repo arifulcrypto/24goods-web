@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onActivated, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { clearRecent, recentIds, safeAssetUrl, type Locale, type ProductSummary } from '@24goods/shared'
@@ -42,6 +42,8 @@ async function loadRecent() {
   }
 }
 onMounted(loadRecent)
+// kept-alive tab: a product viewed since the last visit shows up when coming back
+onActivated(loadRecent)
 watch(siteAccessCleared, loadRecent)
 // product titles are server-localized: refetch in the new language
 watch(locale, loadRecent)
