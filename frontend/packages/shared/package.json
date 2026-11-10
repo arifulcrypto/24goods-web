@@ -19,7 +19,7 @@
   },
   "devDependencies": {
     "vue": "3.5.44",
-    "vue-i18n": "11.4.16",
+    "vue-i18n": "11.4.17",
     "typescript": "5.9.3",
     "vue-tsc": "3.3.14",
     "vitest": "4.1.12",
