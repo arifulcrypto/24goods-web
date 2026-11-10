@@ -16,6 +16,15 @@ import { useSupportStore } from './stores/support'
 import { useSiteStore } from './stores/site'
 import { useNotifyPrefsStore } from './stores/notifyPrefs'
 
+/** Same-origin absolute path only: one leading `/`, never `//host` or `/\host`. */
+function isSameOriginPath(u: string): boolean {
+  if (typeof u !== 'string' || !/^\/(?![/\\])/.test(u)) return false
+  try {
+    return new URL(u, location.origin).origin === location.origin
+  } catch {
+    return false
+  }
+}
 const route = useRoute()
 const { t } = useI18n()
 const auth = useAuthStore()
@@ -124,7 +133,7 @@ watch(
     if (id) {
       unlockAudioOnFirstGesture()
       void registerNotifyWorker((url) => {
-        if (/^\/(?!\/)/.test(url)) void router.push(url)
+        if (isSameOriginPath(url)) void router.push(url)
       })
       rt.start()
       void convs.refresh().catch(() => undefined)

@@ -182,14 +182,14 @@ onMounted(() => {
     <section class="section card">
       <h2 class="group-title">{{ t('notifyPrefs.title') }}</h2>
       <van-cell-group :border="false">
-        <van-cell :title="t('notifyPrefs.sound')" icon="volume-o" center clickable @click="notifyPrefs.setSound(!notifyPrefs.sound)">
+        <van-cell :title="t('notifyPrefs.sound')" icon="volume-o" center>
           <template #value>
-            <van-switch :model-value="notifyPrefs.sound" :aria-label="t('notifyPrefs.sound')" @click.stop @update:model-value="(v: boolean) => notifyPrefs.setSound(v)" />
+            <van-switch :model-value="notifyPrefs.sound" :aria-label="t('notifyPrefs.sound')" @update:model-value="(v: boolean) => notifyPrefs.setSound(v)" />
           </template>
         </van-cell>
-        <van-cell :title="t('notifyPrefs.desktop')" :label="t('notifyPrefs.desktopHint')" icon="bell" center clickable @click="toggleDesktop(!notifyPrefs.desktop)">
+        <van-cell :title="t('notifyPrefs.desktop')" :label="t('notifyPrefs.desktopHint')" icon="bell" center>
           <template #value>
-            <van-switch :model-value="notifyPrefs.desktop" :aria-label="t('notifyPrefs.desktop')" @click.stop @update:model-value="toggleDesktop" />
+            <van-switch :model-value="notifyPrefs.desktop" :aria-label="t('notifyPrefs.desktop')" @update:model-value="toggleDesktop" />
           </template>
         </van-cell>
       </van-cell-group>
