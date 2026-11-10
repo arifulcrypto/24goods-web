@@ -42,6 +42,7 @@ async def test_send_text_idempotent_and_limits(env):
         "role": "buyer",
         "display_name": "Buyer",
         "avatar_url": None,
+        "avatar_preset": None,
     }
     assert await env.scalar("SELECT count(*) FROM messages WHERE type='text'") == 1
     r = await buyer.post(url, json={"client_msg_id": "c-2", "type": "text", "text": "x" * 2001})
