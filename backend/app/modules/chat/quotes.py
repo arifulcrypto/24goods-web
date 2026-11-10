@@ -16,6 +16,7 @@ from app.core.audit import audit
 from app.core.config import Settings
 from app.core.errors import Conflict, InvalidState, NotFound, OutOfStock, QuoteExpired, Validation
 from app.core.money import MoneyError, fmt, parse_amount
+from app.core.scoped import get_scoped
 from app.models import Conversation, Message, Order, Product, Quote, User
 from app.modules.chat.messages import insert_message, post_system
 from app.modules.chat.schemas import QuoteIn
@@ -80,7 +81,7 @@ async def create_quote(
         raise Validation(f"amount: {exc}") from None
     product: Product | None = None
     if body.product_id is not None:
-        product = await db.get(Product, body.product_id)
+        product = await get_scoped(db, Product, body.product_id, conv.tenant_id)
         if product is None:
             raise NotFound("Product not found")
         if product.delivery_mode == "auto_card" and body.qty > MAX_AUTO_CARD_QTY:
@@ -173,7 +174,7 @@ async def accept_quote(
 ) -> tuple[Order, Quote, list[Message]]:
     """One transaction: lock quote -> checks (owner, status, expiry, HMAC) -> order."""
     q = await _locked_quote(db, quote_id)
-    conv = await db.get(Conversation, q.conversation_id)
+    conv = await get_scoped(db, Conversation, q.conversation_id, q.tenant_id)
     if conv is None or conv.buyer_id != buyer.id:
         raise NotFound("Quote not found")
     if q.status != "offered":
@@ -198,7 +199,7 @@ async def accept_quote(
         )
         await db.commit()
         raise Conflict("Quote integrity check failed")
-    product = await db.get(Product, q.product_id) if q.product_id else None
+    product = await get_scoped(db, Product, q.product_id, q.tenant_id) if q.product_id else None
     delivery_mode = product.delivery_mode if product else "manual"
     if delivery_mode == "auto_card" and q.qty > MAX_AUTO_CARD_QTY:
         raise InvalidState("Quote quantity exceeds the auto-delivery limit")
@@ -252,4 +253,4 @@ async def accept_quote(
 
 
 async def quote_message(db: AsyncSession, q: Quote) -> Message | None:
-    return await db.get(Message, q.message_id) if q.message_id else None
+    return await get_scoped(db, Message, q.message_id, q.tenant_id) if q.message_id else None

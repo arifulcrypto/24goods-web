@@ -24,6 +24,7 @@ from app.core.config import Settings, get_settings
 from app.core.db import make_engine, make_sessionmaker, tenant_session
 from app.core.logging import configure_logging
 from app.core.markdown import render_i18n
+from app.core.scoped import get_scoped
 from app.core.security import hash_password, verify_password
 from app.core.vaultkeys import build_sealer
 from app.devtools.covers import cover_png
@@ -287,6 +288,7 @@ async def _tenant(maker, settings: Settings) -> uuid.UUID:  # type: ignore[no-un
             await db.commit()
             tid = t.id
         else:  # rename the pre-v3 demo tenant
+            # nosemgrep: tenant-scoped-get -- Tenant has no tenant_id
             tenant = await db.get(Tenant, tid)
             if tenant is not None and tenant.name != settings.brand_name:
                 tenant.name = settings.brand_name
@@ -407,6 +409,7 @@ async def _content(db: AsyncSession, tid: uuid.UUID, admin: User, *, demo: bool 
                     created_by=admin.id,
                 )
             )
+    # nosemgrep: tenant-scoped-get -- Tenant has no tenant_id
     tenant = await db.get(Tenant, tid)
     if tenant is not None and "announcement" not in (tenant.settings or {}):
         ann = dict(ANNOUNCEMENT if demo else ANNOUNCEMENT_PROD)
@@ -475,7 +478,7 @@ async def run(settings: Settings, database_url: str) -> None:
                 db, tid, "agent@demo.local", "agent", "Lily (Support)", "en", agent_pw
             )
             buyer = await _user(db, tid, "buyer@demo.local", "buyer", "Demo Buyer", "en", buyer_pw)
-            if await db.get(AgentStatus, agent.id) is None:
+            if await get_scoped(db, AgentStatus, agent.id, tid) is None:
                 await set_agent_status(db, agent, "on_hold", "Usually replies in 5 minutes")
             await _content(db, tid, admin)
             products = await _products(db, tid, admin, store)

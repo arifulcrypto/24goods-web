@@ -1,0 +1,16 @@
+rules:
+  - id: tenant-scoped-get
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Bare `db.get(Model, id)` looks a row up by primary key only and leans on RLS alone for
+      tenant isolation (AGENTS.md invariant 4). Use `app.core.scoped.get_scoped(db, Model, id,
+      tenant_id)`. For a model without tenant_id (Tenant, CustomDomain) add
+      `# nosemgrep: tenant-scoped-get -- <reason>`.
+    paths:
+      include:
+        - backend/app/
+    pattern-either:
+      - pattern: $DB.get($MODEL, ...)
+      - pattern: await $DB.get($MODEL, ...)
+    pattern-not: $X.get("...", ...)

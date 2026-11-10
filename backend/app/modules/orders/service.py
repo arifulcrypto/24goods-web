@@ -32,6 +32,7 @@ from app.core.i18n import pick
 from app.core.money import fmt, to_decimal
 from app.core.ratelimit import release, reserve
 from app.core.resources import Resources
+from app.core.scoped import get_scoped, session_tenant
 from app.core.settings_v5 import section
 from app.core.storefront import Storefront
 from app.models import (
@@ -178,7 +179,7 @@ async def purchase_terms(db: AsyncSession, product_id: uuid.UUID | None) -> dict
     ``None`` for non-product orders; null values inside mean "tenant default at delivery"."""
     if product_id is None:
         return None
-    p = await db.get(Product, product_id)
+    p = await get_scoped(db, Product, product_id, session_tenant(db))
     if p is None:
         return None
     return {
@@ -455,7 +456,7 @@ async def broadcast_order(
 ) -> None:
     """Publish the order (+ any chat messages) to buyer and staff. Call after commit."""
     await db.refresh(order)
-    buyer = await db.get(User, order.buyer_id)
+    buyer = await get_scoped(db, User, order.buyer_id, order.tenant_id)
     bview = await one_view(db, order, order.buyer_id, buyer.locale if buyer else "en")
     sview = await one_view(db, order, None, "en")
     await publish_order(res.redis, order.tenant_id, order.buyer_id, bview, sview)
@@ -469,7 +470,7 @@ async def broadcast_order(
         if m is not None and m.id not in seen:
             seen.add(m.id)
             out.append(m)
-    conv = await db.get(Conversation, order.conversation_id)
+    conv = await get_scoped(db, Conversation, order.conversation_id, order.tenant_id)
     if conv is not None:
         await chat.broadcast(res, db, conv, out)
 
@@ -911,8 +912,12 @@ async def expire_pending(
                     await broadcast_order(res, db, order, [msgs.get(order.id)])
                 # quote cards: same message id re-published with status "expired"
                 for conv_id, message_id in expired_quotes:
-                    conv = await db.get(Conversation, conv_id)
-                    card = await db.get(Message, message_id) if message_id else None
+                    conv = await get_scoped(db, Conversation, conv_id, order.tenant_id)
+                    card = (
+                        await get_scoped(db, Message, message_id, order.tenant_id)
+                        if message_id
+                        else None
+                    )
                     if conv is not None and card is not None:
                         await chat.broadcast(res, db, conv, [card])
     return total

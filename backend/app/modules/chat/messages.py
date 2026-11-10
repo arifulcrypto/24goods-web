@@ -9,6 +9,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.scoped import get_scoped
 from app.models import Conversation, Message
 
 
@@ -50,7 +51,7 @@ async def insert_message(
                 Message.sender_id == sender_id, Message.client_msg_id == client_msg_id
             )
         )
-    msg = await db.get(Message, new_id)
+    msg = await get_scoped(db, Message, new_id, tenant_id)
     assert msg is not None
     if created:
         await db.execute(

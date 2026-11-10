@@ -23,6 +23,7 @@ from app.core.audit import audit
 from app.core.cardvault import CardContext, CardSealer, first_field
 from app.core.deps import Page
 from app.core.errors import Conflict, NotFound, Validation
+from app.core.scoped import get_scoped, session_tenant
 from app.models import CardBatch, CardStock, Order, Product
 from app.modules.common.views import iso
 
@@ -223,7 +224,7 @@ async def list_cards(
     expiring_days: int | None = None,
     order_no: str | None = None,
 ) -> dict:
-    if await db.get(Product, product_id) is None:
+    if await get_scoped(db, Product, product_id, session_tenant(db)) is None:
         raise NotFound("Product not found")
     cols = CardStock.public_columns()
     t = CardStock.__table__
@@ -258,7 +259,7 @@ async def list_cards(
 
 
 async def batches(db: AsyncSession, product_id: uuid.UUID) -> list[dict[str, Any]]:
-    if await db.get(Product, product_id) is None:
+    if await get_scoped(db, Product, product_id, session_tenant(db)) is None:
         raise NotFound("Product not found")
     t = CardStock.__table__
     counts: dict[uuid.UUID, dict[str, int]] = {}
@@ -431,7 +432,7 @@ async def replace_card(
         raise NotFound("Card not found")
     if old["status"] not in ("available", "reserved"):
         raise Conflict("Only available cards can be replaced; sold cards go through after-sales")
-    product = await db.get(Product, old["product_id"])
+    product = await get_scoped(db, Product, old["product_id"], session_tenant(db))
     assert product is not None
     code = code.strip()
     parsed = split_expiry(code)

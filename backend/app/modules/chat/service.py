@@ -11,6 +11,7 @@ from app.core.errors import Conflict, InvalidState, NotFound, Validation
 from app.core.i18n import pick
 from app.core.money import fmt
 from app.core.resources import Resources
+from app.core.scoped import get_scoped, session_tenant
 from app.core.security import STAFF_ROLES
 from app.models import Attachment, Conversation, Message, Order, Product, Quote, User
 from app.modules.catalog.service import get_active_product
@@ -163,7 +164,7 @@ async def broadcast(
     await db.refresh(conv)
     for view in await message_views(db, msgs):
         await publish_message(res.redis, conv.tenant_id, conv.buyer_id, view)
-    buyer = await db.get(User, conv.buyer_id)
+    buyer = await get_scoped(db, User, conv.buyer_id, conv.tenant_id)
     lang = buyer.locale if buyer else "en"
     (bview,) = await conversation_views(db, [conv], viewer="buyer", lang=lang)
     (sview,) = await conversation_views(db, [conv], viewer="staff", lang=lang)
@@ -171,14 +172,14 @@ async def broadcast(
 
 
 async def buyer_conversation(db: AsyncSession, conv_id: uuid.UUID, user: User) -> Conversation:
-    conv = await db.get(Conversation, conv_id)
+    conv = await get_scoped(db, Conversation, conv_id, user.tenant_id)
     if conv is None or conv.buyer_id != user.id:
         raise NotFound("Conversation not found")  # no existence oracle for IDOR probes
     return conv
 
 
 async def staff_conversation(db: AsyncSession, conv_id: uuid.UUID) -> Conversation:
-    conv = await db.get(Conversation, conv_id)
+    conv = await get_scoped(db, Conversation, conv_id, session_tenant(db))
     if conv is None:
         raise NotFound("Conversation not found")
     return conv
@@ -322,7 +323,7 @@ async def send_user_message(
         if product_id is None:
             raise Validation("product_id is required")
         product = await get_active_product(db, product_id)  # active + same tenant (RLS)
-        buyer = await db.get(User, conv.buyer_id)
+        buyer = await get_scoped(db, User, conv.buyer_id, conv.tenant_id)
         payload = product_card_payload(product, buyer.locale if buyer else "en")
         text = None
         attachment_id = None

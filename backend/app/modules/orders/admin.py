@@ -14,6 +14,7 @@ from app.core.deps import Page
 from app.core.errors import AlreadyPaid, InvalidState, NotFound, OutOfStock, Validation
 from app.core.money import MoneyError, fmt, parse_amount
 from app.core.resources import Resources
+from app.core.scoped import get_scoped
 from app.core.settings_v5 import section
 from app.models import (
     Attachment,
@@ -83,7 +84,7 @@ async def change_price(
         raise InvalidState("This order's price cannot be changed", code="reprice_not_goods")
     floor_total = 0
     if order.product_id is not None:
-        product = await db.get(Product, order.product_id)
+        product = await get_scoped(db, Product, order.product_id, order.tenant_id)
         if product is None:  # floor unknown: never reprice blind
             raise InvalidState("The order's product no longer exists", code="reprice_not_goods")
         floor_total = product.floor_price_minor * order.qty
@@ -164,7 +165,7 @@ async def deliver_manual(
     if order.delivery_mode != "manual" or order.status != "paid":
         raise InvalidState("Only paid manual orders can be delivered")
     if attachment_id is not None:
-        att = await db.get(Attachment, attachment_id)
+        att = await get_scoped(db, Attachment, attachment_id, agent.tenant_id)
         # Only a file the acting staff member uploaded: never a buyer's private chat upload
         # (that would hand it to another buyer through the order), not even for admins.
         if att is None or att.owner_id != agent.id or att.purpose not in ("chat", "delivery"):
@@ -172,7 +173,11 @@ async def deliver_manual(
         att.purpose = "delivery"
     before = snapshot(order)
     now = datetime.now(timezone.utc)
-    product = await db.get(Product, order.product_id) if order.product_id else None
+    product = (
+        await get_scoped(db, Product, order.product_id, order.tenant_id)
+        if order.product_id
+        else None
+    )
     t_hours, t_months = order_terms(order, product)
     until, confirm_at = delivery_deadlines(
         now,
@@ -664,7 +669,11 @@ async def order_detail(
     if order is None:
         raise NotFound("Order not found")
     (view,) = await admin_views(db, [order])
-    product = await db.get(Product, order.product_id) if order.product_id else None
+    product = (
+        await get_scoped(db, Product, order.product_id, order.tenant_id)
+        if order.product_id
+        else None
+    )
     view["floor_price"] = fmt(product.floor_price_minor) if product else None  # per unit
     if order.checkout_id is not None:
         siblings = list(

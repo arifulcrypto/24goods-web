@@ -21,6 +21,7 @@ from app.core.config import Settings
 from app.core.db import tenant_session
 from app.core.email_templates import render_template, site_name
 from app.core.money import fmt
+from app.core.scoped import get_scoped
 from app.core.settings_v5 import section
 from app.models import Order, Outbox, Tenant, User
 from app.modules.content.site import tenant_settings
@@ -112,7 +113,7 @@ async def _send_one(
                 Order.id == uuid.UUID(str(row.payload["order_id"])), Order.tenant_id == tid
             )
         )
-        user = await db.get(User, order.buyer_id) if order else None
+        user = await get_scoped(db, User, order.buyer_id, tid) if order else None
         cfg = await mailer.load_config(db, settings, tid, ts, require_enabled=True)
         err: str | None = None
         if order is None or not _eligible(user) or cfg is None:
