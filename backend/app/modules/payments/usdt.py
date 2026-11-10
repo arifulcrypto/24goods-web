@@ -28,7 +28,7 @@ from app.core.errors import InvalidState, Unavailable
 from app.core.resources import Resources
 from app.models import Checkout, Order, PaymentAttempt
 from app.modules.payments.channels import LABELS, USDT_CHANNELS
-from app.payments.bepusdt import BepusdtClient, BepusdtConfig, BepusdtError
+from app.payments.bepusdt import BepusdtClient, BepusdtConfig, BepusdtError, BepusdtRefused
 
 ATTEMPT_KEEP_S = 7 * 24 * 3600
 REUSE_MARGIN_S = 30
@@ -187,6 +187,26 @@ async def start_attempt(
             name=title,
             redirect_url=_redirect_url(res, no),
         )
+    except BepusdtRefused:
+        # A well-formed refusal means no transaction was created: nothing to reconcile.
+        row = await db.scalar(
+            select(PaymentAttempt)
+            .where(PaymentAttempt.id == ref, PaymentAttempt.tenant_id == tid)
+            .with_for_update()
+        )
+        row.status = "failed"
+        row.data = {**row.data, "reason": "gateway_refused"}
+        await audit(
+            db,
+            tenant_id=tid,
+            action="payment.usdt_refused",
+            target="payment_attempt:" + str(ref),
+            severity="warning",
+        )
+        await db.commit()
+        raise Unavailable(
+            "Payment channel refused the request; try again or choose another method"
+        ) from None
     except BepusdtError:
         row = await db.scalar(
             select(PaymentAttempt)

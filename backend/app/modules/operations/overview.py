@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import time
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.resources import Resources
 from app.models import Order, Outbox, PaymentAttempt
 from app.modules.operations.service import utcnow
+from app.modules.payments.reconcile import OPEN_STATUSES
+
+UNDELIVERED_AFTER_MIN = 15
 
 STARTED = time.monotonic()
 CACHE_S = 30
@@ -148,6 +152,8 @@ async def overview(db: AsyncSession, res: Resources, tenant: Any) -> dict[str, A
     outbox: dict[str, Any] = {"pending": None, "oldest_at": None, "failed": None}
     review = None
     uncertain = None
+    open_attempts = None
+    undelivered = None
     try:
         await db.execute(text("SET LOCAL statement_timeout = '1500ms'"))
         database = {
@@ -180,6 +186,21 @@ async def overview(db: AsyncSession, res: Resources, tenant: Any) -> dict[str, A
             select(func.count(PaymentAttempt.id)).where(
                 PaymentAttempt.tenant_id == tenant,
                 PaymentAttempt.status.in_(("preparing", "unknown")),
+            )
+        )
+        # exactly the set the reconciler polls (ix_attempts_open)
+        open_attempts = await db.scalar(
+            select(func.count(PaymentAttempt.id)).where(
+                PaymentAttempt.tenant_id == tenant,
+                PaymentAttempt.status.in_(OPEN_STATUSES),
+            )
+        )
+        undelivered = await db.scalar(
+            select(func.count(Order.id)).where(
+                Order.tenant_id == tenant,
+                Order.status == "paid",
+                Order.delivery_mode == "auto_card",
+                Order.paid_at < utcnow() - timedelta(minutes=UNDELIVERED_AFTER_MIN),
             )
         )
     except Exception:
@@ -215,6 +236,11 @@ async def overview(db: AsyncSession, res: Resources, tenant: Any) -> dict[str, A
         "database": database,
         "redis": redis,
         "outbox": outbox,
-        "payment_review": {"orders": review, "uncertain_attempts": uncertain},
+        "payment_review": {
+            "orders": review,
+            "uncertain_attempts": uncertain,
+            "open_payment_attempts": open_attempts,
+        },
+        "paid_undelivered_auto_card": undelivered,
         "delivery": {"status": "unknown"},
     }
