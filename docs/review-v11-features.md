@@ -109,19 +109,19 @@ variant picker; a product without variants behaves exactly as today.
   `catalog.default_sort` = manual | sales | price_asc | price_desc | newest (default manual); buyer
   listing gets a sort selector (same options, default from setting). Pinned items stay on top in every
   sort.
-- **Generic avatars**: 16 original SVG character avatars in `frontend/packages/shared/src/avatars/`
-  (simple neutral people, varied skin tones / hair / colours, no brand or copyrighted characters), bundled
-  (no CDN). `users.avatar_preset` String 16 NULL; `PUT /me/avatar/preset {preset}` (validated against
+- **Generic avatars**: DONE (orchestrator) — `frontend/packages/shared/src/avatars/index.ts`: 16
+  original inline-SVG presets `p01..p16`, `resolveAvatar({url, preset, seed})`, `defaultAvatarPreset`,
+  `isAvatarPreset`. Remaining for W3: backend + pickers + rendering. `users.avatar_preset` String 16 NULL; `PUT /me/avatar/preset {preset}` (validated against
   the list), clears an uploaded avatar; staff can pick in their profile; a user with neither upload nor
   preset gets a deterministic preset from a hash of the user id (frontend), so every bubble has a face.
-- **Admin browser notifications**: on by default; first-login banner "Enable desktop notifications"
+- **Admin browser notifications**: DONE (orchestrator, `admin/public/sw.js`, `admin/src/notify.ts`) — on by default; first-login banner "Enable desktop notifications"
   (permission request on click); register a tiny service worker (`/admin/sw.js`, same origin, no
   caching, only `notificationclick` → focus/open the URL) and show notifications through
   `registration.showNotification` (works minimised and on Android Chrome), fallback `new Notification`;
   urgent alerts use `requireInteraction`; a "Send test notification" button; chime plays also when
   hidden. True push with the browser closed would need Web Push (FCM, unreachable in mainland China)
   — out of scope, documented.
-- **Recently viewed** removed from Home (kept and improved on Me: horizontal strip + "Clear").
+- **Recently viewed**: DONE (orchestrator) — removed from Home, kept on Me (refreshes on return).
 
 ## Out of scope (recorded)
 Web Push with the browser closed; per-variant images; variant option matrices (two dimensions) —
