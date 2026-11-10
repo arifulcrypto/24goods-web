@@ -2,7 +2,7 @@ import { onBeforeUnmount, onMounted, watch } from 'vue'
 import { useRoute, useRouter, type RouteLocationRaw } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { formatMoney, messagePreview } from '@24goods/shared'
-import { beep, desktopNotify } from '../notify'
+import { beep, desktopNotify, registerNotifyWorker, unlockAudioOnFirstGesture } from '../notify'
 import { createSeenSet, createThrottle, isExpediteMessage, isRelevant, isUrgentPaid, orderAlertKind, titleWithCount, type NotifyEvent } from '../lib/notifyPolicy'
 import { useDeskStore } from '../stores/desk'
 import { usePrefsStore } from '../stores/prefs'
@@ -26,6 +26,13 @@ export function useCsNotifications() {
   const ticketSeen = createSeenSet()
   const expediteSeen = createSeenSet()
 
+  // v11: notifications through a service worker keep working while the browser is minimised
+  void registerNotifyWorker((url) => {
+    const path = url.startsWith('/admin') ? url.slice('/admin'.length) || '/' : url
+    void router.push(path)
+  })
+  unlockAudioOnFirstGesture()
+
   const isHidden = () => document.visibilityState === 'hidden' || !document.hasFocus()
   const openConversationId = () => (route.name === 'inbox' && typeof route.query.c === 'string' ? route.query.c : null)
   const openOrderId = () => (typeof route.query.open === 'string' && route.name === 'orders' ? route.query.open : null)
@@ -39,7 +46,7 @@ export function useCsNotifications() {
     if (prefs.sound) beep()
     const go = () => void router.push(to)
     if (hidden) {
-      if (prefs.notify) desktopNotify(title, body, ev.kind, go)
+      if (prefs.notify) desktopNotify(title, body, ev.kind, go, { url: router.resolve(to).href, urgent })
     } else {
       // Visible but elsewhere in the console: an in-app toast instead of an OS popup.
       const n = ElNotification({

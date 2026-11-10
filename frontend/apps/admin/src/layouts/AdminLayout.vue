@@ -26,6 +26,7 @@ import { LogoMark } from '@24goods/shared/ui'
 import NotifyPopover from '../components/NotifyPopover.vue'
 import StaffAvatarControl from '../components/StaffAvatarControl.vue'
 import { useCsNotifications } from '../composables/useCsNotifications'
+import { ensureNotificationPermission, notificationPermission } from '../notify'
 import { useDeskStore } from '../stores/desk'
 import AgentStatusSelect from '../components/AgentStatusSelect.vue'
 import { useAuthStore } from '../stores/auth'
@@ -43,6 +44,28 @@ const prefs = usePrefsStore()
 const desk = useDeskStore()
 useCsNotifications()
 const narrow = ref(false)
+
+// v11: ask once (per browser) for desktop notifications; a browser only shows its permission prompt
+// after a user gesture, hence a banner with a button rather than an automatic request.
+const NOTIFY_BANNER_KEY = '24goods.admin.notifyBannerDismissed'
+const notifyBanner = ref(false)
+try {
+  notifyBanner.value = notificationPermission() === 'default' && localStorage.getItem(NOTIFY_BANNER_KEY) !== '1'
+} catch {
+  notifyBanner.value = notificationPermission() === 'default'
+}
+async function enableNotifications() {
+  prefs.notify = await ensureNotificationPermission()
+  notifyBanner.value = false
+}
+function dismissNotifyBanner() {
+  notifyBanner.value = false
+  try {
+    localStorage.setItem(NOTIFY_BANNER_KEY, '1')
+  } catch {
+    /* ignore */
+  }
+}
 
 interface MenuItem {
   path: string
@@ -209,6 +232,12 @@ async function logout() {
         </div>
       </el-header>
       <el-main class="main">
+        <el-alert v-if="notifyBanner" class="notify-banner" type="info" show-icon :closable="false" :title="t('notify.bannerTitle')" :description="t('notify.bannerBody')">
+          <div class="notify-banner-actions">
+            <el-button size="small" type="primary" @click="enableNotifications">{{ t('notify.bannerEnable') }}</el-button>
+            <el-button size="small" text @click="dismissNotifyBanner">{{ t('notify.bannerLater') }}</el-button>
+          </div>
+        </el-alert>
         <RouterView />
       </el-main>
     </el-container>
@@ -342,5 +371,13 @@ async function logout() {
   .top-title {
     display: none;
   }
+}
+.notify-banner {
+  margin-bottom: 12px;
+}
+.notify-banner-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
 }
 </style>
