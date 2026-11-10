@@ -5,7 +5,7 @@ import { ProductThumb } from '@24goods/shared/ui'
 import { moneyParts, type ProductSummary } from '@24goods/shared'
 
 const props = defineProps<{ product: ProductSummary }>()
-const { t, locale } = useI18n()
+const { locale } = useI18n()
 const price = computed(() => moneyParts(props.product.price, props.product.currency, locale.value))
 </script>
 
@@ -13,7 +13,7 @@ const price = computed(() => moneyParts(props.product.price, props.product.curre
   <RouterLink :to="`/p/${encodeURIComponent(product.id)}`" class="mini">
     <ProductThumb :src="product.cover" :title="product.title" :size="112" :radius="10" />
     <span class="mini-title">{{ product.title }}</span>
-    <span class="price mini-price"><small v-if="product.price_from">{{ t('product.priceFromPre') }}</small><small>{{ price.symbol }}</small>{{ price.value }}<small v-if="product.price_from">{{ t('product.priceFromSuf') }}</small></span>
+    <i18n-t v-if="product.price_from" keypath="product.priceFrom" tag="span" class="price mini-price"><template #price><small>{{ price.symbol }}</small>{{ price.value }}</template></i18n-t><span v-else class="price mini-price"><small>{{ price.symbol }}</small>{{ price.value }}</span>
   </RouterLink>
 </template>
 

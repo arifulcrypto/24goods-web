@@ -151,7 +151,7 @@ const zhCN: AdminMessages = {
     archived: '规格已归档（已有订单或卡密）',
     deleted: '规格已删除',
     confirmRemove: '移除规格“{name}”？若已有订单或卡密将改为归档。',
-    count: '{n} 个规格',
+    count: '{n} 个规格 | {n} 个规格',
     importPick: '规格（必选）',
     allVariants: '全部规格',
     v: { nameRequired: '请填写英文名称' },
