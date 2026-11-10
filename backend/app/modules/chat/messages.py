@@ -76,6 +76,8 @@ SYSTEM_TEXT: dict[str, str] = {
     "quote_withdrawn": "The quote was withdrawn.",
     "agent_joined": "{name} joined the conversation.",
     "agent_left": "{name} left the conversation.",
+    "message_pinned": "{name} pinned a message.",
+    "message_unpinned": "{name} unpinned a message.",
     "conversation_closed": "The conversation was closed.",
     "conversation_reopened": "The conversation was reopened.",
 }

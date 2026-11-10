@@ -70,6 +70,7 @@ class Quote(Base):
     tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id"))
     conversation_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("conversations.id"))
     product_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("products.id"))
+    variant_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("product_variants.id"))
     created_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
     message_id: Mapped[int | None] = mapped_column(BigInteger)
     title: Mapped[str] = mapped_column(String(200))
