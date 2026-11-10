@@ -21,6 +21,7 @@ const props = defineProps<{
   /** Own display name / avatar for pending (not yet echoed) messages. */
   selfName?: string
   selfAvatar?: string | null
+  selfPreset?: string | null
   viewOrder?: boolean
   /** v11 W2: server-listed pins (newest first, ≤ 3), independent of the loaded page. */
   pins?: Message[]
@@ -140,6 +141,7 @@ defineExpose({ jumpTo, scrollToBottom, isNearBottom, preserveScroll, el: scrolle
         :self-id="selfId"
         :self-name="selfName"
         :self-avatar="selfAvatar"
+        :self-preset="selfPreset"
         @action="(a, id) => emit('action', a, id)"
         @jump="jumpTo"
         :mode="mode"

@@ -7,6 +7,7 @@ import {
   goBack,
   messageFilename,
   isApiError,
+  resolveAvatar,
   safePayUrl,
   type Conversation,
   type Message,
@@ -137,6 +138,9 @@ const offlineText = computed(() => {
 })
 const welcome = computed(() => site.site?.support?.welcome?.trim() || t('cs.welcomeDefault'))
 const quick = computed(() => (site.site?.support?.quick_questions ?? []).filter((q) => q.trim()).slice(0, 6))
+const welcomeAvatar = computed(() =>
+  resolveAvatar({ preset: conv.value?.assigned_agent?.avatar_preset, seed: conv.value?.assigned_agent?.id ?? 'support' }),
+)
 const guestId = computed(() => (auth.user?.is_instant ? (auth.user.handle ?? '') : ''))
 function saveLogin() {
   if (auth.guestCreds) showCreds.value = true
@@ -405,6 +409,7 @@ function deliveredOrderId(it: { kind: string; message?: { type: string; payload:
     <ChatMessageList
       :self-name="auth.user?.display_name"
       :self-avatar="auth.user?.avatar_url"
+      :self-preset="auth.user?.avatar_preset"
       :self-id="auth.user?.id"
       @action="messageAction"
       :pins="pins"
@@ -436,7 +441,7 @@ function deliveredOrderId(it: { kind: string; message?: { type: string; payload:
           {{ t('cs.connectFailed') }}
         </button>
         <div v-else class="gc-row welcome">
-          <span class="gc-avatar" aria-hidden="true">{{ (conv?.assigned_agent?.display_name || t('chat.title')).charAt(0).toUpperCase() }}</span>
+          <span class="gc-avatar" aria-hidden="true"><img :src="welcomeAvatar" alt="" decoding="async" /></span>
           <div class="gc-col">
             <div class="gc-line"><div class="gc-bubble">{{ welcome }}</div></div>
             <div v-if="!quick.length" class="chips" role="group" :aria-label="t('chat.chips.label')">

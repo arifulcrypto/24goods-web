@@ -30,6 +30,8 @@ const routes: RouteRecordRaw[] = [
   { path: '/p/:id', name: 'product', component: () => import('./pages/ProductPage.vue') },
   { path: '/buy/:id', name: 'buy', component: () => import('./pages/ProductPage.vue') },
   { path: '/lookup', name: 'lookup', component: () => import('./pages/LookupPage.vue'), meta: { feature: 'lookup' } },
+  { path: '/announcements', name: 'announcements', component: () => import('./pages/AnnouncementsPage.vue') },
+  { path: '/announcements/:id', name: 'announcement', component: () => import('./pages/AnnouncementsPage.vue') },
   { path: '/help', name: 'help', component: () => import('./pages/HelpPage.vue') },
   { path: '/a/:slug', name: 'article', component: () => import('./pages/ArticlePage.vue') },
   // /chat needs no sign-in: the page creates an instant account when there is none (review-v4 §5).

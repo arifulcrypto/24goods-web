@@ -2,7 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { formatRelative, messagePreview, type Conversation } from '@24goods/shared'
+import { formatRelative, messagePreview, resolveAvatar, safeAssetUrl, type Conversation } from '@24goods/shared'
 import { api } from '../api'
 import { useConversationsStore } from '../stores/conversations'
 import { toastError } from '../ui'
@@ -28,6 +28,18 @@ onMounted(load)
 
 function title(c: Conversation): string {
   return c.assigned_agent?.display_name || t('messages.support')
+}
+/** Assigned agent's picture/preset (stable default per agent; one generic face for unassigned). */
+function agentAvatar(c: Conversation): string {
+  const a = c.assigned_agent
+  return resolveAvatar({ url: safeAssetUrl(a?.avatar_url), preset: a?.avatar_preset, seed: a?.id ?? 'support' })
+}
+/** A buyer may not be allowed to fetch an agent's upload yet (404): fall back to the preset. */
+function avatarFallback(ev: Event, c: Conversation) {
+  const a = c.assigned_agent
+  const img = ev.target as HTMLImageElement
+  img.onerror = null
+  img.src = resolveAvatar({ preset: a?.avatar_preset, seed: a?.id ?? 'support' })
 }
 function open(c: Conversation) {
   void router.push({ path: '/chat', query: { cid: c.id } })
@@ -65,7 +77,7 @@ async function contact() {
           <li v-for="c in convs.list" :key="c.id">
             <button type="button" class="row" @click="open(c)">
               <van-badge :content="c.unread > 99 ? '99+' : c.unread || ''" :offset="[-4, 4]">
-                <span class="avatar" aria-hidden="true">{{ title(c).charAt(0).toUpperCase() }}</span>
+                <span class="avatar" aria-hidden="true"><img :src="agentAvatar(c)" alt="" loading="lazy" decoding="async" @error="avatarFallback($event, c)" /></span>
               </van-badge>
               <span class="row-main">
                 <span class="row-top">
@@ -115,7 +127,13 @@ async function contact() {
   text-align: start;
   cursor: pointer;
 }
+.avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
 .avatar {
+  overflow: hidden;
   width: 48px;
   height: 48px;
   border-radius: 14px;

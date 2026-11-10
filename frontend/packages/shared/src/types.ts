@@ -18,6 +18,8 @@ export interface User {
   handle?: string | null
   /** v8b: same-origin avatar URL (authenticated), null = show the initial. */
   avatar_url?: string | null
+  /** v11: generic preset id (`p01`..`p16`) when no picture is uploaded. */
+  avatar_preset?: string | null
 }
 
 export type DeliveryMode = 'auto_card' | 'manual'
@@ -180,7 +182,7 @@ export interface Message {
   id: number
   conversation_id: string
   client_msg_id: string | null
-  sender: { id: string | null; role: SenderRole; display_name: string; avatar_url?: string | null }
+  sender: { id: string | null; role: SenderRole; display_name: string; avatar_url?: string | null; avatar_preset?: string | null }
   type: MessageType
   text: string | null
   attachment: Attachment | null
@@ -265,10 +267,10 @@ export interface SystemPayload {
 
 export interface Conversation {
   id: string
-  buyer: { id: string; display_name: string; avatar_url?: string | null }
+  buyer: { id: string; display_name: string; avatar_url?: string | null; avatar_preset?: string | null }
   product: ProductCardPayload | null
   status: 'open' | 'closed'
-  assigned_agent: { id: string; display_name: string } | null
+  assigned_agent: { id: string; display_name: string; avatar_url?: string | null; avatar_preset?: string | null } | null
   last_message: Message | null
   unread: number
   updated_at: string
@@ -510,8 +512,32 @@ export interface Announcement {
   display?: 'modal' | 'banner' | 'both'
   require_ack?: boolean
 }
+/** v11 W3: announcement (news) list/detail item. `read` is null for guests. */
+export interface AnnouncementItem {
+  id: string
+  title: string
+  category: 'news' | 'operations' | 'inventory' | 'notice'
+  pinned: boolean
+  published_at: string | null
+  read?: boolean | null
+}
+export interface AnnouncementDetail extends AnnouncementItem {
+  body_html: string
+}
+export interface AnnouncementsSite {
+  prompt_new: boolean
+  show_badge: boolean
+  /** null for guests (their read state lives in localStorage). */
+  unread: number | null
+  newest: AnnouncementItem | null
+}
+export type CatalogSort = 'manual' | 'sales' | 'price_asc' | 'price_desc' | 'newest'
+export const CATALOG_SORTS = ['manual', 'sales', 'price_asc', 'price_desc', 'newest'] as const satisfies readonly CatalogSort[]
 export interface SiteInfo {
   brand: string
+  /** v11 W3: news bell + prompt (separate from the single banner above). */
+  announcements?: AnnouncementsSite
+  catalog?: { default_sort: CatalogSort }
   announcement: Announcement | null
   after_sales_default_hours: number
   after_sales_default?: { unit: 'month' | 'hour'; value: number }

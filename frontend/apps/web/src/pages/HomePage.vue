@@ -3,9 +3,10 @@ import { computed, onActivated, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { LogoMark } from '@24goods/shared/ui'
-import { BRAND, recentIds, safeAssetUrl, storeInitial, type Category, type ProductSummary } from '@24goods/shared'
+import { BRAND, CATALOG_SORTS, recentIds, safeAssetUrl, storeInitial, type CatalogSort, type Category, type ProductSummary } from '@24goods/shared'
 import { api } from '../api'
 import Announcement from '../components/Announcement.vue'
+import AnnouncementBell from '../components/AnnouncementBell.vue'
 import BuySheet from '../components/BuySheet.vue'
 import MiniStrip from '../components/MiniStrip.vue'
 import ProductList from '../components/ProductList.vue'
@@ -15,13 +16,16 @@ import { useProductFeed } from '../composables/useProductFeed'
 import { useSiteStore } from '../stores/site'
 
 const VIEW_KEY = 'kesiv.view'
+const SORT_KEY = 'kesiv.sort'
 const { t, locale } = useI18n()
 const router = useRouter()
 const categories = ref<Category[]>([])
 const category = ref('')
 const refreshing = ref(false)
 const view = ref<'list' | 'grid'>(readView())
-const feed = useProductFeed(() => ({ category: category.value || undefined }), 50)
+// the shopper's own sort (remembered) wins; otherwise the store default decides server-side
+const chosenSort = ref<CatalogSort | ''>(readSort())
+const feed = useProductFeed(() => ({ category: category.value || undefined, sort: chosenSort.value || undefined }), 50)
 const recommended = ref<ProductSummary[]>([])
 const buying = ref<ProductSummary | null>(null)
 const buySheet = ref(false)
@@ -37,6 +41,26 @@ const brandTitle = computed(() => {
 const tagline = computed(() => site.whiteLabel ? '' : site.site?.general?.subtitle_i18n?.[loc.value]?.trim() || BRAND.tagline[loc.value])
 const storeLogo = computed(() => safeAssetUrl(site.storefront?.logo_url))
 const welcome = computed(() => site.storefront?.welcome ?? null)
+
+function readSort(): CatalogSort | '' {
+  try {
+    const v = localStorage.getItem(SORT_KEY)
+    return (CATALOG_SORTS as readonly string[]).includes(v ?? '') ? (v as CatalogSort) : ''
+  } catch {
+    return ''
+  }
+}
+const shownSort = computed<CatalogSort>(() => chosenSort.value || site.site?.catalog?.default_sort || 'manual')
+function setSort(ev: Event) {
+  chosenSort.value = (ev.target as HTMLSelectElement).value as CatalogSort
+  try {
+    localStorage.setItem(SORT_KEY, chosenSort.value)
+  } catch {
+    /* not remembered */
+  }
+  feed.reset()
+  void feed.load()
+}
 
 function readView(): 'list' | 'grid' {
   try {
@@ -129,7 +153,10 @@ function openSupport() {
             <span v-if="tagline" class="brand-tag">{{ tagline }}</span>
           </div>
         </div>
-        <SupportPill @click="openSupport" />
+        <div class="hero-actions">
+          <AnnouncementBell />
+          <SupportPill @click="openSupport" />
+        </div>
       </div>
       <p v-if="welcome" class="store-welcome">{{ welcome }}</p>
       <nav class="links" :aria-label="t('home.quickLinks')">
@@ -167,6 +194,12 @@ function openSupport() {
 
       <div class="list-head">
         <h2>{{ t('home.allProducts') }}</h2>
+        <label class="sort">
+          <span class="sr-only">{{ t('home.sortBy') }}</span>
+          <select :value="shownSort" :aria-label="t('home.sortBy')" @change="setSort">
+            <option v-for="o in CATALOG_SORTS" :key="o" :value="o">{{ t(`home.sort.${o}`) }}</option>
+          </select>
+        </label>
         <div class="seg" role="radiogroup" :aria-label="t('home.viewMode')">
           <button type="button" role="radio" :aria-checked="view === 'list'" :aria-label="t('home.viewList')" :class="{ on: view === 'list' }" @click="setView('list')">
             <van-icon name="bars" />
@@ -213,6 +246,12 @@ function openSupport() {
   justify-content: space-between;
   gap: 8px;
   min-height: 44px;
+}
+.hero-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
 }
 .brand {
   display: flex;
@@ -321,6 +360,21 @@ function openSupport() {
 .list-head h2 {
   font-size: 16px;
   margin: 0;
+}
+.sort {
+  margin-inline-start: auto;
+  margin-inline-end: 8px;
+}
+.sort select {
+  min-height: 44px;
+  max-width: 150px;
+  border: 0;
+  border-radius: 999px;
+  padding: 0 12px;
+  background: #ececec;
+  color: var(--c-text);
+  font: inherit;
+  font-size: 13px;
 }
 .seg {
   display: inline-flex;

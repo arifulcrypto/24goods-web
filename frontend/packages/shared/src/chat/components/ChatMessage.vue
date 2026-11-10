@@ -7,6 +7,7 @@ import { useI18n } from 'vue-i18n'
 import type { FilePayload, MessageMeta, OrderCardPayload, ProductCardPayload, QuoteCardPayload, ReplyRef, SystemPayload } from '../../types'
 import { formatBytes, formatChatTime, formatMoney, formatRelative } from '../../format'
 import { safeAssetUrl } from '../../api/endpoints'
+import { resolveAvatar } from '../../avatars'
 import type { ChatItem } from '../useConversation'
 import VoiceBubble from './VoiceBubble.vue'
 import QuoteCardView from './QuoteCardView.vue'
@@ -15,7 +16,7 @@ import ProductCardView from './ProductCardView.vue'
 import SmartText from './SmartText.vue'
 import MessageMenu, { type MenuItem } from './MessageMenu.vue'
 
-const props = defineProps<{ item: ChatItem; mode: 'buyer' | 'staff'; busyQuoteId?: string | null; viewOrder?: boolean; selfId?: string; selfName?: string; selfAvatar?: string | null }>()
+const props = defineProps<{ item: ChatItem; mode: 'buyer' | 'staff'; busyQuoteId?: string | null; viewOrder?: boolean; selfId?: string; selfName?: string; selfAvatar?: string | null; selfPreset?: string | null }>()
 const emit = defineEmits<{
   preview: [url: string]
   openFile: [f: { url: string; name: string }]
@@ -43,6 +44,8 @@ const view = computed(() => {
       senderRole: it.senderRole,
       senderName: props.selfName ?? '',
       senderAvatar: props.selfAvatar ?? null,
+      senderPreset: props.selfPreset ?? null,
+      senderId: props.selfId ?? null,
       imageUrl: p.type === 'image' ? (safeAssetUrl(p.attachment?.url) ?? p.objectUrl) : null,
       voiceUrl: p.type === 'voice' ? (safeAssetUrl(p.attachment?.url) ?? p.objectUrl) : null,
       durationMs: p.durationMs ?? 0,
@@ -62,6 +65,8 @@ const view = computed(() => {
     senderRole: m.sender.role,
     senderName: m.sender.display_name,
     senderAvatar: m.sender.avatar_url ?? null,
+    senderPreset: m.sender.avatar_preset ?? null,
+    senderId: m.sender.id,
     imageUrl: m.type === 'image' ? safeAssetUrl(m.attachment?.url) : null,
     voiceUrl: m.type === 'voice' ? safeAssetUrl(m.attachment?.url) : null,
     durationMs: m.attachment?.duration_ms ?? 0,
@@ -87,8 +92,9 @@ const centered = computed(() => view.value.type === 'system')
 const file = computed(() => (view.value.type === 'file' ? (view.value.payload as FilePayload | null) : null))
 const isCard = computed(() => ['product_card', 'quote_card', 'order_card'].includes(view.value.type))
 
-const avatarSrc = computed(() => safeAssetUrl(view.value.senderAvatar))
-const initial = computed(() => (view.value.senderName || '?').trim().charAt(0).toUpperCase() || '?')
+const avatarSrc = computed(() =>
+  resolveAvatar({ url: safeAssetUrl(view.value.senderAvatar), preset: view.value.senderPreset, seed: view.value.senderId ?? view.value.senderRole }),
+)
 
 /** Fixed-aspect image box (max 200×200) so the list does not jump while images load. */
 const imgBox = computed(() => {
@@ -168,7 +174,7 @@ const systemText = computed(() => {
   <div v-else class="gc-row" :class="{ self, 'is-card': isCard }" :data-mid="item.kind === 'server' ? item.message.id : undefined" @contextmenu.prevent="openMenu" @pointerdown="startPress" @pointerup="cancelPress" @pointercancel="cancelPress" @pointermove="cancelPress" @pointerleave="cancelPress">
     <button v-if="menuable && !isCard" class="gc-action-toggle" type="button" :aria-label="t('chatActions.menu')" aria-haspopup="menu" @click="openMenu">⋯</button>
     <MessageMenu :open="menu" :items="items" :x="menuAt.x" :y="menuAt.y" :label="t('chatActions.menu')" @select="pick" @close="menu = false" />
-    <span class="gc-avatar" aria-hidden="true"><img v-if="avatarSrc" :src="avatarSrc" alt="" loading="lazy" decoding="async" />{{ avatarSrc ? '' : initial }}</span>
+    <span class="gc-avatar" aria-hidden="true"><img :src="avatarSrc" alt="" loading="lazy" decoding="async" /></span>
     <div class="gc-col">
       <span v-if="!self && mode === 'staff' && view.senderName" class="gc-name">{{ view.senderName }}</span>
       <span v-else-if="self && mode === 'staff' && view.senderName" class="gc-name gc-name-self">{{ view.senderName }}</span>

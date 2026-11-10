@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Plus } from '@element-plus/icons-vue'
+import { Bottom, Plus, Rank, Top } from '@element-plus/icons-vue'
 import { isApiError } from '@24goods/shared'
 import { apiV5 } from '../api'
 import type { AdminCategory } from '../api-v5'
+import { moved, useRowReorder } from '../composables/useRowReorder'
 import { confirmBox, toastError, toastOk } from '../ui'
 
 const { t, locale } = useI18n()
@@ -20,7 +21,7 @@ const SLUG_RE = /^[a-z0-9][a-z0-9_-]{0,31}$/
 async function load() {
   loading.value = true
   try {
-    items.value = [...(await apiV5.categories.list())].sort((a, b) => a.sort - b.sort)
+    items.value = await apiV5.categories.list() // server order: pinned first, then manual sort
   } catch (e) {
     toastError(e)
   } finally {
@@ -68,6 +69,27 @@ async function save() {
     saving.value = false
   }
 }
+async function applyOrder(next: AdminCategory[]) {
+  const prev = items.value
+  items.value = next
+  try {
+    await apiV5.categories.reorder(next.map((c) => c.id))
+    toastOk(t('catalogOrder.saved'))
+    await load()
+  } catch (e) {
+    items.value = prev
+    toastError(e)
+  }
+}
+const reorder = useRowReorder((from, to) => void applyOrder(moved(items.value, from, to)))
+async function togglePin(c: AdminCategory) {
+  try {
+    await apiV5.categories.pin(c.id, !c.pinned)
+    await load()
+  } catch (e) {
+    toastError(e)
+  }
+}
 async function toggle(c: AdminCategory, v: boolean) {
   try {
     await apiV5.categories.update(c.id, { enabled: v })
@@ -97,11 +119,19 @@ const nameOf = (c: AdminCategory) => (locale.value === 'zh-CN' && c.name_i18n['z
       <span class="muted">{{ t('v5.categories.note') }}</span>
       <el-button type="primary" :icon="Plus" @click="openNew">{{ t('v5.categories.new') }}</el-button>
     </div>
-    <div class="panel">
+    <p class="muted small hint">{{ t('catalogOrder.hint') }}</p>
+    <div class="panel" @dragover.prevent @drop="reorder.drop">
       <el-table v-loading="loading" :data="items" row-key="id" :empty-text="t('common.empty')">
+        <el-table-column :label="t('catalogOrder.order')" width="110">
+          <template #default="{ $index }">
+            <span class="grip" draggable="true" role="img" :aria-label="t('catalogOrder.drag')" @dragstart="reorder.start($index, $event)"><el-icon><Rank /></el-icon></span>
+            <el-button link :icon="Top" :disabled="$index === 0" :aria-label="t('catalogOrder.up')" @click="reorder.move($index, -1)" />
+            <el-button link :icon="Bottom" :disabled="$index === items.length - 1" :aria-label="t('catalogOrder.down')" @click="reorder.move($index, 1)" />
+          </template>
+        </el-table-column>
         <el-table-column :label="t('v5.categories.name')" min-width="200">
           <template #default="{ row }">
-            <div>{{ row.name_i18n.en }}</div>
+            <div><el-tag v-if="row.pinned" size="small" type="warning" class="pintag">{{ t('catalogOrder.pinned') }}</el-tag>{{ row.name_i18n.en }}</div>
             <div class="muted small">{{ row.name_i18n['zh-CN'] }}</div>
           </template>
         </el-table-column>
@@ -112,8 +142,9 @@ const nameOf = (c: AdminCategory) => (locale.value === 'zh-CN' && c.name_i18n['z
         <el-table-column :label="t('v5.enabled')" width="100">
           <template #default="{ row }"><el-switch :model-value="row.enabled" :aria-label="t('v5.enabled')" @change="(v: string | number | boolean) => toggle(row as AdminCategory, !!v)" /></template>
         </el-table-column>
-        <el-table-column :label="t('common.actions')" width="150" fixed="right">
+        <el-table-column :label="t('common.actions')" width="210" fixed="right">
           <template #default="{ row }">
+            <el-button link type="primary" @click="togglePin(row as AdminCategory)">{{ row.pinned ? t('catalogOrder.unpin') : t('catalogOrder.pin') }}</el-button>
             <el-button link type="primary" @click="openEdit(row as AdminCategory)">{{ t('common.edit') }}</el-button>
             <el-button link type="danger" @click="remove(row as AdminCategory)">{{ t('v5.delete') }}</el-button>
           </template>
@@ -143,5 +174,16 @@ const nameOf = (c: AdminCategory) => (locale.value === 'zh-CN' && c.name_i18n['z
 <style scoped>
 .small {
   font-size: 12px;
+}
+.hint {
+  margin: 0 0 8px;
+}
+.grip {
+  cursor: grab;
+  padding: 0 6px;
+  color: var(--el-text-color-secondary);
+}
+.pintag {
+  margin-right: 6px;
 }
 </style>

@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { User } from '@24goods/shared'
+import { AvatarPicker } from '@24goods/shared/ui'
 import { client } from '../api'
 import { useAuthStore } from '../stores/auth'
 
@@ -29,6 +30,17 @@ async function pick(ev: Event) {
     busy.value = false
   }
 }
+async function pickPreset(preset: string) {
+  if (busy.value) return
+  busy.value = true
+  try {
+    auth.user = await client.put<User>('/me/avatar/preset', { preset })
+  } catch {
+    ElMessage.error(t('top.avatarType'))
+  } finally {
+    busy.value = false
+  }
+}
 async function remove() {
   busy.value = true
   try {
@@ -45,6 +57,18 @@ async function remove() {
       {{ t('top.avatarChange') }}
       <input type="file" accept="image/jpeg,image/png,image/webp,image/gif" :disabled="busy" @change="pick" />
     </label>
+    <el-popover trigger="click" :width="280" placement="bottom">
+      <template #reference>
+        <el-button text size="small" :disabled="busy">{{ t('top.avatarPresets') }}</el-button>
+      </template>
+      <AvatarPicker
+        :model-value="auth.user?.avatar_url ? null : auth.user?.avatar_preset"
+        :label="t('top.avatarPresets')"
+        :item-label="(n: number) => t('top.avatarPresetN', { n })"
+        :disabled="busy"
+        @pick="pickPreset"
+      />
+    </el-popover>
     <el-button v-if="auth.user?.avatar_url" text size="small" :disabled="busy" @click="remove">{{ t('top.avatarRemove') }}</el-button>
   </div>
 </template>
