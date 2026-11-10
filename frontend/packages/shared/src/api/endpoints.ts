@@ -123,6 +123,8 @@ export function createBuyerApi(c: ApiClient) {
     chatActions: {
       recall: (id: number) => c.post<Message>(`/chat/messages/${id}/recall`, {}),
       pin: (id: number, pinned: boolean) => c.post<Message>(`/chat/messages/${id}/pin`, { pinned }),
+      /** v11 W2: edit own text message (≤ 48 h). */
+      edit: (id: number, text: string) => c.patch<Message>(`/chat/messages/${id}`, { text }),
     },
     site: () => c.get<SiteInfo>('/site'),
     pow: {
@@ -188,6 +190,8 @@ export function createBuyerApi(c: ApiClient) {
         c.post<Message>(`/conversations/${seg(id)}/messages`, b),
       read: (id: string, message_id: number) =>
         c.post<void>(`/conversations/${seg(id)}/read`, { message_id }),
+      pins: (id: string) => c.get<Message[]>(`/conversations/${seg(id)}/pins`),
+      typing: (id: string) => c.post<void>(`/conversations/${seg(id)}/typing`),
     },
     upload: (file: Blob, o: UploadOptions) => c.upload<Attachment>('/uploads', uploadForm(file, o)),
     quotes: {
@@ -294,6 +298,7 @@ export function createAdminApi(c: ApiClient) {
   return {
     auth: buyer.auth,
     chatActions: buyer.chatActions,
+    product: buyer.product,
     categories: buyer.categories,
     upload: buyer.upload,
     stats: () => c.get<AdminStats>('/admin/stats'),
@@ -349,6 +354,8 @@ export function createAdminApi(c: ApiClient) {
         c.get<Message[]>(`/admin/conversations/${seg(id)}/messages`, { ...q }),
       send: (id: string, b: SendMessageBody) =>
         c.post<Message>(`/admin/conversations/${seg(id)}/messages`, b),
+      pins: (id: string) => c.get<Message[]>(`/admin/conversations/${seg(id)}/pins`),
+      typing: (id: string) => c.post<void>(`/admin/conversations/${seg(id)}/typing`),
       assign: (id: string, agent_id: string | null) =>
         c.post<Conversation>(`/admin/conversations/${seg(id)}/assign`, { agent_id }),
       close: (id: string) => c.post<Conversation>(`/admin/conversations/${seg(id)}/close`),

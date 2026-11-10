@@ -12,6 +12,7 @@ import {
   type AdminOrder,
   type Conversation,
   type Message,
+  type ProductVariant,
   type QuoteCardPayload,
 } from '@24goods/shared'
 import { ProductCardView } from '@24goods/shared/chat'
@@ -33,7 +34,21 @@ async function copyInput() {
   else toastError(new Error('copy'))
 }
 const ordersLoading = ref(false)
-const form = reactive({ title: '', amount: '', qty: 1, note: '', expires: 30, busy: false, error: '' })
+const form = reactive({ title: '', amount: '', qty: 1, note: '', expires: 30, variantId: '', busy: false, error: '' })
+/** Active variants of the conversation's product; a quote then needs one (server enforces it). */
+const variants = ref<ProductVariant[]>([])
+async function loadVariants() {
+  const pid = props.conversation.product?.product_id
+  variants.value = []
+  form.variantId = ''
+  if (!pid) return
+  try {
+    const p = await api.product(pid)
+    if (props.conversation.product?.product_id === pid) variants.value = p.variants ?? []
+  } catch {
+    variants.value = []
+  }
+}
 
 async function loadOrders() {
   const buyerId = props.conversation.buyer.id
@@ -58,9 +73,11 @@ watch(
     form.expires = 30
     form.error = ''
     void loadOrders()
+    void loadVariants()
   },
   { immediate: true },
 )
+watch(() => props.conversation.product?.product_id, () => void loadVariants())
 watch(
   () => props.conversation.product?.title,
   (title) => {
@@ -77,6 +94,10 @@ async function sendQuote() {
     form.error = t('common.required')
     return
   }
+  if (variants.value.length && !form.variantId) {
+    form.error = t('inbox.variantRequired')
+    return
+  }
   if (!isValidAmount(form.amount)) {
     form.error = t('products.v.priceInvalid')
     return
@@ -89,6 +110,7 @@ async function sendQuote() {
       qty: form.qty,
       note: form.note.trim() || undefined,
       product_id: props.conversation.product?.product_id,
+      ...(variants.value.length ? { variant_id: form.variantId } : {}),
       expires_in_minutes: form.expires,
     })
     toastOk(t('inbox.quoteSent'))
@@ -129,6 +151,11 @@ defineExpose({ reloadOrders: loadOrders })
       <el-form label-position="top" size="small" @submit.prevent="sendQuote">
         <el-form-item :label="t('inbox.quoteTitle')">
           <el-input v-model="form.title" maxlength="120" />
+        </el-form-item>
+        <el-form-item v-if="variants.length" :label="t('inbox.variant')" required>
+          <el-select v-model="form.variantId" style="width: 100%" :placeholder="t('inbox.variantPick')">
+            <el-option v-for="v in variants" :key="v.id" :value="v.id" :label="`${v.name} · ${v.price}`" />
+          </el-select>
         </el-form-item>
         <div class="two">
           <el-form-item :label="t('inbox.amount')">

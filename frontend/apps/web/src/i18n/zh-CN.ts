@@ -200,6 +200,13 @@ const zhCN: WebMessages = {
       usdt_trc20: 'USDT（波场 TRC20）',
     },
   },
+  notifyPrefs: {
+    title: '通知',
+    sound: '消息提示音',
+    desktop: '桌面通知',
+    desktopHint: '客服回复且此页面在后台时提醒',
+    denied: '浏览器已禁止通知，请在浏览器设置中允许',
+  },
   me: {
     settings: '设置',
     preferences: '偏好设置',

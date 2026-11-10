@@ -414,6 +414,9 @@ const zhCN: AdminMessages = {
     ],
   },
   inbox: {
+    variant: '规格',
+    variantPick: '请选择规格',
+    variantRequired: '该商品有多个规格，请选择一个',
     product_btn: '商品',
     pickProduct: '发送商品',
     pickSearch: '搜索商品',

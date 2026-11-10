@@ -124,6 +124,9 @@ export interface NotificationsCfg {
   event_payment_review: boolean
   event_reseller_application: boolean
   event_low_stock: boolean
+  /** v11 W2: defaults for the buyer's chat alerts (the buyer's own choice wins). */
+  buyer_sound?: boolean
+  buyer_desktop?: boolean
 }
 export const TG_EVENTS = ['order_paid', 'chat_message', 'after_sales', 'payment_review', 'reseller_application', 'low_stock'] as const
 export interface AuditCfg {

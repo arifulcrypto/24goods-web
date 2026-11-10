@@ -200,6 +200,13 @@ export default {
       usdt_trc20: 'USDT (TRON TRC20)',
     },
   },
+  notifyPrefs: {
+    title: 'Notifications',
+    sound: 'Message sound',
+    desktop: 'Desktop notifications',
+    desktopHint: 'When a seller replies and this tab is in the background',
+    denied: 'Notifications are blocked in your browser settings',
+  },
   me: {
     settings: 'Settings',
     preferences: 'Preferences',

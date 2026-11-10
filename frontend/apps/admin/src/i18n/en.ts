@@ -413,6 +413,9 @@ export default {
     ],
   },
   inbox: {
+    variant: 'Variant',
+    variantPick: 'Choose a variant',
+    variantRequired: 'This product has variants: choose one',
     product_btn: 'Product',
     pickProduct: 'Send a product',
     pickSearch: 'Search products',

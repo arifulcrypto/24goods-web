@@ -176,6 +176,10 @@ export default {
     chatsHint: "A user id such as 123456789, or a group id such as -1001234567890. Start the bot in each chat first.",
     chatsInvalid: "Chat IDs must be integers (max 10).",
     tokenRequired: "A bot token is required to enable notifications.",
+    buyerTitle: "Buyer chat alerts",
+    buyerNote: "Defaults for buyers when a seller replies and the chat is not open. Each buyer can change them in Settings.",
+    buyerSound: "Message sound (default on)",
+    buyerDesktop: "Desktop notification (default off; the browser still asks the buyer for permission)",
     events: "Events",
     ev: {
       order_paid: "Order paid",

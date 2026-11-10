@@ -2,7 +2,12 @@ import type { MessageSchema } from './index'
 
 const zhCN: MessageSchema = {
   mediaPrefs: {quality:'图片质量',auto:'自动（网络）',low:'节省流量',high:'高画质',compress:'上传前压缩图片'},
-  chatActions: {menu:'消息操作',copy:'复制文字',reply:'引用到草稿',pin:'置顶',unpin:'取消置顶',recall:'撤回',recalled:'发送者已撤回消息',media:'置顶媒体'},
+  chatActions: {
+    menu: '消息操作', copy: '复制', reply: '回复', pin: '置顶', unpin: '取消置顶', edit: '编辑', recall: '撤回',
+    recalled: '发送者已撤回消息', media: '置顶媒体', edited: '已编辑', unknownSender: '消息',
+    pinnedTitle: '置顶消息', pinnedBar: '跳转到置顶消息', replyingTo: '回复 {name}', editing: '编辑消息',
+    typing: '{name} 正在输入…', typingGeneric: '正在输入…',
+  },
   paste: {
     tip: '提示：可按 Ctrl+V 直接粘贴截图',
   },
@@ -270,6 +275,8 @@ const zhCN: MessageSchema = {
       loadFailed: '无法加载该文件',
     },
     system: {
+      message_pinned: '{name} 置顶了一条消息',
+      message_unpinned: '{name} 取消置顶了一条消息',
       price_changed: '价格已修改为 {amount}',
       delivery_expedite: '买家请求卖家尽快发货',
       delivered: '订单已发货',

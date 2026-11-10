@@ -176,6 +176,10 @@ export default {
     chatsHint: "用户 ID 如 123456789，群组 ID 如 -1001234567890。请先在各聊天中启动机器人。",
     chatsInvalid: "聊天 ID 必须是整数（最多 10 个）。",
     tokenRequired: "启用通知需要先设置机器人 Token。",
+    buyerTitle: "买家聊天提醒",
+    buyerNote: "客服回复且买家未打开聊天时的默认提醒方式，买家可在“设置”中自行修改。",
+    buyerSound: "消息提示音（默认开启）",
+    buyerDesktop: "桌面通知（默认关闭；浏览器仍会向买家请求权限）",
     events: "事件",
     ev: {
       order_paid: "订单已支付",

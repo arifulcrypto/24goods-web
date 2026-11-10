@@ -1,4 +1,4 @@
-import type { AfterSales, AgentStatus, Conversation, Order, StreamMessageEvent } from '../types'
+import type { AfterSales, AgentStatus, Conversation, Order, StreamMessageEvent, TypingEvent } from '../types'
 
 /** Minimal surface of EventSource we rely on (lets tests inject a fake). */
 export interface EventSourceLike {
@@ -18,6 +18,8 @@ export interface RealtimeHandlers {
   agent_status?: (s: AgentStatus) => void
   /** v3: ticket opened/updated (buyer: own tickets; staff: all, with `order`/`buyer`). */
   after_sales?: (t: AfterSales) => void
+  /** v11 W2: the other side is typing (ephemeral). */
+  typing?: (e: TypingEvent) => void
   /** Called every `pollIntervalMs` while SSE is unavailable (fallback), first call immediately. */
   poll?: () => void | Promise<void>
   /** Called when SSE (re)opens after a disconnect: catch up anything missed (e.g. messages?after_id). */
@@ -40,7 +42,7 @@ export interface RealtimeOptions {
   random?: () => number
 }
 
-const EVENTS = ['message', 'conversation', 'order', 'agent_status', 'after_sales'] as const
+const EVENTS = ['message', 'conversation', 'order', 'agent_status', 'after_sales', 'typing'] as const
 
 function defaultFactory(): EventSourceFactory | null {
   const ES = (globalThis as { EventSource?: typeof EventSource }).EventSource
@@ -174,6 +176,9 @@ export class RealtimeClient {
         break
       case 'after_sales':
         h.after_sales?.(data as AfterSales)
+        break
+      case 'typing':
+        h.typing?.(data as TypingEvent)
         break
     }
   }

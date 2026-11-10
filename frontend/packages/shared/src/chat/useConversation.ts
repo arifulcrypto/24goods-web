@@ -26,6 +26,8 @@ export interface PendingMessage {
   width?: number
   height?: number
   attachment: Attachment | null
+  /** v11 W2: id of the message this one replies to. */
+  replyTo?: number
   state: PendingState
   error: ApiError | null
   created_at: string
@@ -180,6 +182,7 @@ export function useConversation(opts: UseConversationOptions) {
         p.type === 'text'
           ? { client_msg_id: p.client_msg_id, type: 'text', text: p.text ?? '' }
           : { client_msg_id: p.client_msg_id, type: p.type, attachment_id: p.attachment!.id }
+      if (p.replyTo) body.reply_to = p.replyTo
       const msg = await opts.adapter.send(id, body)
       if (gen !== generation) return
       apply([msg])
@@ -212,13 +215,14 @@ export function useConversation(opts: UseConversationOptions) {
     return reactiveItem
   }
 
-  function sendText(text: string) {
+  function sendText(text: string, replyTo?: number) {
     const t = text.trim()
     if (!t) return null
-    return enqueue({ type: 'text', text: t.slice(0, 2000), blob: null, objectUrl: null, durationMs: null })
+    return enqueue({ type: 'text', text: t.slice(0, 2000), blob: null, objectUrl: null, durationMs: null, replyTo })
   }
-  function sendImage(blob: Blob, meta: { width?: number; height?: number; filename?: string } = {}) {
+  function sendImage(blob: Blob, meta: { width?: number; height?: number; filename?: string } = {}, replyTo?: number) {
     return enqueue({
+      replyTo,
       type: 'image',
       text: null,
       blob,
@@ -229,8 +233,9 @@ export function useConversation(opts: UseConversationOptions) {
       durationMs: null,
     })
   }
-  function sendVoice(blob: Blob, durationMs: number, filename?: string) {
+  function sendVoice(blob: Blob, durationMs: number, filename?: string, replyTo?: number) {
     return enqueue({
+      replyTo,
       type: 'voice',
       text: null,
       blob,
@@ -240,9 +245,10 @@ export function useConversation(opts: UseConversationOptions) {
     })
   }
   /** Send long text as a text/plain file (kind=file). */
-  function sendFile(text: string, filename: string) {
+  function sendFile(text: string, filename: string, replyTo?: number) {
     const blob = new Blob([text], { type: 'text/plain;charset=utf-8' })
     return enqueue({
+      replyTo,
       type: 'file',
       text: [...text].slice(0, 160).join(''),
       blob,
