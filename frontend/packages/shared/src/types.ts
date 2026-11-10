@@ -18,9 +18,25 @@ export interface User {
   handle?: string | null
   /** v8b: same-origin avatar URL (authenticated), null = show the initial. */
   avatar_url?: string | null
+  /** v11: generic preset id (`p01`..`p16`) when no picture is uploaded. */
+  avatar_preset?: string | null
 }
 
 export type DeliveryMode = 'auto_card' | 'manual'
+
+/** v11 W1: a purchasable SKU of a product (buyer view; prices already include the storefront markup). */
+export interface ProductVariant {
+  id: string
+  name: string
+  price: string
+  /** auto_card: available cards; manual: reserved-stock counter (null = unlimited) */
+  stock: number | null
+  /** Resolved after-sales window in hours / whole months (variant terms, else the product's, else site default). */
+  after_sales_hours?: number | null
+  after_sales_months?: number | null
+  /** The variant (or its product) is a subscription. */
+  subscription?: boolean
+}
 
 export interface ProductSummary {
   id: string
@@ -41,6 +57,11 @@ export interface ProductSummary {
   delivery_eta_hours?: number | null
   /** Order-information form (null = off). Lists carry it too, so quick buy asks for it (issue 49 B). */
   buyer_input?: BuyerInputConfig | null
+  /** v11 W1: active variants (sorted). When non-empty, `price` is the lowest and `stock` the sum. */
+  has_variants?: boolean
+  variants?: ProductVariant[]
+  /** v11 W1: the variants have different prices, so `price` reads "from ¥X". */
+  price_from?: boolean
 }
 export type ProductStatus = 'active' | 'draft'
 export interface Product extends ProductSummary {
@@ -68,13 +89,46 @@ export interface BuyerInputConfig {
   placeholder: string
 }
 export type I18nText = Record<Locale, string>
-export interface AdminProduct extends Omit<Product, 'title' | 'description' | 'buyer_input'> {
+export interface AdminProduct
+  extends Omit<Product, 'title' | 'description' | 'buyer_input' | 'variants' | 'has_variants' | 'price_from'> {
   title_i18n: I18nText
   description_i18n: I18nText
   floor_price: string
   created_at: string
   /** v5.2 manual-delivery stock; null = unlimited */
   manual_stock?: number | null
+  /** v11 W1: every variant, archived included (staff only). */
+  variants?: AdminVariant[]
+}
+/** v11 W1: staff view of a variant. */
+export interface AdminVariant {
+  id: string
+  name_i18n: I18nText
+  price: string
+  floor_price: string
+  /** manual products: null = unlimited */
+  manual_stock: number | null
+  /** auto_card: available cards of this variant; manual: the counter */
+  stock: number | null
+  sort: number
+  status: 'active' | 'archived'
+  /** null = inherit the product's */
+  after_sales_months: number | null
+  after_sales_hours: number | null
+  subscription: Record<string, unknown> | null
+  sold: number
+}
+/** Body for POST/PATCH /admin/products/{id}/variants. */
+export interface AdminVariantInput {
+  name_i18n: I18nText
+  price: string
+  floor_price: string
+  manual_stock?: number | null
+  sort?: number
+  status?: 'active' | 'archived'
+  after_sales_months?: number | null
+  after_sales_hours?: number | null
+  subscription?: Record<string, unknown> | null
 }
 /** Body for POST /admin/products ("AdminProduct fields (no id)"), PATCH accepts a partial. */
 export interface AdminProductInput {
@@ -128,12 +182,43 @@ export interface Message {
   id: number
   conversation_id: string
   client_msg_id: string | null
-  sender: { id: string | null; role: SenderRole; display_name: string; avatar_url?: string | null }
+  sender: { id: string | null; role: SenderRole; display_name: string; avatar_url?: string | null; avatar_preset?: string | null }
   type: MessageType
   text: string | null
   attachment: Attachment | null
-  payload: ProductCardPayload | QuoteCardPayload | OrderCardPayload | SystemPayload | FilePayload | RedactedPayload | null
+  payload:
+    | ProductCardPayload
+    | QuoteCardPayload
+    | OrderCardPayload
+    | SystemPayload
+    | FilePayload
+    | RedactedPayload
+    | MessageMeta
+    | null
   created_at: string
+}
+/** v11 W2: quoted message snapshot stored in `payload.reply_to`. */
+export interface ReplyRef {
+  id: number
+  sender_name: string
+  sender_role: SenderRole
+  /** ≤ 120 chars of text, or a `[image]`-style marker; empty after the original is recalled. */
+  preview: string
+  type: MessageType
+}
+/** v11 W2: optional flags carried by text/media payloads. */
+export interface MessageMeta {
+  reply_to?: ReplyRef
+  edited_at?: string
+  pinned?: boolean
+  recalled?: boolean
+}
+/** SSE `typing` event (never stored). */
+export interface TypingEvent {
+  conversation_id: string
+  role: SenderRole
+  name: string
+  until: string
 }
 /** v3: `type=file` message payload (text/plain attachment). */
 export interface RedactedPayload {
@@ -163,6 +248,9 @@ export interface QuoteCardPayload {
   status: QuoteStatus
   expires_at: string
   order_id: string | null
+  /** v11 W2: the variant the quote was negotiated for (products with variants). */
+  variant_id?: string | null
+  variant_name?: string | null
 }
 export interface OrderCardPayload {
   order_id: string
@@ -179,10 +267,10 @@ export interface SystemPayload {
 
 export interface Conversation {
   id: string
-  buyer: { id: string; display_name: string; avatar_url?: string | null }
+  buyer: { id: string; display_name: string; avatar_url?: string | null; avatar_preset?: string | null }
   product: ProductCardPayload | null
   status: 'open' | 'closed'
-  assigned_agent: { id: string; display_name: string } | null
+  assigned_agent: { id: string; display_name: string; avatar_url?: string | null; avatar_preset?: string | null } | null
   last_message: Message | null
   unread: number
   updated_at: string
@@ -256,6 +344,9 @@ export interface Order {
   refund_reference?: string | null
   /** issue 23: server-computed fee/total per ENABLED channel (pending orders only; else null). */
   channel_totals?: ChannelTotals | null
+  /** v11 W1: the variant bought (name as of purchase), null for products without variants. */
+  variant_id?: string | null
+  variant_name?: string | null
 }
 
 /** `{channel_id: {fee, fee_rate, amount}}`: money strings computed by the server (never the client). */
@@ -275,6 +366,7 @@ export interface CheckoutView {
 }
 export interface CheckoutLineInput {
   product_id: string
+  variant_id?: string
   qty: number
   buyer_input?: string
 }
@@ -312,6 +404,9 @@ export interface UsdtPayView {
 }
 export interface CartQuoteLine {
   product_id: string
+  /** v11 W1 */
+  variant_id?: string | null
+  variant_name?: string | null
   title: string
   cover: string | null
   unit_price: string
@@ -328,7 +423,12 @@ export interface CartQuoteLine {
   delivery_mode?: DeliveryMode
   delivery_eta_hours?: number | null
 }
-export type UnavailableReason = 'archived' | 'unpublished' | 'out_of_stock'
+export type UnavailableReason =
+  | 'archived'
+  | 'unpublished'
+  | 'out_of_stock'
+  | 'variant_required'
+  | 'variant_unavailable'
 export interface CartQuote {
   lines: CartQuoteLine[]
   discount_minor?: number
@@ -412,8 +512,32 @@ export interface Announcement {
   display?: 'modal' | 'banner' | 'both'
   require_ack?: boolean
 }
+/** v11 W3: announcement (news) list/detail item. `read` is null for guests. */
+export interface AnnouncementItem {
+  id: string
+  title: string
+  category: 'news' | 'operations' | 'inventory' | 'notice'
+  pinned: boolean
+  published_at: string | null
+  read?: boolean | null
+}
+export interface AnnouncementDetail extends AnnouncementItem {
+  body_html: string
+}
+export interface AnnouncementsSite {
+  prompt_new: boolean
+  show_badge: boolean
+  /** null for guests (their read state lives in localStorage). */
+  unread: number | null
+  newest: AnnouncementItem | null
+}
+export type CatalogSort = 'manual' | 'sales' | 'price_asc' | 'price_desc' | 'newest'
+export const CATALOG_SORTS = ['manual', 'sales', 'price_asc', 'price_desc', 'newest'] as const satisfies readonly CatalogSort[]
 export interface SiteInfo {
   brand: string
+  /** v11 W3: news bell + prompt (separate from the single banner above). */
+  announcements?: AnnouncementsSite
+  catalog?: { default_sort: CatalogSort }
   announcement: Announcement | null
   after_sales_default_hours: number
   after_sales_default?: { unit: 'month' | 'hour'; value: number }
@@ -433,6 +557,8 @@ export interface SiteInfo {
   resellers?: { base_domain?: string; link_mode?: 'subdomain' | 'query'; signup_fee_minor?: number } | null
   /** Optional (security.email_verify_on_register); the 422 `email_code_required` is the fallback. */
   email_verify_on_register?: boolean
+  /** v11 W2: admin defaults for buyer chat alerts; the buyer's own choice (localStorage) wins. */
+  notify_defaults?: { buyer?: { sound?: boolean; desktop?: boolean } }
 }
 export interface SiteFeatures {
   registration: boolean
@@ -616,6 +742,8 @@ export interface SendMessageBody {
   attachment_id?: string
   /** v4 (staff only): type=product_card; the server builds the payload. */
   product_id?: string
+  /** v11 W2: reply to this message id (same conversation). */
+  reply_to?: number
 }
 
 export interface MessageQuery {
@@ -673,6 +801,8 @@ export interface QuoteInput {
   qty: number
   note?: string
   product_id?: string
+  /** Required by the server when the product has active variants. */
+  variant_id?: string
   expires_in_minutes: number
 }
 export interface AgentInfo {

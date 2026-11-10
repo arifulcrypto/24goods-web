@@ -13,6 +13,7 @@ _SOURCE = re.compile(r"^[a-z0-9_-]{1,32}$")
 
 class BuyNowIn(BaseModel):
     product_id: uuid.UUID
+    variant_id: uuid.UUID | None = None  # required when the product has active variants
     qty: int = Field(1, ge=1, le=10)
     src: str | None = Field(None, max_length=200)
     buyer_input: str | None = Field(None, max_length=4000)
@@ -67,6 +68,7 @@ class InputIn(BaseModel):
 
 class CartItemIn(BaseModel):
     product_id: uuid.UUID
+    variant_id: uuid.UUID | None = None
     qty: int = Field(1, ge=1, le=10)
     buyer_input: str | None = Field(None, max_length=4000)
 

@@ -13,6 +13,7 @@ from app.core.errors import Conflict, InvalidState, NotFound, Validation
 from app.core.markdown import render_i18n
 from app.core.money import MoneyError, parse_amount
 from app.models import Attachment, Product, User
+from app.modules.admin import variants as variant_svc
 from app.modules.admin.schemas import BulkProductsIn, ProductIn, ProductPatch
 from app.modules.catalog.categories import category_slugs
 from app.modules.catalog.service import apply_search, prepare_search, stock_counts
@@ -72,7 +73,9 @@ def _summary(p: Product) -> dict[str, Any]:
 
 async def view(db: AsyncSession, p: Product) -> dict[str, Any]:
     stock = (await stock_counts(db, [p.id])).get(p.id) if p.delivery_mode == "auto_card" else None
-    return admin_product_view(p, stock)
+    out = admin_product_view(p, stock)
+    out["variants"] = (await variant_svc.admin_views(db, p.tenant_id, [p]))[p.id]
+    return out
 
 
 async def list_products(db: AsyncSession, page: Page, q: str | None, status: str | None) -> dict:
@@ -86,13 +89,22 @@ async def list_products(db: AsyncSession, page: Page, q: str | None, status: str
     total = await db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     rows = list(
         await db.scalars(
-            stmt.order_by(Product.created_at.desc(), Product.id)
+            stmt.order_by(
+                Product.pinned_at.desc().nullslast(),
+                Product.group_sort,
+                Product.created_at.desc(),
+                Product.id,
+            )
             .offset(page.offset)
             .limit(page.page_size)
         )
     )
     stock = await stock_counts(db, [p.id for p in rows if p.delivery_mode == "auto_card"])
-    return page.wrap([admin_product_view(p, stock.get(p.id)) for p in rows], int(total))
+    vviews = await variant_svc.admin_views(db, rows[0].tenant_id, rows) if rows else {}
+    outs = [admin_product_view(p, stock.get(p.id)) for p in rows]
+    for p, out in zip(rows, outs, strict=True):
+        out["variants"] = vviews.get(p.id, [])
+    return page.wrap(outs, int(total))
 
 
 async def create(db: AsyncSession, body: ProductIn, admin: User, ip: str | None) -> Product:

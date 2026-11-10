@@ -15,9 +15,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.audit import audit
 from app.core.config import Settings
 from app.core.errors import Conflict, InvalidState, NotFound, OutOfStock, QuoteExpired, Validation
+from app.core.i18n import pick
 from app.core.money import MoneyError, fmt, parse_amount
 from app.core.scoped import get_scoped
-from app.models import Conversation, Message, Order, Product, Quote, User
+from app.models import Conversation, Message, Order, Product, ProductVariant, Quote, User
+from app.modules.catalog import variants as variants_svc
 from app.modules.chat.messages import insert_message, post_system
 from app.modules.chat.schemas import QuoteIn
 from app.modules.common.views import iso
@@ -28,7 +30,7 @@ MAX_AUTO_CARD_QTY = 10  # == buy-now qty cap
 
 def canonical(q: Quote) -> bytes:
     fields = [
-        "v1",
+        "v2" if q.variant_id else "v1",
         str(q.id),
         str(q.tenant_id),
         str(q.conversation_id),
@@ -40,6 +42,8 @@ def canonical(q: Quote) -> bytes:
         str(int(q.expires_at.timestamp())),
         str(q.version),
     ]
+    if q.variant_id:  # v1 quotes (no variant) keep their original signature input
+        fields.append(str(q.variant_id))
     return json.dumps(fields, ensure_ascii=False, separators=(",", ":")).encode()
 
 
@@ -51,8 +55,8 @@ def verify_quote(key: bytes, q: Quote) -> bool:
     return hmac.compare_digest(q.signature or "", sign_quote(key, q))
 
 
-def quote_payload(q: Quote) -> dict[str, Any]:
-    return {
+def quote_payload(q: Quote, variant_name: str | None = None) -> dict[str, Any]:
+    out: dict[str, Any] = {
         "quote_id": str(q.id),
         "title": q.title,
         "amount": fmt(q.amount_minor),
@@ -63,6 +67,10 @@ def quote_payload(q: Quote) -> dict[str, Any]:
         "expires_at": iso(q.expires_at),
         "order_id": str(q.order_id) if q.order_id else None,
     }
+    if q.variant_id:
+        out["variant_id"] = str(q.variant_id)
+        out["variant_name"] = variant_name
+    return out
 
 
 async def create_quote(
@@ -80,6 +88,9 @@ async def create_quote(
     except MoneyError as exc:
         raise Validation(f"amount: {exc}") from None
     product: Product | None = None
+    variant: ProductVariant | None = None
+    if body.product_id is None and body.variant_id is not None:
+        raise Validation("variant_id needs a product_id")
     if body.product_id is not None:
         product = await get_scoped(db, Product, body.product_id, conv.tenant_id)
         if product is None:
@@ -87,13 +98,17 @@ async def create_quote(
         if product.delivery_mode == "auto_card" and body.qty > MAX_AUTO_CARD_QTY:
             # same cap as buy-now: every delivered order must stay revealable in one go
             raise Validation(f"qty must be at most {MAX_AUTO_CARD_QTY} for auto_card products")
-        if amount < product.floor_price_minor * body.qty:
+        # a product with active variants needs one (422 variant_required); foreign -> 404
+        variant = await variants_svc.resolve(db, conv.tenant_id, product, body.variant_id)
+        floor = variant.floor_price_minor if variant else product.floor_price_minor
+        if amount < floor * body.qty:
             raise Validation("amount is below the product floor price")
     q = Quote(
         id=uuid.uuid4(),
         tenant_id=conv.tenant_id,
         conversation_id=conv.id,
         product_id=product.id if product else None,
+        variant_id=variant.id if variant else None,
         created_by=agent.id,
         title=body.title.strip(),
         note=(body.note or "").strip() or None,
@@ -116,7 +131,7 @@ async def create_quote(
         sender_id=agent.id,
         sender_role="agent",
         type="quote_card",
-        payload=quote_payload(q),
+        payload=quote_payload(q, pick(variant.name_i18n, "en") if variant else None),
     )
     q.message_id = msg.id
     await audit(
@@ -127,7 +142,12 @@ async def create_quote(
         actor_role=agent.role,
         target=f"quote:{q.id}",
         ip=ip,
-        after={"amount_minor": q.amount_minor, "qty": q.qty, "expires_at": iso(q.expires_at)},
+        after={
+            "amount_minor": q.amount_minor,
+            "qty": q.qty,
+            "expires_at": iso(q.expires_at),
+            "variant_id": str(q.variant_id) if q.variant_id else None,
+        },
     )
     await db.commit()
     return q, msg
@@ -201,14 +221,29 @@ async def accept_quote(
         raise Conflict("Quote integrity check failed")
     product = await get_scoped(db, Product, q.product_id, q.tenant_id) if q.product_id else None
     delivery_mode = product.delivery_mode if product else "manual"
+    variant: ProductVariant | None = None
+    if q.variant_id is not None:
+        if product is None:
+            raise InvalidState("Quote is no longer available")
+        variant = await get_scoped(db, ProductVariant, q.variant_id, q.tenant_id)
+        if variant is None or variant.product_id != product.id or variant.status != "active":
+            raise InvalidState("This variant is no longer available")
+    elif product is not None and await variants_svc.has_active(db, q.tenant_id, product.id):
+        # a quote sent before the product had variants would sell outside every variant's stock
+        raise InvalidState("This product now has options; ask for a new quote")
     if delivery_mode == "auto_card" and q.qty > MAX_AUTO_CARD_QTY:
         raise InvalidState("Quote quantity exceeds the auto-delivery limit")
     if (
         product is not None
         and delivery_mode == "auto_card"
-        and await orders.available_stock(db, product.id) < q.qty
+        and await orders.available_stock(db, product.id, variant.id if variant else None) < q.qty
     ):
         raise OutOfStock("Not enough stock")
+    # global lock order: buyer row (cap) -> products -> variants (v11 audit M2)
+    await orders.enforce_payables_cap(db, settings, buyer)
+    if variant is not None and delivery_mode in ("manual", "auto_card"):
+        await orders.lock_manual_products(db, q.tenant_id, [product.id])  # type: ignore[union-attr]
+        await variants_svc.lock_variants(db, q.tenant_id, [variant.id])
     order, msg = await orders.create_order(
         db,
         settings=settings,
@@ -225,6 +260,8 @@ async def accept_quote(
         # attribution only: a quote is a negotiated price, no markup and no promo (v5)
         reseller_id=conv.reseller_id,
         reseller_markup_minor=0,
+        variant=variant,
+        enforce_cap=False,  # done above, before the product/variant locks
     )
     q.status = "accepted"
     q.order_id = order.id

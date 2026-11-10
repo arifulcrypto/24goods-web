@@ -25,6 +25,7 @@ from app.core.deps import Page
 from app.core.errors import Conflict, NotFound, Validation
 from app.core.scoped import get_scoped, session_tenant
 from app.models import CardBatch, CardStock, Order, Product
+from app.modules.catalog import variants as variants_svc
 from app.modules.common.views import iso
 
 MAX_LINES = 5000
@@ -81,9 +82,13 @@ async def import_cards(
     ip: str | None,
     note: str | None = None,
     expires_at: datetime | None = None,
+    variant_id: uuid.UUID | None = None,
 ) -> ImportResult:
     if product.delivery_mode != "auto_card":
         raise Validation("Cards can only be imported for auto_card products")
+    # v11 W1: a product with variants needs one; the variant must be this tenant's and this
+    # product's (404 otherwise), and active
+    variant = await variants_svc.resolve(db, tenant_id, product, variant_id)
     raw_lines = [ln.strip() for ln in lines.splitlines()]
     codes = [ln for ln in raw_lines if ln]
     if len(codes) > MAX_LINES:
@@ -123,6 +128,7 @@ async def import_cards(
                 "created_by": actor_id,
                 "batch_id": batch_id,
                 "expires_at": line_exp or expires_at,
+                "variant_id": variant.id if variant else None,
             }
         )
     del codes, raw_lines  # drop plaintext references as early as possible
@@ -179,6 +185,7 @@ async def import_cards(
             "kid": sealer.active_kid,
             "batch_id": str(batch_id) if rows else None,
             "expires_at": iso(expires_at),
+            "variant_id": str(variant.id) if variant else None,
         },
     )
     await db.commit()
@@ -192,6 +199,7 @@ def _card_rows(rows: list[Any], order_nos: dict[uuid.UUID, str]) -> list[dict[st
             "masked": masked(r["fingerprint"]),
             "status": r["status"],
             "batch_id": str(r["batch_id"]) if r["batch_id"] else None,
+            "variant_id": str(r["variant_id"]) if r["variant_id"] else None,
             "expires_at": iso(r["expires_at"]),
             "void_reason": r["void_reason"],
             "order_id": str(r["order_id"]) if r["order_id"] else None,
@@ -223,12 +231,15 @@ async def list_cards(
     batch_id: uuid.UUID | None = None,
     expiring_days: int | None = None,
     order_no: str | None = None,
+    variant_id: uuid.UUID | None = None,
 ) -> dict:
     if await get_scoped(db, Product, product_id, session_tenant(db)) is None:
         raise NotFound("Product not found")
     cols = CardStock.public_columns()
     t = CardStock.__table__
     base = select(*cols).where(t.c.product_id == product_id)
+    if variant_id is not None:
+        base = base.where(t.c.variant_id == variant_id)
     if status:
         base = base.where(t.c.status == status)
     if batch_id:
@@ -458,6 +469,7 @@ async def replace_card(
                         status="available",
                         created_by=actor_id,
                         batch_id=old["batch_id"],
+                        variant_id=old["variant_id"],  # the replacement stays in the same SKU
                         expires_at=line_exp or old["expires_at"],
                     )
                     .returning(*CardStock.public_columns())
@@ -521,3 +533,72 @@ async def void_expired(db: AsyncSession, tenant_id: uuid.UUID) -> int:
         )
     await db.commit()
     return len(voided)
+
+
+async def assign_cards_to_variant(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    product: Product,
+    variant_id: uuid.UUID,
+    count: int | None,
+    actor_id: uuid.UUID,
+    actor_role: str,
+    ip: str | None,
+) -> int:
+    """v11: move AVAILABLE product-level cards (``variant_id IS NULL``, e.g. imported before the
+    product had variants) into one of its active variants. Oldest first; ``count`` None = all.
+    The sealed secret never moves or opens: only ``variant_id`` changes, which the database
+    guard (``card_stock_guard``) allows for exactly this transition."""
+    if product.delivery_mode != "auto_card":
+        raise Validation("Only instant-delivery products hold cards")
+    variant = await variants_svc.resolve(db, tenant_id, product, variant_id)
+    if variant is None or variant.status != "active":
+        raise Validation("Choose an active variant of this product")
+    from app.modules.orders.service import (
+        available_stock,
+        lock_manual_products,
+        reserved_auto_stock,
+    )
+
+    # Same product lock as order creation, and never move cards still promised to open
+    # variant-less orders (they claim only product-level cards; v11 audit M1).
+    await lock_manual_products(db, tenant_id, [product.id])
+    free = await available_stock(db, product.id, None) - await reserved_auto_stock(
+        db, tenant_id, product.id, None
+    )
+    if free <= 0:
+        await db.rollback()
+        return 0
+    count = free if count is None else min(count, free)
+    pick = (
+        select(CardStock.id)
+        .where(
+            CardStock.tenant_id == tenant_id,
+            CardStock.product_id == product.id,
+            CardStock.variant_id.is_(None),
+            CardStock.status == "available",
+        )
+        .order_by(CardStock.created_at, CardStock.id)
+        .with_for_update(skip_locked=True)
+        .limit(count)
+    )
+    ids = list(await db.scalars(pick))
+    if ids:
+        await db.execute(
+            update(CardStock)
+            .where(CardStock.tenant_id == tenant_id, CardStock.id.in_(ids))
+            .values(variant_id=variant.id)
+        )
+    await audit(
+        db,
+        tenant_id=tenant_id,
+        action="cards.assigned_to_variant",
+        actor_id=actor_id,
+        actor_role=actor_role,
+        target=f"product:{product.id}",
+        ip=ip,
+        detail={"variant_id": str(variant.id), "moved": len(ids), "requested": count},
+    )
+    await db.commit()
+    return len(ids)

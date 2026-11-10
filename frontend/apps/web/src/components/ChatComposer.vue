@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   IMAGE_MAX_BYTES,
@@ -14,6 +14,7 @@ import {
   voiceExtension,
   usePasteImage,
 } from '@24goods/shared'
+import { ReplyBar } from '@24goods/shared/chat'
 import { showConfirmDialog, showToast } from '../ui'
 
 const emit = defineEmits<{
@@ -22,8 +23,16 @@ const emit = defineEmits<{
   sendImage: [blob: Blob, meta: { width?: number; height?: number; filename: string }]
   sendVoice: [blob: Blob, durationMs: number, filename: string]
   focus: []
+  /** v11 W2: the user is typing (the page throttles the network ping). */
+  typing: []
+  cancelReply: []
+  cancelEdit: []
+  saveEdit: [text: string]
 }>()
-withDefaults(defineProps<{ disabled?: boolean; voice?: boolean }>(), { voice: true })
+const props = withDefaults(
+  defineProps<{ disabled?: boolean; voice?: boolean; reply?: { title: string; preview: string } | null; editing?: { text: string } | null }>(),
+  { voice: true, reply: null, editing: null },
+)
 const { t } = useI18n()
 
 const mode = ref<'text' | 'voice'>('text')
@@ -39,9 +48,35 @@ function autoGrow() {
   el.style.height = 'auto'
   el.style.height = `${Math.min(el.scrollHeight, 112)}px`
 }
+/** The unsent draft is stashed while an edit is open and restored when it ends (cancel or saved). */
+let stash: string | null = null
+watch(
+  () => (props.editing ? props.editing.text : null),
+  (e, prev) => {
+    if (e !== null) {
+      if (prev === null || prev === undefined) stash = text.value
+      text.value = e
+      mode.value = 'text'
+      void nextTick(() => {
+        autoGrow()
+        textarea.value?.focus()
+      })
+    } else if (stash !== null) {
+      text.value = stash
+      stash = null
+      void nextTick(autoGrow)
+    }
+  },
+)
+watch(() => props.reply, (r) => r && void nextTick(() => textarea.value?.focus()))
 async function submitText() {
   const v = text.value.trim()
   if (!v) return
+  if (props.editing) {
+    // Keep the text: the page ends the edit on success, which restores the draft.
+    emit('saveEdit', v)
+    return
+  }
   const decision = longTextDecision(v)
   if (decision === 'ask') {
     // default (confirm) = send as a .txt file; cancel = send as plain text
@@ -67,7 +102,18 @@ async function submitText() {
   void nextTick(autoGrow)
   textarea.value?.focus()
 }
+function onInput() {
+  autoGrow()
+  if (text.value.trim() && !props.editing) emit('typing')
+}
 function onKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape' && (props.reply || props.editing)) {
+    e.preventDefault()
+    if (props.editing) {
+      emit('cancelEdit')
+    } else emit('cancelReply')
+    return
+  }
   // Enter sends; Shift+Enter = newline; never during IME composition (Chinese input).
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
     e.preventDefault()
@@ -220,11 +266,12 @@ onBeforeUnmount(() => {
   recorder?.cancel()
   recorder = null
 })
-defineExpose({ quote: (value: string) => { text.value = `> ${value.slice(0, 300).replace(/\n/g, '\n> ')}\n\n${text.value}`; } })
 </script>
 
 <template>
   <div class="composer" :class="{ disabled }">
+    <ReplyBar v-if="editing" :title="t('chatActions.editing')" :preview="editing.text" @cancel="text = ''; emit('cancelEdit')" />
+    <ReplyBar v-else-if="reply" :title="reply.title" :preview="reply.preview" @cancel="emit('cancelReply')" />
     <div class="row">
       <button
         v-if="voice"
@@ -248,7 +295,7 @@ defineExpose({ quote: (value: string) => { text.value = `> ${value.slice(0, 300)
         :placeholder="t('chat.placeholder')"
         :aria-label="t('chat.placeholder')"
         :disabled="disabled"
-        @input="autoGrow"
+        @input="onInput"
         @keydown="onKeydown"
         @focus="emit('focus')"
       />

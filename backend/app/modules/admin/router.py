@@ -26,13 +26,17 @@ from app.core.resources import Resources
 from app.models import User
 from app.modules.admin import products as product_svc
 from app.modules.admin import service
+from app.modules.admin import variants as variant_svc
 from app.modules.admin.schemas import (
     AgentStatusIn,
     BulkProductsIn,
+    CardsAssignVariantIn,
     CardsImportIn,
     ProductIn,
     ProductPatch,
     ReplyTemplateIn,
+    VariantIn,
+    VariantPatch,
 )
 from app.modules.aftersales.schemas import RefundIn
 from app.modules.catalog.service import support_status
@@ -114,6 +118,60 @@ async def patch_product(
 ) -> dict:
     p = await product_svc.patch(db, product_id, body, admin, client_ip(request))
     return await product_svc.view(db, p)
+
+
+@router.get(
+    "/products/{product_id}/variants", dependencies=[Depends(require_scope("products:read"))]
+)
+async def list_variants(
+    product_id: uuid.UUID, staff: User = Depends(require_staff), db: AsyncSession = Depends(get_db)
+) -> dict:
+    return {"items": await variant_svc.list_variants(db, staff.tenant_id, product_id)}
+
+
+@router.post(
+    "/products/{product_id}/variants", dependencies=[Depends(require_scope("products:write"))]
+)
+async def create_variant(
+    product_id: uuid.UUID,
+    body: VariantIn,
+    request: Request,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    return await variant_svc.create(db, product_id, body, admin, client_ip(request))
+
+
+@router.patch(
+    "/products/{product_id}/variants/{variant_id}",
+    dependencies=[Depends(require_scope("products:write"))],
+)
+async def patch_variant(
+    product_id: uuid.UUID,
+    variant_id: uuid.UUID,
+    body: VariantPatch,
+    request: Request,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    return await variant_svc.patch(db, product_id, variant_id, body, admin, client_ip(request))
+
+
+@router.delete(
+    "/products/{product_id}/variants/{variant_id}",
+    dependencies=[Depends(require_scope("products:write"))],
+)
+async def delete_variant(
+    product_id: uuid.UUID,
+    variant_id: uuid.UUID,
+    request: Request,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Archived when orders/cards reference it, else deleted."""
+    return {
+        "outcome": await variant_svc.delete(db, product_id, variant_id, admin, client_ip(request))
+    }
 
 
 @router.post("/products/bulk", dependencies=[Depends(require_scope("products:write"))])
@@ -219,6 +277,7 @@ async def import_cards(
         ip=client_ip(request),
         note=body.note,
         expires_at=body.expires_at,
+        variant_id=body.variant_id,
     )
     return {
         "imported": result.imported,
@@ -228,6 +287,34 @@ async def import_cards(
     }
 
 
+@router.post(
+    "/products/{product_id}/cards/assign-variant",
+    dependencies=[Depends(require_scope("cards:import"))],
+)
+async def assign_cards_to_variant(
+    product_id: uuid.UUID,
+    body: CardsAssignVariantIn,
+    request: Request,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+    res: Resources = Depends(get_res),
+) -> dict:
+    """v11: move available product-level cards into a variant (cards imported before variants)."""
+    await enforce(res.redis, "cards:assign", str(admin.id), 30, 3600)
+    p = await product_svc.get(db, product_id)
+    moved = await inventory.assign_cards_to_variant(
+        db,
+        tenant_id=admin.tenant_id,
+        product=p,
+        variant_id=body.variant_id,
+        count=body.count,
+        actor_id=admin.id,
+        actor_role=admin.role,
+        ip=client_ip(request),
+    )
+    return {"moved": moved}
+
+
 @router.get("/products/{product_id}/cards")
 async def list_cards(
     product_id: uuid.UUID,
@@ -235,6 +322,7 @@ async def list_cards(
     batch_id: uuid.UUID | None = None,
     expiring_days: int | None = Query(None, ge=0, le=3650),
     order_no: str | None = Query(None, max_length=16),
+    variant_id: uuid.UUID | None = None,
     page: Page = Depends(get_page),
     _: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
@@ -247,6 +335,7 @@ async def list_cards(
         batch_id=batch_id,
         expiring_days=expiring_days,
         order_no=order_no,
+        variant_id=variant_id,
     )
 
 
@@ -434,6 +523,7 @@ async def send_message(
         client_msg_id=body.client_msg_id,
         store=FileStore(res.settings.upload_dir),
         product_id=body.product_id,
+        reply_to=body.reply_to,
     )
     if created:
         await chat.broadcast(res, db, conv, [msg])
@@ -474,6 +564,29 @@ async def upload_content_image(
     )
     await db.commit()
     return {"id": str(att.id), "url": file_url(att.id)}
+
+
+@router.get("/conversations/{conv_id}/pins")
+async def list_pins(
+    conv_id: uuid.UUID,
+    _: User = Depends(require_staff),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    conv = await chat.staff_conversation(db, conv_id)
+    return await chat.pinned_messages(db, conv)
+
+
+@router.post("/conversations/{conv_id}/typing", status_code=204)
+async def typing(
+    conv_id: uuid.UUID,
+    staff: User = Depends(require_staff),
+    db: AsyncSession = Depends(get_db),
+    res: Resources = Depends(get_res),
+) -> Response:
+    await enforce(res.redis, "chat:typing", str(staff.id), 1, 3)
+    conv = await chat.staff_conversation(db, conv_id)
+    await chat.publish_typing(res, conv, staff, role="agent")
+    return Response(status_code=204)
 
 
 @router.post("/conversations/{conv_id}/read", status_code=204)
@@ -543,7 +656,7 @@ async def create_quote(
         db, res.settings, conv, staff, body, client_ip(request)
     )
     await chat.broadcast(res, db, conv, [msg])
-    return quote_svc.quote_payload(quote)
+    return quote_svc.quote_payload(quote, (msg.payload or {}).get("variant_name"))
 
 
 @router.post("/quotes/{quote_id}/withdraw")
@@ -560,7 +673,8 @@ async def withdraw_quote(
     msg = await quote_svc.quote_message(db, quote)  # same id, updated status
     conv = await chat.staff_conversation(db, quote.conversation_id)
     await chat.broadcast(res, db, conv, [m for m in (msg, sysmsg) if m is not None])
-    return quote_svc.quote_payload(quote)
+    vname = ((msg.payload if msg else None) or {}).get("variant_name")
+    return quote_svc.quote_payload(quote, vname)
 
 
 # ---------------------------------------------------------------- agents

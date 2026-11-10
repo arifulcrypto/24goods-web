@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Bell, MuteNotification } from '@element-plus/icons-vue'
-import { beep, ensureNotificationPermission, notificationPermission, type PermissionState } from '../notify'
+import { beep, desktopNotify, ensureNotificationPermission, notificationPermission, type PermissionState } from '../notify'
 import { ORDER_ALERT_KINDS, type OrderAlertKind } from '../lib/notifyPolicy'
 import { usePrefsStore } from '../stores/prefs'
 
@@ -21,6 +21,16 @@ async function toggleDesktop(v: boolean | string | number) {
 }
 function toggleOrder(k: OrderAlertKind, v: boolean | string | number) {
   prefs.orderAlerts = { ...prefs.orderAlerts, [k]: v === true }
+}
+async function sendTest() {
+  if (!(await ensureNotificationPermission())) {
+    perm.value = notificationPermission()
+    return
+  }
+  perm.value = notificationPermission()
+  prefs.notify = true
+  if (prefs.sound) beep()
+  desktopNotify(t('notify.testTitle'), t('notify.testBody'), 'test', undefined, { url: '/admin/' })
 }
 function toggleSound(v: boolean | string | number) {
   prefs.sound = v === true
@@ -46,6 +56,7 @@ function toggleSound(v: boolean | string | number) {
         <label for="np-desktop">{{ t('notify.desktop') }}</label>
         <el-switch id="np-desktop" :model-value="prefs.notify && perm === 'granted'" :disabled="perm === 'denied' || perm === 'unsupported'" @update:model-value="toggleDesktop" />
       </div>
+      <el-button size="small" class="np-test" :disabled="perm === 'denied' || perm === 'unsupported'" @click="sendTest">{{ t('notify.test') }}</el-button>
       <h4 class="np-h2">{{ t('notify.orders') }}</h4>
       <div v-for="k in ORDER_ALERT_KINDS" :key="k" class="np-row">
         <label :for="`np-order-${k}`">{{ t(`notify.orderKind.${k}`) }}</label>
@@ -76,6 +87,11 @@ function toggleSound(v: boolean | string | number) {
   align-items: center;
   min-height: 40px;
   font-size: 13px;
+}
+.np-test {
+  width: 100%;
+  min-height: 36px;
+  margin: 4px 0;
 }
 .bell {
   padding: 8px;

@@ -1,9 +1,9 @@
 """SQLAlchemy 2 typed models. Schema DDL lives in ``migrations/`` (hand-written SQL)."""
 
 from app.models.base import Base
-from app.models.catalog import Category, Product
+from app.models.catalog import Category, Product, ProductVariant
 from app.models.chat import Attachment, Conversation, CsReplyTemplate, Message, Quote
-from app.models.content import AfterSales, Article
+from app.models.content import AfterSales, AnnouncementRead, Article
 from app.models.growth import (
     ApiToken,
     BlockedIP,
@@ -26,6 +26,7 @@ from app.models.users import AgentStatus, User
 __all__ = [
     "AfterSales",
     "AgentStatus",
+    "AnnouncementRead",
     "ApiToken",
     "Article",
     "Attachment",
@@ -52,6 +53,7 @@ __all__ = [
     "PaymentGateway",
     "PaymentTest",
     "Product",
+    "ProductVariant",
     "PromoCode",
     "PromoRedemption",
     "Quote",

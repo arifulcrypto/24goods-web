@@ -4,7 +4,13 @@
  */
 export default {
   mediaPrefs: {quality:'Image quality',auto:'Auto (network)',low:'Low data',high:'High quality',compress:'Compress images before upload'},
-  chatActions: {"menu": "Message actions", "copy": "Copy text", "reply": "Quote in draft", "pin": "Pin", "unpin": "Unpin", "recall": "Recall", "recalled": "Message recalled by sender", "media": "Pinned media"},
+  avatar: { preset: 'Avatar {n}' },
+  chatActions: {
+    menu: 'Message actions', copy: 'Copy', reply: 'Reply', pin: 'Pin', unpin: 'Unpin', edit: 'Edit', recall: 'Recall',
+    recalled: 'Message recalled by sender', media: 'Pinned media', edited: 'edited', unknownSender: 'Message',
+    pinnedTitle: 'Pinned message', pinnedBar: 'Jump to pinned message', pinnedCount: '#{i}/{n}', replyingTo: 'Reply to {name}', editing: 'Editing message',
+    typing: '{name} is typing…', typingGeneric: 'typing…',
+  },
   paste: {
     tip: 'Tip: paste a screenshot with Ctrl+V',
   },
@@ -54,6 +60,8 @@ export default {
     rate_limited: 'Too many requests, please slow down',
     conflict: 'This was changed by someone else, please refresh',
     out_of_stock: 'Out of stock',
+    variant_required: 'Please choose an option',
+    variant_archived: 'This option is no longer available',
     invalid_state: 'This action is not available in the current state',
     quote_expired: 'This offer has expired',
     upload_rejected: 'File rejected (type or size not allowed)',
@@ -270,6 +278,8 @@ export default {
       loadFailed: 'Could not load the file',
     },
     system: {
+      message_pinned: '{name} pinned a message',
+      message_unpinned: '{name} unpinned a message',
       price_changed: 'Price changed to {amount}',
       delivery_expedite: 'The buyer asks the seller to ship this order as soon as possible',
       delivered: 'Order delivered',

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Goods, Microphone, Picture, Promotion } from '@element-plus/icons-vue'
 import {
@@ -13,16 +13,21 @@ import {
   isVoiceSupported,
   voiceExtension,
 } from '@24goods/shared'
+import { ReplyBar } from '@24goods/shared/chat'
 
 import ProductPickerDialog from './ProductPickerDialog.vue'
 import QuickReplies from './QuickReplies.vue'
 
-defineProps<{ disabled?: boolean }>()
+const props = withDefaults(defineProps<{ disabled?: boolean; reply?: { title: string; preview: string } | null; editing?: { text: string } | null }>(), { reply: null, editing: null })
 const emit = defineEmits<{
   sendText: [text: string]
   sendImage: [blob: Blob, meta: { width?: number; height?: number; filename: string }]
   sendVoice: [blob: Blob, durationMs: number, filename: string]
   sendProduct: [productId: string]
+  typing: []
+  cancelReply: []
+  cancelEdit: []
+  saveEdit: [text: string]
 }>()
 const { t } = useI18n()
 const text = ref('')
@@ -37,11 +42,41 @@ const elapsedLabel = computed(() => {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 })
 
+const input = ref<{ focus: () => void } | null>(null)
+/** The unsent draft is stashed while an edit is open and restored when it ends (cancel or saved). */
+let stash: string | null = null
+watch(
+  () => (props.editing ? props.editing.text : null),
+  (e, prev) => {
+    if (e !== null) {
+      if (prev === null || prev === undefined) stash = text.value
+      text.value = e
+      void nextTick(() => input.value?.focus())
+    } else if (stash !== null) {
+      text.value = stash
+      stash = null
+    }
+  },
+)
+watch(() => props.reply, (r) => r && void nextTick(() => input.value?.focus()))
+watch(text, (v) => {
+  if (v.trim() && !props.editing) emit('typing')
+})
+function cancelBar() {
+  if (props.editing) {
+    emit('cancelEdit')
+  } else emit('cancelReply')
+}
 function send() {
   const v = text.value.trim()
   if (!v) return
   if (v.length > 2000) {
     ElMessage.warning(t('inbox.tooLong'))
+    return
+  }
+  if (props.editing) {
+    // Keep the text: the page ends the edit on success, which restores the draft.
+    emit('saveEdit', v)
     return
   }
   emit('sendText', v)
@@ -55,6 +90,11 @@ function insertReply(body: string) {
 function onKeydown(ev: Event | KeyboardEvent) {
   if (!(ev instanceof KeyboardEvent)) return
   const e = ev
+  if (e.key === 'Escape' && (props.reply || props.editing)) {
+    e.preventDefault()
+    cancelBar()
+    return
+  }
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
     e.preventDefault()
     send()
@@ -144,7 +184,6 @@ async function stopVoice(sendIt: boolean) {
   }
 }
 onBeforeUnmount(() => recorder?.cancel())
-defineExpose({ quote: (value: string) => { text.value = `> ${value.slice(0, 300).replace(/\n/g, '\n> ')}\n\n${text.value}`; } })
 </script>
 
 <template>
@@ -157,6 +196,8 @@ defineExpose({ quote: (value: string) => { text.value = `> ${value.slice(0, 300)
       <el-button type="primary" @click="stopVoice(true)">{{ t('inbox.stopAndSend') }}</el-button>
     </div>
     <template v-else>
+      <ReplyBar v-if="editing" :title="t('chatActions.editing')" :preview="editing.text" @cancel="cancelBar" />
+      <ReplyBar v-else-if="reply" :title="reply.title" :preview="reply.preview" @cancel="cancelBar" />
       <div class="tools">
         <el-tooltip :content="t('chat.image.pick')">
           <el-button text circle :icon="Picture" :disabled="disabled" :aria-label="t('chat.image.pick')" @click="fileInput?.click()" />
@@ -170,6 +211,7 @@ defineExpose({ quote: (value: string) => { text.value = `> ${value.slice(0, 300)
       </div>
       <div class="input-row">
         <el-input
+          ref="input"
           v-model="text"
           type="textarea"
           :autosize="{ minRows: 2, maxRows: 6 }"

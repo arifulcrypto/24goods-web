@@ -223,6 +223,7 @@ Rollback: `git revert` → CI → new `:main`; or pin `API_IMAGE`/`WEB_IMAGE` to
 | ADR-034 | Several EPay gateways, priority + sticky failover, test payments | Implemented |
 | ADR-035 | Every held order and payment attempt has an exit (#72) | Implemented |
 | ADR-036 | Email change needs proof of ownership (#72 S6) | Implemented |
+| ADR-037 | v11: product variants, Telegram-style chat, notifications, announcements, manual service records | Implemented |
 
 ### ADR-015: List storefront, generated covers, Kesiv brand config
 - **Context:** The reference shops (gmailbuy and others) sell by plain, dense lists with tags in the title; buyers of virtual goods compare price and stock, not photos. Most products have no image.
@@ -404,3 +405,19 @@ Context: `POST /me/credentials` stored a new email immediately (marked unverifie
 Decision: `POST /me/email-change` (current password unless the account is instant) sends a one-time code (`auth/codes.py`, purpose `email_change`, bound to the user id and the new address; registration TTL, attempt and send limits plus per-user/per-IP request limits) and always answers `{"sent": true}`; a taken address gets no mail, and sending runs in the background so timing does not differ. `POST /me/email-change/confirm` verifies the code, re-checks uniqueness, sets the email as verified, clears `is_instant` and audits `me.email_changed`. `/me/credentials` is password-only. Unlike registration (which may accept unverified addresses when `email_verify_on_register` is off), an email change always needs a code: with no mailer configured it answers 403 `feature_disabled`.
 
 Consequences: an unconfirmed address is never stored as a login email. Deployments without SMTP cannot change emails (instant accounts can still set a password). Sessions are not revoked on an email change (only on a password change), matching the existing convention.
+
+### ADR-037: v11 — product variants, Telegram-style chat, notifications, announcements, manual service records
+
+Context: the owner asked for variants with their own prices and service terms, a shorter home, admin pinning/sorting, CS alerts that work while the browser is minimised, buyer message alerts and typing status, real replies/pins/edits in chat, announcements with unread state, staff-entered service reminders for off-site sales, and generic avatars. Spec and per-workstream notes: [review-v11-features.md](review-v11-features.md).
+
+Decision:
+- **Variants** (`product_variants`, migration 0020): a flat list per product; each has its own price, floor, manual stock, optional after-sales/subscription terms (NULL inherits) and `sold`; delivery mode stays per product. A product with an active variant requires `variant_id` on every sale path (buy-now, cart, checkout, quotes, promo preview, card import). Stock pools are **disjoint**: a variant's cards/stock vs product-level cards/stock (a variant-less order counts and claims only product-level cards). Cards imported before variants move into a variant via an audited endpoint; `card_stock_guard` allows exactly that transition for `app_api`. Lock order: buyer → products → variants → promo.
+- **Chat**: replies (`payload.reply_to`), sender edits ≤ 48 h (`payload.edited_at`), server-side pins list with a sticky bar (both sides pin/unpin), typing via a rate-limited endpoint and an ephemeral SSE event (nothing stored), vertical context menu. The "Quote in draft" action is removed. Quotes for variant products carry `variant_id` (signature v2); old quotes without one are refused once the product has variants.
+- **Notifications**: notification-only service workers for the console and the buyer app (no fetch handler, no caching) so alerts show while minimised; console alerts default on with a permission banner; buyer chime/desktop toggles default from admin settings. Web Push with the browser closed is out of scope (would need FCM, unreachable in mainland China).
+- **Announcements**: `articles.kind='notice'` + `announcement_reads`; unread badge, list, mark-all-read, one-time prompt (tenant toggle). Unread counts start at account creation.
+- **Manual service records**: `service_entitlements.buyer_id/order_id` nullable, `ref` `SV-XXXXXX` always generated, customer label/contact/notes, reminder lead days; renewals may have no order.
+- **Pin & sort**: `pinned_at` on products/categories (pinned first in every sort), audited bulk reorder, tenant default sort with a buyer sort selector.
+- **Avatars**: 16 original inline-SVG presets (`users.avatar_preset`), deterministic default per user.
+
+Consequences: every sale of a variant product is unambiguous about stock and price; legacy product-level cards stay sellable only to variant-less orders until moved. Chat edits keep the original in the audit trail only. Migrations 0020–0022 are additive; downgrading 0022 deletes standalone service records and notices.
+

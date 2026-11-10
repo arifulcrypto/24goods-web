@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { imageQuality, compressUploads, safeAssetUrl, setMediaPreference } from '@24goods/shared'
+import { imageQuality, compressUploads, resolveAvatar, safeAssetUrl, setMediaPreference } from '@24goods/shared'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
@@ -14,6 +14,7 @@ import {
   Goods,
   List,
   Menu,
+  Bell,
   Reading,
   Service,
   Setting,
@@ -26,6 +27,7 @@ import { LogoMark } from '@24goods/shared/ui'
 import NotifyPopover from '../components/NotifyPopover.vue'
 import StaffAvatarControl from '../components/StaffAvatarControl.vue'
 import { useCsNotifications } from '../composables/useCsNotifications'
+import { ensureNotificationPermission, notificationPermission } from '../notify'
 import { useDeskStore } from '../stores/desk'
 import AgentStatusSelect from '../components/AgentStatusSelect.vue'
 import { useAuthStore } from '../stores/auth'
@@ -44,6 +46,29 @@ const desk = useDeskStore()
 useCsNotifications()
 const narrow = ref(false)
 
+// v11: ask once (per browser) for desktop notifications; a browser only shows its permission prompt
+// after a user gesture, hence a banner with a button rather than an automatic request.
+const NOTIFY_BANNER_KEY = '24goods.admin.notifyBannerDismissed'
+const notifyBanner = ref(false)
+try {
+  notifyBanner.value = notificationPermission() === 'default' && localStorage.getItem(NOTIFY_BANNER_KEY) !== '1'
+} catch {
+  notifyBanner.value = notificationPermission() === 'default'
+}
+async function enableNotifications() {
+  prefs.notify = await ensureNotificationPermission()
+  if (!prefs.notify && notificationPermission() === 'denied') ElMessage.warning({ message: t('notify.denied'), grouping: true })
+  notifyBanner.value = false
+}
+function dismissNotifyBanner() {
+  notifyBanner.value = false
+  try {
+    localStorage.setItem(NOTIFY_BANNER_KEY, '1')
+  } catch {
+    /* ignore */
+  }
+}
+
 interface MenuItem {
   path: string
   key: string
@@ -60,6 +85,7 @@ const groups = computed(() => {
         { path: '/services', key: 'services.title', icon: List },
         { path: '/after-sales', key: 'nav.afterSales', icon: Service },
         { path: '/users', key: 'v5.nav.users', icon: User },
+        { path: '/announcements', key: 'news.title', icon: Bell },
       ],
     },
     {
@@ -189,7 +215,7 @@ async function logout() {
           </el-dropdown>
           <el-dropdown trigger="click">
             <el-button text class="user-btn">
-              <el-avatar :size="26" class="avatar" :src="safeAssetUrl(auth.user?.avatar_url) ?? undefined">{{ (auth.user?.display_name || '?').charAt(0).toUpperCase() }}</el-avatar>
+              <el-avatar :size="26" class="avatar" :src="resolveAvatar({ url: safeAssetUrl(auth.user?.avatar_url), preset: auth.user?.avatar_preset, seed: auth.user?.id })" />
               <span class="user-name">{{ auth.user?.display_name }}</span>
             </el-button>
             <template #dropdown>
@@ -209,6 +235,12 @@ async function logout() {
         </div>
       </el-header>
       <el-main class="main">
+        <el-alert v-if="notifyBanner" class="notify-banner" type="info" show-icon :closable="false" :title="t('notify.bannerTitle')" :description="t('notify.bannerBody')">
+          <div class="notify-banner-actions">
+            <el-button size="small" type="primary" @click="enableNotifications">{{ t('notify.bannerEnable') }}</el-button>
+            <el-button size="small" text @click="dismissNotifyBanner">{{ t('notify.bannerLater') }}</el-button>
+          </div>
+        </el-alert>
         <RouterView />
       </el-main>
     </el-container>
@@ -342,5 +374,13 @@ async function logout() {
   .top-title {
     display: none;
   }
+}
+.notify-banner {
+  margin-bottom: 12px;
+}
+.notify-banner-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
 }
 </style>

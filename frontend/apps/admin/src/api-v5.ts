@@ -2,7 +2,7 @@
  * Admin API + types for review-v5 §12 (settings center, categories, promo codes, resellers, import,
  * audit filters). Coded against the contract; only uses the shared `ApiClient`.
  */
-import { seg, type ApiClient, type I18nText, type Paginated } from '@24goods/shared'
+import { seg, type ApiClient, type CatalogSort, type I18nText, type Paginated } from '@24goods/shared'
 import type { AdminSiteV4, ChannelCfg, QuickQuestions, RateLimitCfg } from './api-v4'
 import type { AdminOrder, Order } from '@24goods/shared'
 import type { AdminProductV3 } from './api-v3'
@@ -124,6 +124,9 @@ export interface NotificationsCfg {
   event_payment_review: boolean
   event_reseller_application: boolean
   event_low_stock: boolean
+  /** v11 W2: defaults for the buyer's chat alerts (the buyer's own choice wins). */
+  buyer_sound?: boolean
+  buyer_desktop?: boolean
 }
 export const TG_EVENTS = ['order_paid', 'chat_message', 'after_sales', 'payment_review', 'reseller_application', 'low_stock'] as const
 export interface AuditCfg {
@@ -193,6 +196,26 @@ export const emailTestErrorKey = (code: string | undefined): string | null =>
   code && (EMAIL_TEST_ERRORS as readonly string[]).includes(code) ? `v5.email.err.${code}` : null
 
 // ---------------- categories (§2) ----------------
+export type AnnouncementCategory = 'news' | 'operations' | 'inventory' | 'notice'
+export interface AdminAnnouncement {
+  id: string
+  title_i18n: I18nText
+  body_i18n: I18nText
+  category: AnnouncementCategory
+  status: 'draft' | 'published'
+  pinned: boolean
+  published_at: string | null
+  created_at: string
+  updated_at: string
+  read_count: number
+}
+export interface AnnouncementInput {
+  title_i18n: PartialI18n
+  body_i18n: PartialI18n
+  category: AnnouncementCategory
+  status: 'draft' | 'published'
+  pinned: boolean
+}
 export interface AdminCategory {
   id: string
   slug: string
@@ -200,6 +223,8 @@ export interface AdminCategory {
   icon: string | null
   sort: number
   enabled: boolean
+  /** v11: pinned categories are listed first. */
+  pinned?: boolean
   product_count?: number
 }
 /** Raw shape of GET /admin/categories (`products` is the product count). */
@@ -215,6 +240,8 @@ export type AdminProductStatus = 'active' | 'draft' | 'archived'
 export type AdminProductV5 = Omit<AdminProductV4, 'status'> & {
   status: AdminProductStatus
   archived_at?: string | null
+  /** v11: pinned products are listed first on the storefront. */
+  pinned?: boolean
   delivery_eta_hours?: number | null
   /** staff only, minor units */
   cost_minor?: number | null
@@ -481,6 +508,23 @@ export function createAdminV5Api(c: ApiClient) {
       create: (b: AdminCategoryInput & { slug: string }) => c.post<RawCategory>('/admin/categories', b).then(catOf),
       update: (id: string, b: Partial<AdminCategoryInput>) => c.patch<RawCategory>(`/admin/categories/${seg(id)}`, b).then(catOf),
       remove: (id: string) => c.delete<void>(`/admin/categories/${seg(id)}`),
+      /** v11 W3 */
+      pin: (id: string, pinned: boolean) => c.put<{ id: string; pinned: boolean }>(`/admin/categories/${seg(id)}/pin`, { pinned }),
+      reorder: (ids: string[]) => c.post<{ count: number }>('/admin/categories/reorder', { ids }),
+    },
+    catalog: {
+      getSettings: () => c.get<{ default_sort: CatalogSort; sorts: CatalogSort[] }>('/admin/catalog/settings'),
+      setDefaultSort: (default_sort: CatalogSort) => c.put<{ default_sort: CatalogSort }>('/admin/catalog/settings', { default_sort }),
+    },
+    announcements: {
+      list: (q: { status?: string; page?: number; page_size?: number } = {}) =>
+        c.get<Paginated<AdminAnnouncement>>('/admin/announcements', clean(q)),
+      create: (b: AnnouncementInput) => c.post<AdminAnnouncement>('/admin/announcements', b),
+      update: (id: string, b: Partial<AnnouncementInput>) => c.patch<AdminAnnouncement>(`/admin/announcements/${seg(id)}`, b),
+      remove: (id: string) => c.delete<void>(`/admin/announcements/${seg(id)}`),
+      getSettings: () => c.get<{ prompt_new: boolean; show_badge: boolean }>('/admin/announcements/settings'),
+      setSettings: (b: { prompt_new?: boolean; show_badge?: boolean }) =>
+        c.put<{ prompt_new: boolean; show_badge: boolean }>('/admin/announcements/settings', b),
     },
     products: {
       list: (q: { q?: string; status?: string; category?: string; page?: number; page_size?: number }) =>
@@ -488,6 +532,9 @@ export function createAdminV5Api(c: ApiClient) {
       archive: (id: string) => c.delete<void>(`/admin/products/${seg(id)}`),
       hardDelete: (id: string) => c.delete<void>(`/admin/products/${seg(id)}`, { query: { hard: true } }),
       restore: (id: string) => c.post<AdminProductV5>(`/admin/products/${seg(id)}/restore`),
+      /** v11 W3 */
+      pin: (id: string, pinned: boolean) => c.put<{ id: string; pinned: boolean }>(`/admin/products/${seg(id)}/pin`, { pinned }),
+      reorder: (ids: string[]) => c.post<{ count: number }>('/admin/products/reorder', { ids }),
       bulk: (b: { ids: string[]; action: BulkAction; category?: string }) =>
         c.post<{ updated: number }>('/admin/products/bulk', b),
       importFetch: (url: string) => c.post<ImportDraft>('/admin/products/import/fetch', { url }),

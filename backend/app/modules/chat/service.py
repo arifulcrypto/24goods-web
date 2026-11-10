@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import and_, func, or_, select, text, update
@@ -16,12 +17,70 @@ from app.core.security import STAFF_ROLES
 from app.models import Attachment, Conversation, Message, Order, Product, Quote, User
 from app.modules.catalog.service import get_active_product
 from app.modules.chat.messages import ensure_open_conversation, insert_message
-from app.modules.common.views import avatar_url, iso, message_view, product_card_payload
+from app.modules.common.views import (
+    avatar_preset,
+    avatar_url,
+    iso,
+    message_view,
+    product_card_payload,
+)
 from app.modules.realtime.publish import publish_conversation, publish_message
+from app.modules.realtime.publish import publish_typing as _pub_typing
 from app.modules.uploads.service import text_preview
 from app.modules.uploads.storage import FileStore
 
 MAX_PAGE = 100
+PIN_EVENTS = ("message_pinned", "message_unpinned")
+REPLY_PREVIEW = 120
+TYPE_PREVIEW = {"image": "[image]", "voice": "[voice]", "file": "[file]"}
+
+
+async def build_reply(db: AsyncSession, conv: Conversation, reply_to: int) -> dict[str, Any]:
+    """The ``payload.reply_to`` snapshot of a message in the SAME conversation (tenant-scoped);
+    redacted / recalled messages cannot be replied to."""
+    target = await db.scalar(
+        select(Message).where(
+            Message.id == reply_to,
+            Message.conversation_id == conv.id,
+            Message.tenant_id == conv.tenant_id,
+        )
+    )
+    if (
+        target is None
+        or (target.payload or {}).get("redacted")
+        or target.type in ("system", "order_card", "quote_card")
+    ):
+        raise Validation("Cannot reply to this message", code="reply_invalid")
+    sender = (
+        await get_scoped(db, User, target.sender_id, conv.tenant_id) if target.sender_id else None
+    )
+    if target.type == "text":
+        preview = (target.text or "")[:REPLY_PREVIEW]
+    else:
+        preview = TYPE_PREVIEW.get(target.type, "")
+    return {
+        "id": target.id,
+        "sender_name": sender.display_name if sender else "",
+        "sender_role": target.sender_role,
+        "preview": preview,
+        "type": target.type,
+    }
+
+
+async def pinned_messages(db: AsyncSession, conv: Conversation) -> list[dict[str, Any]]:
+    rows = list(
+        await db.scalars(
+            select(Message)
+            .where(
+                Message.tenant_id == conv.tenant_id,
+                Message.conversation_id == conv.id,
+                Message.payload["pinned"].as_boolean().is_(True),
+            )
+            .order_by(Message.id.desc())
+            .limit(3)
+        )
+    )
+    return await message_views(db, rows)
 
 
 async def users_by_id(db: AsyncSession, ids: set[uuid.UUID]) -> dict[uuid.UUID, User]:
@@ -82,6 +141,7 @@ async def message_views(db: AsyncSession, msgs: list[Message]) -> list[dict[str,
                 m,
                 sender_name=sender.display_name if sender else None,
                 sender_avatar=avatar_url(sender),
+                sender_preset=avatar_preset(sender),
                 attachment=atts.get(m.attachment_id) if m.attachment_id else None,
                 payload_overlay=overlay,
             )
@@ -111,7 +171,12 @@ async def conversation_views(
     last_views = {v["id"]: v for v in await message_views(db, last_msgs)}
     ids = [c.id for c in convs]
     if viewer == "buyer":
-        cond = and_(Message.id > Conversation.buyer_last_read_id, Message.sender_role != "buyer")
+        cond = and_(
+            Message.id > Conversation.buyer_last_read_id,
+            Message.sender_role != "buyer",
+            # "X pinned a message" lines are not worth an unread badge
+            func.coalesce(Message.payload["event"].astext, "").notin_(PIN_EVENTS),
+        )
     else:
         # a new order card is as unread-worthy as a buyer message (CS must see every order)
         cond = and_(
@@ -137,6 +202,7 @@ async def conversation_views(
                     "id": str(c.buyer_id),
                     "display_name": buyer.display_name if buyer else "",
                     "avatar_url": avatar_url(buyer),
+                    "avatar_preset": avatar_preset(buyer),
                 },
                 "product": product_card_payload(product, lang) if product else None,
                 "status": c.status,
@@ -145,6 +211,7 @@ async def conversation_views(
                         "id": str(agent.id),
                         "display_name": agent.display_name,
                         "avatar_url": avatar_url(agent),
+                        "avatar_preset": avatar_preset(agent),
                     }
                     if agent
                     else None
@@ -298,6 +365,7 @@ async def send_user_message(
     client_msg_id: str,
     store: FileStore | None = None,
     product_id: uuid.UUID | None = None,
+    reply_to: int | None = None,
 ) -> tuple[Message, bool]:
     payload: dict[str, Any] | None = None
     await db.scalar(
@@ -359,6 +427,10 @@ async def send_user_message(
                 "bytes": att.bytes,
                 "preview": await text_preview(store, att),
             }
+    if reply_to is not None:
+        if type == "product_card":
+            raise Validation("product_card messages cannot be replies")
+        payload = {**(payload or {}), "reply_to": await build_reply(db, conv, reply_to)}
     msg, created = await insert_message(
         db,
         tenant_id=conv.tenant_id,
@@ -399,3 +471,19 @@ async def mark_read(db: AsyncSession, conv: Conversation, message_id: int, viewe
 
 def resolve_title(product: Product | None, lang: str) -> str:
     return pick(product.title_i18n, lang) if product else ""
+
+
+async def publish_typing(res: Resources, conv: Conversation, user: User, *, role: str) -> None:
+    until = datetime.now(timezone.utc) + timedelta(seconds=6)
+    await _pub_typing(
+        res.redis,
+        conv.tenant_id,
+        conv.buyer_id,
+        to_staff=role == "buyer",
+        data={
+            "conversation_id": str(conv.id),
+            "role": role,
+            "name": user.display_name,
+            "until": iso(until),
+        },
+    )

@@ -317,7 +317,11 @@ async def _articles(db: AsyncSession, tid: uuid.UUID) -> list[Article]:
         (
             await db.scalars(
                 select(Article)
-                .where(Article.tenant_id == tid, Article.status == "published")
+                .where(
+                    Article.tenant_id == tid,
+                    Article.status == "published",
+                    Article.kind != "notice",
+                )
                 .order_by(
                     Article.pinned.desc(), Article.published_at.desc().nulls_last(), Article.id
                 )
@@ -378,7 +382,10 @@ async def article(
     if SLUG_RE.fullmatch(slug):
         a = await db.scalar(
             select(Article).where(
-                Article.tenant_id == tid, Article.slug == slug, Article.status == "published"
+                Article.tenant_id == tid,
+                Article.slug == slug,
+                Article.status == "published",
+                Article.kind != "notice",
             )
         )
     if a is None:

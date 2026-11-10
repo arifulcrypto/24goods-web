@@ -623,3 +623,13 @@ Details live in the ADRs named in brackets.
   services (ADR-030).
 - `GET /admin/after-sales[/{id}]`, `POST /admin/after-sales/{id}/action`.
 
+## v11 additions (ADR-037)
+
+- Variants: `GET|POST /admin/products/{id}/variants`, `PATCH|DELETE /admin/products/{id}/variants/{vid}` (delete archives when referenced); `POST /admin/products/{id}/cards/assign-variant` `{variant_id, count?}`; `variant_id` on `POST /orders`, cart quote, checkout items, `/promo/validate`, card import and the card list filter. Product payloads: `has_variants`, `variants[]`, `price_from`, `stock`; orders: `variant_id`, `variant_name`.
+- Chat: `reply_to` on message send; `PATCH /chat/messages/{id}` `{text}`; `GET /conversations/{id}/pins`, `GET /admin/conversations/{id}/pins`; `POST /conversations/{id}/typing`, `POST /admin/conversations/{id}/typing` (204; SSE `typing {conversation_id, role, name, until}`); `QuoteIn.variant_id`.
+- `/site`: `notify_defaults.buyer {sound, desktop}`, `announcements {prompt_new, show_badge, ...}`, `catalog.default_sort`.
+- Announcements: `GET /announcements`, `GET /announcements/{id}`, `POST /announcements/{id}/read`, `POST /announcements/read-all`; admin CRUD under `/admin/announcements` (+ `/settings`).
+- Services: `POST /admin/services` accepts standalone records (`customer_label`, `contact`, `notes`, `starts_at`, `ends_at`, `reminder_lead_days`, optional `buyer_email` / `order_no`); renewals without `order_id`.
+- Catalog: `PUT /admin/{products|categories}/{id}/pin`, `POST /admin/{products|categories}/reorder`, `GET|PUT /admin/catalog/settings`, `GET /products?sort=manual|sales|price_asc|price_desc|newest`.
+- Avatars: `PUT /me/avatar/preset` `{preset}`; `avatar_preset` in user, sender and inbox views.
+

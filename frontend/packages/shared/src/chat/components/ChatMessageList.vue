@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { nextTick, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import type { QuoteCardPayload } from '../../types'
+import type { Message, QuoteCardPayload } from '../../types'
 import { formatChatTime } from '../../format'
 import type { ChatItem } from '../useConversation'
 import { needsTimeDivider } from '../merge'
 import ChatMessage from './ChatMessage.vue'
+import PinnedBar from './PinnedBar.vue'
 import './chat.css'
 
 const props = defineProps<{
@@ -20,10 +21,15 @@ const props = defineProps<{
   /** Own display name / avatar for pending (not yet echoed) messages. */
   selfName?: string
   selfAvatar?: string | null
+  selfPreset?: string | null
   viewOrder?: boolean
+  /** v11 W2: server-listed pins (newest first, ≤ 3), independent of the loaded page. */
+  pins?: Message[]
+  /** Loads one older page (used to reach a pinned/quoted message that is not loaded yet). */
+  olderLoader?: () => Promise<unknown>
 }>()
 const emit = defineEmits<{
-  action: [action: 'recall' | 'pin' | 'reply', id: number]
+  action: [action: 'recall' | 'pin' | 'reply' | 'edit', id: number]
   reachTop: []
   preview: [url: string]
   openProduct: [id: string]
@@ -94,12 +100,31 @@ async function openFile(f: { url: string; name: string }) {
   }
 }
 
-defineExpose({ scrollToBottom, isNearBottom, preserveScroll, el: scroller })
+/** Scroll to (and flash) a message; loads older pages until it is found (max 30 pages). */
+async function jumpTo(id: number): Promise<boolean> {
+  for (let i = 0; i < 30; i++) {
+    const el = scroller.value?.querySelector<HTMLElement>(`[data-mid="${id}"]`)
+    if (el) {
+      el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      el.classList.remove('gc-jump-flash')
+      void el.offsetWidth
+      el.classList.add('gc-jump-flash')
+      setTimeout(() => el.classList.remove('gc-jump-flash'), 1400)
+      return true
+    }
+    if (!props.hasMore || !props.olderLoader) return false
+    await preserveScroll(() => props.olderLoader!())
+  }
+  return false
+}
+
+defineExpose({ jumpTo, scrollToBottom, isNearBottom, preserveScroll, el: scroller })
 </script>
 
 <template>
-  <div ref="scroller" class="gc-list" role="log" aria-live="polite" @scroll.passive="onScroll">
-    <div v-for="pin in items.filter(i => i.kind === 'server' && (i.message.payload as {pinned?: boolean} | null)?.pinned)" :key="`pin-${pin.key}`" class="gc-pinned" role="note">📌 {{ pin.kind === 'server' ? (pin.message.text?.slice(0, 160) || t('chatActions.media')) : '' }}</div>
+  <div ref="scroller" class="gc-list" @scroll.passive="onScroll">
+    <PinnedBar v-if="pins?.length" :pins="pins" @jump="jumpTo" />
+    <div class="gc-log" role="log" aria-live="polite">
     <div class="gc-list-top">
       <span v-if="loadingOlder" class="gc-muted"><span class="gc-spin" /> {{ t('chat.loadingOlder') }}</span>
       <span v-else-if="!hasMore && items.length && !loading" class="gc-muted">{{ t('chat.noOlder') }}</span>
@@ -117,7 +142,9 @@ defineExpose({ scrollToBottom, isNearBottom, preserveScroll, el: scroller })
         :self-id="selfId"
         :self-name="selfName"
         :self-avatar="selfAvatar"
+        :self-preset="selfPreset"
         @action="(a, id) => emit('action', a, id)"
+        @jump="jumpTo"
         :mode="mode"
         :busy-quote-id="busyQuoteId"
         :view-order="viewOrder"
@@ -135,6 +162,7 @@ defineExpose({ scrollToBottom, isNearBottom, preserveScroll, el: scroller })
       <slot name="item-extra" :item="it" />
     </template>
     <slot name="bottom" />
+    </div>
     <Teleport to="body">
       <div v-if="viewer" class="gc-viewer" role="dialog" aria-modal="true" :aria-label="viewer.name" @click.self="viewer = null">
         <div class="gc-viewer-box">
@@ -152,4 +180,3 @@ defineExpose({ scrollToBottom, isNearBottom, preserveScroll, el: scroller })
   </div>
 </template>
 
-<style scoped>.gc-pinned{max-width:100%;overflow-wrap:anywhere;padding:8px 12px;border-bottom:1px solid #8885;box-sizing:border-box}</style>

@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { compressUploads, goBack, imageQuality, isApiError, setMediaPreference, type LocalePreference } from '@24goods/shared'
 import { api } from '../api'
 import { useAuthStore } from '../stores/auth'
+import { useNotifyPrefsStore } from '../stores/notifyPrefs'
 import { languagePreference, setLocale } from '../locale'
 import { showSuccessToast, showToast, toastError } from '../ui'
 
@@ -14,6 +15,11 @@ const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 const saving = ref(false)
+const notifyPrefs = useNotifyPrefsStore()
+async function toggleDesktop(v: boolean) {
+  const ok = await notifyPrefs.setDesktop(v)
+  if (v && !ok) showToast(t('notifyPrefs.denied'))
+}
 
 function switchLang(l: LocalePreference) {
   setLocale(l)
@@ -168,6 +174,22 @@ onMounted(() => {
         <van-cell :title="t('mediaPrefs.compress')" icon="upgrade" center clickable @click="setMediaPreference(imageQuality, !compressUploads)">
           <template #value>
             <van-switch :model-value="compressUploads" :aria-label="t('mediaPrefs.compress')" @click.stop @update:model-value="(v: boolean) => setMediaPreference(imageQuality, v)" />
+          </template>
+        </van-cell>
+      </van-cell-group>
+    </section>
+
+    <section class="section card">
+      <h2 class="group-title">{{ t('notifyPrefs.title') }}</h2>
+      <van-cell-group :border="false">
+        <van-cell :title="t('notifyPrefs.sound')" icon="volume-o" center>
+          <template #value>
+            <van-switch :model-value="notifyPrefs.sound" :aria-label="t('notifyPrefs.sound')" @update:model-value="(v: boolean) => notifyPrefs.setSound(v)" />
+          </template>
+        </van-cell>
+        <van-cell :title="t('notifyPrefs.desktop')" :label="t('notifyPrefs.desktopHint')" icon="bell" center>
+          <template #value>
+            <van-switch :model-value="notifyPrefs.desktop" :aria-label="t('notifyPrefs.desktop')" @update:model-value="toggleDesktop" />
           </template>
         </van-cell>
       </van-cell-group>

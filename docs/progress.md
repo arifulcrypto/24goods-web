@@ -4,6 +4,19 @@ Update this file in every PR. Phases are defined in [review-v2.md §8](review-v2
 
 ## Current state — hand-off (read this first in a new session)
 
+**v11 features (2026-11-10, branch `feat/v11-features`, PR #82, spec `docs/review-v11-features.md`,
+ADR-037, migrations `0020_product_variants`, `0021_chat_v11`, `0022_v11_content_ops`):** product
+variants (own price / floor / stock / terms, disjoint stock pools, variant quotes, move pre-variant
+cards); Telegram-style chat (replies, vertical context menu, sticky pinned bar, sender edits with
+audited history, typing indicator; "Quote in draft" removed); buyer chime + desktop notifications
+(admin defaults) and console notifications through a service worker (work while minimised, default
+on); announcements (unread badge, list, mark all read, one-time prompt); manual service records
+without order/customer (`SV-XXXXXX` ref, reminders); pin + drag sort for products and categories with
+a default storefront sort; 16 generic SVG avatars; recently viewed moved from Home to My account.
+Cold payment-auditor, security-reviewer and i18n-mobile-reviewer passes: no Critical/High; all
+Medium/Low findings fixed in the PR. Not built: Web Push with the browser closed, per-variant images,
+two-dimension option matrices.
+
 **Build toolchain (2026-11-10, branch `fix/node-lts-typescript-pins`, supersedes Dependabot #74/#78):**
 web image build stage and CI on **Node 26 Active LTS** (EOL 2029-04-30) instead of 22; pnpm installed
 with npm from `packageManager` (Node ≥ 25 images have no Corepack); **TypeScript 6.0.3** (newest that

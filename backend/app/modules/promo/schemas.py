@@ -11,6 +11,7 @@ from app.modules.promo.service import CODE_RE, normalize_code
 
 class ValidateItem(BaseModel):
     product_id: uuid.UUID
+    variant_id: uuid.UUID | None = None  # v11 W1: preview on the variant's price
     qty: int = Field(1, ge=1, le=10)
 
 

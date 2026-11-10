@@ -11,6 +11,9 @@ import type {
   UsdtPayView,
   Article,
   ArticleSummary,
+  AnnouncementDetail,
+  AnnouncementItem,
+  CatalogSort,
   InstantResult,
   LookupOrder,
   PowChallenge,
@@ -20,6 +23,8 @@ import type {
   AdminOrder,
   AdminOrderDetail,
   AdminProduct,
+  AdminVariant,
+  AdminVariantInput,
   AdminProductInput,
   AdminStats,
   AgentInfo,
@@ -121,6 +126,8 @@ export function createBuyerApi(c: ApiClient) {
     chatActions: {
       recall: (id: number) => c.post<Message>(`/chat/messages/${id}/recall`, {}),
       pin: (id: number, pinned: boolean) => c.post<Message>(`/chat/messages/${id}/pin`, { pinned }),
+      /** v11 W2: edit own text message (≤ 48 h). */
+      edit: (id: number, text: string) => c.patch<Message>(`/chat/messages/${id}`, { text }),
     },
     site: () => c.get<SiteInfo>('/site'),
     pow: {
@@ -144,13 +151,23 @@ export function createBuyerApi(c: ApiClient) {
         return c.request<User>('PUT', '/me/avatar', { form: fd })
       },
       removeAvatar: () => c.delete<User>('/me/avatar'),
+      /** v11: pick a generic avatar (`p01`..`p16`); drops an uploaded picture. */
+      setAvatarPreset: (preset: string) => c.put<User>('/me/avatar/preset', { preset }),
       /** v9 §8: highest announcement version this user acknowledged (follows them across devices). */
       announcementAck: () => c.get<{ version: number }>('/me/announcement-ack'),
       acknowledgeAnnouncement: (version: number) => c.post<{ version: number }>('/me/announcement-ack', { version }),
     },
     categories: () => c.get<Category[]>('/categories'),
-    products: (q: { q?: string; category?: string; page?: number; page_size?: number }) =>
+    products: (q: { q?: string; category?: string; sort?: CatalogSort; page?: number; page_size?: number }) =>
       c.get<Paginated<ProductSummary>>('/products', q),
+    /** v11 W3: announcements (news). Read state needs a session; guests get `read: null`. */
+    announcements: {
+      list: (q: { page?: number; page_size?: number } = {}) =>
+        c.get<Paginated<AnnouncementItem> & { unread: number | null }>('/announcements', q),
+      get: (id: string) => c.get<AnnouncementDetail>(`/announcements/${seg(id)}`),
+      markRead: (id: string) => c.post<void>(`/announcements/${seg(id)}/read`, {}),
+      markAllRead: () => c.post<void>('/announcements/read-all', {}),
+    },
     /** v3: summaries for ≤20 ids, in the given order (recently viewed). */
     productsByIds: (ids: readonly string[]) =>
       c.get<{ items: ProductSummary[] }>('/products', { ids: ids.slice(0, 20).join(',') }),
@@ -186,6 +203,8 @@ export function createBuyerApi(c: ApiClient) {
         c.post<Message>(`/conversations/${seg(id)}/messages`, b),
       read: (id: string, message_id: number) =>
         c.post<void>(`/conversations/${seg(id)}/read`, { message_id }),
+      pins: (id: string) => c.get<Message[]>(`/conversations/${seg(id)}/pins`),
+      typing: (id: string) => c.post<void>(`/conversations/${seg(id)}/typing`),
     },
     upload: (file: Blob, o: UploadOptions) => c.upload<Attachment>('/uploads', uploadForm(file, o)),
     quotes: {
@@ -199,10 +218,12 @@ export function createBuyerApi(c: ApiClient) {
         src?: string | null,
         buyer_input?: string | null,
         promo_code?: string | null,
+        variant_id?: string | null,
       ) =>
         c.post<Order>('/orders', {
           product_id,
           qty,
+          ...(variant_id ? { variant_id } : {}),
           ...(promo_code ? { promo_code } : {}),
           ...(src ? { src } : {}),
           ...(buyer_input !== undefined ? { buyer_input } : {}),
@@ -233,7 +254,7 @@ export function createBuyerApi(c: ApiClient) {
       c.post<CartQuote>('/cart/quote', promo_code ? { items, promo_code } : { items }),
     /** v5 §6: preview only; the server recomputes at order creation. */
     promoValidate: (
-      b: { code: string; items: { product_id: string; qty: number }[] },
+      b: { code: string; items: { product_id: string; qty: number; variant_id?: string }[] },
       turnstileToken?: string,
     ) =>
       c.post<PromoPreview>('/promo/validate', b, {
@@ -290,6 +311,7 @@ export function createAdminApi(c: ApiClient) {
   return {
     auth: buyer.auth,
     chatActions: buyer.chatActions,
+    product: buyer.product,
     categories: buyer.categories,
     upload: buyer.upload,
     stats: () => c.get<AdminStats>('/admin/stats'),
@@ -309,6 +331,20 @@ export function createAdminApi(c: ApiClient) {
         c.post<CardImportResult>(`/admin/products/${seg(id)}/cards/import`, { lines }),
       cards: (id: string, q: { status?: CardStatus | ''; page?: number; page_size?: number }) =>
         c.get<Paginated<CardRow>>(`/admin/products/${seg(id)}/cards`, q),
+      /** v11 W1: product variants (SKUs). */
+      variants: {
+        list: (id: string) => c.get<{ items: AdminVariant[] }>(`/admin/products/${seg(id)}/variants`),
+        create: (id: string, b: AdminVariantInput) =>
+          c.post<AdminVariant>(`/admin/products/${seg(id)}/variants`, b),
+        update: (id: string, vid: string, b: Partial<AdminVariantInput>) =>
+          c.patch<AdminVariant>(`/admin/products/${seg(id)}/variants/${seg(vid)}`, b),
+        /** v11: move available product-level cards (imported before variants) into a variant. */
+        assignCards: (id: string, vid: string, count?: number) =>
+          c.post<{ moved: number }>(`/admin/products/${seg(id)}/cards/assign-variant`, { variant_id: vid, count }),
+        /** Archives when orders/cards reference it, else deletes. */
+        remove: (id: string, vid: string) =>
+          c.delete<{ outcome: 'archived' | 'deleted' }>(`/admin/products/${seg(id)}/variants/${seg(vid)}`),
+      },
     },
     orders: {
       list: (q: {
@@ -334,6 +370,8 @@ export function createAdminApi(c: ApiClient) {
         c.get<Message[]>(`/admin/conversations/${seg(id)}/messages`, { ...q }),
       send: (id: string, b: SendMessageBody) =>
         c.post<Message>(`/admin/conversations/${seg(id)}/messages`, b),
+      pins: (id: string) => c.get<Message[]>(`/admin/conversations/${seg(id)}/pins`),
+      typing: (id: string) => c.post<void>(`/admin/conversations/${seg(id)}/typing`),
       assign: (id: string, agent_id: string | null) =>
         c.post<Conversation>(`/admin/conversations/${seg(id)}/assign`, { agent_id }),
       close: (id: string) => c.post<Conversation>(`/admin/conversations/${seg(id)}/close`),

@@ -85,3 +85,41 @@ describe('one stock rule for every view (issue 49 C)', async () => {
     expect(maxOrderQty({ stock })).toBe(max)
   })
 })
+
+describe('variants are separate cart lines (v11 W1)', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    setActivePinia(createPinia())
+  })
+
+  it('same product, two variants = two lines; ids persist and are sent', () => {
+    const cart = useCartStore()
+    cart.add('p1', 1, null, 'v1')
+    cart.add('p1', 2, null, 'v2')
+    cart.add('p1', 1, null, 'v1') // same variant again: quantity merges
+    expect(cart.lines.map((l) => [l.key, l.qty])).toEqual([['p1:v1', 2], ['p1:v2', 2]])
+    expect(JSON.parse(localStorage.getItem('kesiv.cart.v1') ?? '[]')).toEqual([
+      { product_id: 'p1', variant_id: 'v1', qty: 2, selected: true },
+      { product_id: 'p1', variant_id: 'v2', qty: 2, selected: true },
+    ])
+    expect(cart.toInputs(cart.lines)).toEqual([
+      { product_id: 'p1', variant_id: 'v1', qty: 2 },
+      { product_id: 'p1', variant_id: 'v2', qty: 2 },
+    ])
+    cart.remove('p1:v1')
+    expect(cart.lines.map((l) => l.key)).toEqual(['p1:v2'])
+  })
+
+  it('quote lines are matched by product and variant', () => {
+    const cart = useCartStore()
+    cart.add('p1', 1, null, 'v1')
+    cart.quote = {
+      lines: [
+        { product_id: 'p1', variant_id: 'v1', variant_name: 'A', title: 'P', cover: null, unit_price: '5.00', currency: 'CNY', stock: null, available: true, max_qty: 10, needs_input: false, qty: 1, line_subtotal: '5.00' },
+      ],
+      subtotal: '5.00', fee: '0.00', fee_rate: '0%', total: '5.00', currency: 'CNY',
+    }
+    expect(cart.quoteByProduct.get('p1:v1')?.variant_name).toBe('A')
+    expect(cart.payableCount).toBe(1)
+  })
+})

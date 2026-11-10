@@ -7,12 +7,15 @@ import {
   goBack,
   messageFilename,
   isApiError,
+  resolveAvatar,
   safePayUrl,
   type Conversation,
+  type Message,
+  type MessageMeta,
   type Product,
   type QuoteCardPayload,
 } from '@24goods/shared'
-import { AgentStatusDot, ChatMessageList, useConversation } from '@24goods/shared/chat'
+import { AgentStatusDot, ChatMessageList, useConversation, useTyping } from '@24goods/shared/chat'
 import { api } from '../api'
 import BuySheet from '../components/BuySheet.vue'
 import ChatComposer from '../components/ChatComposer.vue'
@@ -51,16 +54,62 @@ const busyQuoteId = ref<string | null>(null)
 const list = ref<InstanceType<typeof ChatMessageList> | null>(null)
 const opening = ref(true)
 
-const composer = ref<InstanceType<typeof ChatComposer> | null>(null)
-async function messageAction(action: 'recall' | 'pin' | 'reply', id: number) {
-  const m = chat.messages.value.find(m => m.id === id)
-  if (!m) return
-  if (action === 'reply') { composer.value?.quote(m.text ?? ''); return }
+const replyTo = ref<Message | null>(null)
+const editing = ref<Message | null>(null)
+const pins = ref<Message[]>([])
+const replyBar = computed(() =>
+  replyTo.value
+    ? {
+        title: t('chatActions.replyingTo', { name: replyTo.value.sender.display_name }),
+        preview: replyTo.value.type === 'text' ? (replyTo.value.text ?? '').slice(0, 120) : t(`chat.preview.${replyTo.value.type}`),
+      }
+    : null,
+)
+async function refreshPins() {
+  const id = chat.conversationId.value
+  if (!id) return
   try {
-    const updated = action === 'recall' ? await api.chatActions.recall(id) : await api.chatActions.pin(id, !(m.payload as {pinned?: boolean} | null)?.pinned)
-    chat.apply([updated])
-  } catch (e) { toastError(e) }
+    pins.value = await api.conversations.pins(id)
+  } catch {
+    /* the bar is a convenience; the next event retries */
+  }
 }
+async function messageAction(action: 'recall' | 'pin' | 'reply' | 'edit', id: number) {
+  const m = chat.messages.value.find((m) => m.id === id)
+  if (!m) return
+  if (action === 'reply') {
+    editing.value = null
+    replyTo.value = m
+    return
+  }
+  if (action === 'edit') {
+    replyTo.value = null
+    editing.value = m
+    return
+  }
+  try {
+    const updated = action === 'recall' ? await api.chatActions.recall(id) : await api.chatActions.pin(id, !(m.payload as MessageMeta | null)?.pinned)
+    chat.apply([updated])
+    void refreshPins()
+  } catch (e) {
+    toastError(e)
+  }
+}
+async function saveEdit(text: string) {
+  const m = editing.value
+  if (!m) return
+  try {
+    chat.apply([await api.chatActions.edit(m.id, text)])
+    if (editing.value === m) editing.value = null
+  } catch (e) {
+    toastError(e)
+  }
+}
+const typing = useTyping({
+  send: () => api.conversations.typing(chat.conversationId.value!),
+  conversationId: () => chat.conversationId.value,
+  otherRole: 'agent',
+})
 const chat = useConversation({
   selfRole: 'buyer',
   adapter: {
@@ -89,6 +138,9 @@ const offlineText = computed(() => {
 })
 const welcome = computed(() => site.site?.support?.welcome?.trim() || t('cs.welcomeDefault'))
 const quick = computed(() => (site.site?.support?.quick_questions ?? []).filter((q) => q.trim()).slice(0, 6))
+const welcomeAvatar = computed(() =>
+  resolveAvatar({ preset: conv.value?.assigned_agent?.avatar_preset, seed: conv.value?.assigned_agent?.id ?? 'support' }),
+)
 const guestId = computed(() => (auth.user?.is_instant ? (auth.user.handle ?? '') : ''))
 function saveLogin() {
   if (auth.guestCreds) showCreds.value = true
@@ -135,7 +187,12 @@ async function openConversation() {
       conv.value = convs.list.find((c) => c.id === id) ?? null
     }
     convs.activeId = id
+    replyTo.value = null
+    editing.value = null
+    pins.value = []
+    typing.clear()
     await chat.open(id)
+    void refreshPins()
     await list.value?.scrollToBottom()
     markReadIfVisible()
   } catch (e) {
@@ -178,8 +235,12 @@ const offs = [
   rt.on('message', (e) => {
     if (e.conversation_id !== chat.conversationId.value) return
     chat.apply([e.message])
+    typing.clearFor(e.message.sender.role, e.conversation_id)
+    const p = (e.message.payload ?? {}) as MessageMeta & { event?: string }
+    if (p.pinned !== undefined || p.event === 'message_pinned' || p.event === 'message_unpinned' || p.recalled || pins.value.some((x) => x.id === e.message.id)) void refreshPins()
     void afterIncoming(e.message.sender.role === 'buyer')
   }),
+  rt.on('typing', (e) => typing.onEvent(e)),
   rt.on('conversation', (c) => {
     if (c.id === chat.conversationId.value) conv.value = c
   }),
@@ -224,27 +285,37 @@ async function loadOlder() {
 function sent() {
   void list.value?.scrollToBottom(true)
 }
+/** The reply target is consumed by the next send (text, file, image or voice). */
+function takeReply(): number | undefined {
+  const id = replyTo.value?.id
+  replyTo.value = null
+  return id
+}
 function onSendText(text: string) {
+  const r = takeReply()
   void whenReady(() => {
-    chat.sendText(text)
+    chat.sendText(text, r)
     sent()
   })
 }
 function onSendFile(text: string) {
+  const r = takeReply()
   void whenReady(() => {
-    chat.sendFile(text, messageFilename())
+    chat.sendFile(text, messageFilename(), r)
     sent()
   })
 }
 function onSendImage(blob: Blob, meta: { width?: number; height?: number; filename: string }) {
+  const r = takeReply()
   void whenReady(() => {
-    chat.sendImage(blob, meta)
+    chat.sendImage(blob, meta, r)
     sent()
   })
 }
 function onSendVoice(blob: Blob, durationMs: number, filename: string) {
+  const r = takeReply()
   void whenReady(() => {
-    chat.sendVoice(blob, durationMs, filename)
+    chat.sendVoice(blob, durationMs, filename, r)
     sent()
   })
 }
@@ -316,9 +387,12 @@ function deliveredOrderId(it: { kind: string; message?: { type: string; payload:
       <div class="head-main">
         <div class="head-title">{{ conv?.assigned_agent?.display_name || t('chat.title') }}</div>
         <div class="head-status">
-          <AgentStatusDot :status="status" />
-          <span>{{ t(`agentStatus.${status}`) }}</span>
-          <span v-if="statusHint" class="head-msg">· {{ statusHint }}</span>
+          <span class="typing" role="status">{{ typing.name.value === null ? '' : typing.name.value ? t('chatActions.typing', { name: typing.name.value }) : t('chatActions.typingGeneric') }}</span>
+          <template v-if="typing.name.value === null">
+            <AgentStatusDot :status="status" />
+            <span>{{ t(`agentStatus.${status}`) }}</span>
+            <span v-if="statusHint" class="head-msg">· {{ statusHint }}</span>
+          </template>
         </div>
       </div>
       <span class="head-btn" aria-hidden="true" />
@@ -333,8 +407,11 @@ function deliveredOrderId(it: { kind: string; message?: { type: string; payload:
     <ChatMessageList
       :self-name="auth.user?.display_name"
       :self-avatar="auth.user?.avatar_url"
+      :self-preset="auth.user?.avatar_preset"
       :self-id="auth.user?.id"
       @action="messageAction"
+      :pins="pins"
+      :older-loader="() => chat.loadOlder()"
       ref="list"
       :items="chat.items.value"
       mode="buyer"
@@ -362,7 +439,7 @@ function deliveredOrderId(it: { kind: string; message?: { type: string; payload:
           {{ t('cs.connectFailed') }}
         </button>
         <div v-else class="gc-row welcome">
-          <span class="gc-avatar" aria-hidden="true">{{ (conv?.assigned_agent?.display_name || t('chat.title')).charAt(0).toUpperCase() }}</span>
+          <span class="gc-avatar" aria-hidden="true"><img :src="welcomeAvatar" alt="" decoding="async" /></span>
           <div class="gc-col">
             <div class="gc-line"><div class="gc-bubble">{{ welcome }}</div></div>
             <div v-if="!quick.length" class="chips" role="group" :aria-label="t('chat.chips.label')">
@@ -390,7 +467,6 @@ function deliveredOrderId(it: { kind: string; message?: { type: string; payload:
       <van-button size="small" round type="primary" @click="startNew">{{ t('chat.startNew') }}</van-button>
     </div>
     <ChatComposer
-      ref="composer"
       v-else
       :voice="site.features.voice_messages"
       :disabled="connecting"
@@ -398,6 +474,12 @@ function deliveredOrderId(it: { kind: string; message?: { type: string; payload:
       @send-file="onSendFile"
       @send-image="onSendImage"
       @send-voice="onSendVoice"
+      :reply="replyBar"
+      :editing="editing ? { text: editing.text ?? '' } : null"
+      @cancel-reply="replyTo = null"
+      @cancel-edit="editing = null"
+      @save-edit="saveEdit"
+      @typing="typing.ping()"
       @focus="list?.scrollToBottom()"
     />
     <BuySheet v-model:show="buySheet" :product="buyProduct" />
@@ -457,6 +539,9 @@ function deliveredOrderId(it: { kind: string; message?: { type: string; payload:
   font-size: 12px;
   color: var(--c-text-2);
   min-width: 0;
+}
+.typing {
+  color: var(--c-accent-ink, var(--c-text-2));
 }
 .head-msg {
   white-space: nowrap;

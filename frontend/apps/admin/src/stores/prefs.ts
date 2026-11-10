@@ -13,13 +13,16 @@ function load(): Prefs {
   try {
     const raw = localStorage.getItem(KEY)
     if (raw) {
-      const j = JSON.parse(raw) as Partial<Prefs>
-      return { notify: false, sound: true, collapsed: false, ...j, orderAlerts: mergeOrderAlerts(j.orderAlerts) }
+      const j = JSON.parse(raw) as Partial<Prefs> & { v?: number }
+      // v11: desktop alerts default ON (they still need the browser permission). Older saved prefs
+      // carried the previous default (off) without the agent ever choosing it, so reset once.
+      const notify = j.v === 2 ? (j.notify ?? true) : true
+      return { sound: true, collapsed: false, ...j, notify, orderAlerts: mergeOrderAlerts(j.orderAlerts) }
     }
   } catch {
     /* ignore */
   }
-  return { notify: false, sound: true, collapsed: false, orderAlerts: mergeOrderAlerts(null) }
+  return { notify: true, sound: true, collapsed: false, orderAlerts: mergeOrderAlerts(null) }
 }
 
 export const usePrefsStore = defineStore('prefs', () => {
@@ -30,7 +33,7 @@ export const usePrefsStore = defineStore('prefs', () => {
   const orderAlerts = ref<OrderAlertPrefs>(p.orderAlerts)
   watch([notify, sound, collapsed, orderAlerts], () => {
     try {
-      localStorage.setItem(KEY, JSON.stringify({ notify: notify.value, sound: sound.value, collapsed: collapsed.value, orderAlerts: orderAlerts.value }))
+      localStorage.setItem(KEY, JSON.stringify({ v: 2, notify: notify.value, sound: sound.value, collapsed: collapsed.value, orderAlerts: orderAlerts.value }))
     } catch {
       /* ignore */
     }

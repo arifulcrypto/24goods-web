@@ -1,14 +1,15 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Plus, Search, Upload } from '@element-plus/icons-vue'
-import { copyText, formatDateTime, formatMoney, isApiError, type Category } from '@24goods/shared'
+import { Plus, Rank, Search, Upload, Top, Bottom } from '@element-plus/icons-vue'
+import { CATALOG_SORTS, copyText, formatDateTime, formatMoney, isApiError, type CatalogSort, type Category } from '@24goods/shared'
 import { ProductThumb } from '@24goods/shared/ui'
 import { api, apiV5 } from '../api'
 import type { AdminProductV5 as AdminProduct, BulkAction, ProductPrefill } from '../api-v5'
 import ImportDialog from '../components/ImportDialog.vue'
 import ProductDialog from '../components/ProductDialog.vue'
 import { usePaged } from '../composables/usePaged'
+import { moved, useRowReorder } from '../composables/useRowReorder'
 import { marginMinor, yuanToMinor } from '../lib/money'
 import { useAuthStore } from '../stores/auth'
 import { confirmBox, toastError, toastOk } from '../ui'
@@ -27,9 +28,45 @@ const catDialog = ref(false)
 const bulkCat = ref('')
 const defaultEta = ref(24)
 
+const PAGE = 100
 const table = usePaged<AdminProduct>((page, page_size) =>
   apiV5.products.list({ q: q.value.trim() || undefined, status: status.value || undefined, page, page_size }),
-)
+PAGE)
+
+// v11 W3: pin + manual order (drag the grip or use the arrows). Reordering writes the whole list,
+// so it is only offered when every product is on screen (no search / status filter, one page).
+const canReorder = computed(() => auth.isAdmin && !q.value.trim() && !status.value && table.total.value <= PAGE)
+const defaultSort = ref<CatalogSort>('manual')
+async function applyOrder(next: AdminProduct[]) {
+  const prev = table.items.value
+  table.items.value = next
+  try {
+    await apiV5.products.reorder(next.map((p) => p.id))
+    toastOk(t('catalogOrder.saved'))
+    await table.load()
+  } catch (e) {
+    table.items.value = prev
+    toastError(e)
+  }
+}
+const reorder = useRowReorder((from, to) => void applyOrder(moved(table.items.value, from, to)))
+async function togglePin(p: AdminProduct) {
+  try {
+    await apiV5.products.pin(p.id, !p.pinned)
+    await table.load()
+  } catch (e) {
+    toastError(e)
+  }
+}
+async function setDefaultSort(v: CatalogSort) {
+  try {
+    await apiV5.catalog.setDefaultSort(v)
+    defaultSort.value = v
+    toastOk(t('catalogOrder.sortSaved'))
+  } catch (e) {
+    toastError(e)
+  }
+}
 let debounce: ReturnType<typeof setTimeout> | null = null
 watch(q, () => {
   if (debounce) clearTimeout(debounce)
@@ -50,6 +87,7 @@ onMounted(async () => {
   }
   try {
     defaultEta.value = (await apiV5.site.get()).delivery?.manual_eta_hours ?? 24
+    defaultSort.value = (await apiV5.catalog.getSettings()).default_sort
   } catch {
     /* admin-only; keep 24 */
   }
@@ -144,6 +182,9 @@ async function bulk(action: BulkAction, category?: string) {
         </el-select>
       </div>
       <div v-if="auth.isAdmin" class="toolbar">
+        <el-select :model-value="defaultSort" style="width: 190px" :aria-label="t('catalogOrder.defaultSort')" @change="setDefaultSort">
+          <el-option v-for="o in CATALOG_SORTS" :key="o" :value="o" :label="t('catalogOrder.defaultSortValue', { sort: t(`catalogOrder.sort.${o}`) })" />
+        </el-select>
         <el-button :icon="Upload" @click="importOpen = true">{{ t('v5.products.import') }}</el-button>
         <el-button type="primary" :icon="Plus" @click="openNew">{{ t('products.new') }}</el-button>
       </div>
@@ -160,7 +201,8 @@ async function bulk(action: BulkAction, category?: string) {
       <el-button size="small" link @click="selected = []">{{ t('v5.products.clearSel') }}</el-button>
     </div>
 
-    <div class="panel">
+    <p v-if="auth.isAdmin" class="muted small hint">{{ canReorder ? t('catalogOrder.hint') : t('catalogOrder.hintOff') }}</p>
+    <div class="panel" @dragover.prevent @drop="reorder.drop">
       <el-table
         v-loading="table.loading.value"
         :data="table.items.value"
@@ -169,19 +211,29 @@ async function bulk(action: BulkAction, category?: string) {
         @selection-change="selected = $event"
       >
         <el-table-column v-if="auth.isAdmin" type="selection" width="44" reserve-selection />
+        <el-table-column v-if="canReorder" :label="t('catalogOrder.order')" width="110">
+          <template #default="{ $index, row }">
+            <span class="grip" draggable="true" role="img" :aria-label="t('catalogOrder.drag')" @dragstart="reorder.start($index, $event)"><el-icon><Rank /></el-icon></span>
+            <el-button link :icon="Top" :disabled="$index === 0 || table.items.value[$index - 1]?.pinned !== row.pinned" :aria-label="t('catalogOrder.up')" @click="reorder.move($index, -1)" />
+            <el-button link :icon="Bottom" :disabled="$index === table.items.value.length - 1 || table.items.value[$index + 1]?.pinned !== row.pinned" :aria-label="t('catalogOrder.down')" @click="reorder.move($index, 1)" />
+          </template>
+        </el-table-column>
         <el-table-column :label="t('products.col.title')" min-width="260">
           <template #default="{ row }">
             <div class="prod">
               <ProductThumb :src="row.cover" :title="titleOf(row as AdminProduct)" :size="44" :radius="6" class="thumb" />
               <div class="prod-text">
-                <div class="prod-title">{{ titleOf(row as AdminProduct) }}</div>
+                <div class="prod-title"><el-tag v-if="row.pinned" size="small" type="warning" class="vtag">{{ t('catalogOrder.pinned') }}</el-tag>{{ titleOf(row as AdminProduct) }}</div>
                 <div class="muted small">{{ catName(row.category) }}</div>
               </div>
             </div>
           </template>
         </el-table-column>
         <el-table-column :label="t('products.col.price')" width="120">
-          <template #default="{ row }"><span class="price">{{ formatMoney(row.price, row.currency, locale) }}</span></template>
+          <template #default="{ row }">
+            <span class="price">{{ formatMoney(row.price, row.currency, locale) }}</span>
+            <el-tag v-if="row.variants?.some((v: { status: string }) => v.status === 'active')" size="small" type="info" class="vtag">{{ t('variants.count', row.variants.filter((v: { status: string }) => v.status === 'active').length) }}</el-tag>
+          </template>
         </el-table-column>
         <el-table-column v-if="auth.isAdmin" :label="t('v5.product.margin')" width="110">
           <template #default="{ row }">
@@ -211,10 +263,11 @@ async function bulk(action: BulkAction, category?: string) {
         <el-table-column :label="t('products.col.created')" width="160">
           <template #default="{ row }">{{ formatDateTime(row.created_at, locale) }}</template>
         </el-table-column>
-        <el-table-column :label="t('common.actions')" width="270" fixed="right">
+        <el-table-column :label="t('common.actions')" width="320" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="copyLink(row as AdminProduct)">{{ t('products.copyLink') }}</el-button>
             <template v-if="auth.isAdmin">
+              <el-button link type="primary" @click="togglePin(row as AdminProduct)">{{ row.pinned ? t('catalogOrder.unpin') : t('catalogOrder.pin') }}</el-button>
               <el-button link type="primary" @click="openEdit(row as AdminProduct)">{{ t('common.edit') }}</el-button>
               <template v-if="isArchived(row as AdminProduct)">
                 <el-button link type="primary" @click="restore(row as AdminProduct)">{{ t('v5.products.restore') }}</el-button>
@@ -245,6 +298,17 @@ async function bulk(action: BulkAction, category?: string) {
 </template>
 
 <style scoped>
+.vtag {
+  margin-left: 6px;
+}
+.grip {
+  cursor: grab;
+  padding: 0 6px;
+  color: var(--el-text-color-secondary);
+}
+.hint {
+  margin: 0 0 8px;
+}
 .prod {
   display: flex;
   align-items: center;

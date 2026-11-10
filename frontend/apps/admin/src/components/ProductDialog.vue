@@ -23,6 +23,7 @@ import { BUYER_INPUT_DEFAULT, type BuyerInputForm } from '../api-v4'
 import type { AdminProductV5 as AdminProduct, ProductPrefill } from '../api-v5'
 import { marginMinor, marginPct, minorToYuan, yuanToMinor } from '../lib/money'
 import MarkdownEditor from './MarkdownEditor.vue'
+import ProductVariants from './ProductVariants.vue'
 import { promptChips, validateBuyerInput } from '../lib/buyerInput'
 import {
   AFTER_SALES_UNITS,
@@ -307,6 +308,10 @@ async function importInlineCards(id: string) {
   }
 }
 
+function onVariantsChanged() {
+  if (current.value) emit('saved', current.value)
+}
+
 async function save() {
   if (saving.value || !validate()) return
   saving.value = true
@@ -537,6 +542,15 @@ async function removeImage(url: string) {
         <el-input-number v-if="asUnit !== 'default'" v-model="asValue" :min="asUnit === 'hours' ? 0 : 1" :max="asUnit === 'hours' ? 8760 : asUnit === 'days' ? 365 : 12" class="hours" />
         <div v-if="asUnit === 'hours' && asValue === 0" class="hint muted">{{ t('delivery.as.none') }}</div>
       </el-form-item>
+
+      <ProductVariants
+        v-if="current"
+        :product-id="current.id"
+        :delivery-mode="form.delivery_mode"
+        :currency="form.currency"
+        @changed="onVariantsChanged"
+      />
+      <el-alert v-else :title="t('variants.hint')" type="info" :closable="false" class="af-paste" />
 
       <h3 class="sec">{{ t('subscription.section') }}</h3>
       <el-form-item :label="t('subscription.enabled')" :error="errors.sub">

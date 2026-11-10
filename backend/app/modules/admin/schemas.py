@@ -184,6 +184,49 @@ class ProductIn(BaseModel):
         return _images(v)
 
 
+class VariantIn(BaseModel):
+    """v11 W1: one purchasable SKU. NULL term fields inherit the product's."""
+
+    name_i18n: dict[str, str]
+    price: str = Field(max_length=20)
+    floor_price: str = Field("0", max_length=20)
+    # manual products: NULL = unlimited (auto-card stock is counted from imported cards)
+    manual_stock: int | None = Field(None, ge=0, le=10**6)
+    sort: int = Field(0, ge=-1000, le=1000)
+    status: Literal["active", "archived"] = "active"
+    after_sales_hours: int | None = Field(None, ge=0, le=8760)
+    after_sales_months: int | None = Field(None, ge=1, le=12)
+    subscription: SubscriptionConfig | None = None
+
+    @field_validator("name_i18n")
+    @classmethod
+    def _n(cls, v: dict[str, str]) -> dict[str, str]:
+        out = _i18n(v, max_len=120, required=True)
+        out["zh-CN"] = out["zh-CN"] or out["en"]
+        return out
+
+
+class VariantPatch(BaseModel):
+    name_i18n: dict[str, str] | None = None
+    price: str | None = Field(None, max_length=20)
+    floor_price: str | None = Field(None, max_length=20)
+    manual_stock: int | None = Field(None, ge=0, le=10**6)
+    sort: int | None = Field(None, ge=-1000, le=1000)
+    status: Literal["active", "archived"] | None = None
+    after_sales_hours: int | None = Field(None, ge=0, le=8760)
+    after_sales_months: int | None = Field(None, ge=1, le=12)
+    subscription: SubscriptionConfig | None = None
+
+    @field_validator("name_i18n")
+    @classmethod
+    def _n(cls, v: dict[str, str] | None) -> dict[str, str] | None:
+        if v is None:
+            return None
+        out = _i18n(v, max_len=120, required=True)
+        out["zh-CN"] = out["zh-CN"] or out["en"]
+        return out
+
+
 class ProductPatch(BaseModel):
     title_i18n: dict[str, str] | None = None
     description_i18n: dict[str, str] | None = None
@@ -248,8 +291,16 @@ class ProductPatch(BaseModel):
         return None if v is None else _images(v)
 
 
+class CardsAssignVariantIn(BaseModel):
+    """v11: move available product-level cards into a variant; ``count`` None = all of them."""
+
+    variant_id: uuid.UUID
+    count: int | None = Field(None, ge=1, le=100_000)
+
+
 class CardsImportIn(BaseModel):
     lines: str = Field(max_length=2_000_000)
+    variant_id: uuid.UUID | None = None  # required when the product has active variants
     note: str | None = Field(None, max_length=200)
     # ISO datetime, or a bare YYYY-MM-DD = valid through that day (UTC); stored as a datetime
     expires_at: datetime | None = None

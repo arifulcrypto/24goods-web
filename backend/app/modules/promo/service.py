@@ -180,10 +180,13 @@ async def evaluate(
 
 
 async def lines_for(
-    db: AsyncSession, tenant_id: uuid.UUID, items: list[tuple[uuid.UUID, int]]
+    db: AsyncSession, tenant_id: uuid.UUID, items: list[tuple[uuid.UUID, int, uuid.UUID | None]]
 ) -> list[PromoLine]:
-    """Lines (product_id, base price*qty) for ``POST /promo/validate``; unknown/inactive -> 404."""
-    ids = list({pid for pid, _ in items})
+    """Lines (product_id, base/variant price*qty) for ``POST /promo/validate``;
+    unknown/inactive -> 404."""
+    from app.modules.catalog import variants as variants_svc
+
+    ids = list({pid for pid, _q, _v in items})
     prods = {
         p.id: p
         for p in await db.scalars(
@@ -194,7 +197,13 @@ async def lines_for(
     }
     if len(prods) != len(ids):
         raise NotFound("Product not found")
-    return [PromoLine(pid, prods[pid].category, prods[pid].price_minor * qty) for pid, qty in items]
+    vrows = await variants_svc.variants_for(db, tenant_id, ids, include_archived=True)
+    out: list[PromoLine] = []
+    for pid, qty, vid in items:
+        v = variants_svc.pick_variant(vrows.get(pid, []), vid)
+        unit = v.price_minor if v else prods[pid].price_minor
+        out.append(PromoLine(pid, prods[pid].category, unit * qty))
+    return out
 
 
 # ----------------------------------------------------------------------------- lifecycle

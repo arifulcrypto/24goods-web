@@ -49,6 +49,7 @@ async def test_import_dedup_limits_and_masked_listing(env, caplog):
             "order_id",
             "order_no",
             "created_at",
+            "variant_id",  # v11: which variant the card belongs to (metadata, never the code)
         }
         assert "CODE" not in item["masked"]
     blob = await env.scalar("SELECT blob FROM card_stock LIMIT 1")

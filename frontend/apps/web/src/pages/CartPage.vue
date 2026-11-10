@@ -50,7 +50,7 @@ onMounted(() => {
 })
 
 function toRow(l: CartLine) {
-  const q = cart.quoteByProduct.get(l.product_id) ?? null
+  const q = cart.quoteByProduct.get(l.key) ?? null
   const off = !!q && (!q.available || !!q.unavailable_reason)
   return { line: l, q, available: !off, loaded: !!q }
 }
@@ -62,7 +62,7 @@ const managing = ref(false)
 const picked = ref<Set<string>>(new Set())
 const allPicked = computed({
   get: () => cart.lines.length > 0 && picked.value.size === cart.lines.length,
-  set: (v: boolean) => (picked.value = v ? new Set(cart.lines.map((l) => l.product_id)) : new Set()),
+  set: (v: boolean) => (picked.value = v ? new Set(cart.lines.map((l) => l.key)) : new Set()),
 })
 function togglePick(id: string, v: boolean) {
   const n = new Set(picked.value)
@@ -85,18 +85,18 @@ async function deletePicked() {
 }
 async function clearUnavailable() {
   if (!(await confirm(t('cart.clearUnavailableTitle'), ''))) return
-  cart.removeMany(cart.unavailableLines.map((l) => l.product_id))
+  cart.removeMany(cart.unavailableLines.map((l) => l.key))
   void cart.refreshQuote()
 }
 
 const allSelected = computed({
   get: () => cart.availableLines.length > 0 && cart.availableLines.every((l) => l.selected),
-  set: (v: boolean) => cart.availableLines.forEach((l) => cart.setSelected(l.product_id, v)),
+  set: (v: boolean) => cart.availableLines.forEach((l) => cart.setSelected(l.key, v)),
 })
 
 // ---- v5 §6: promo (preview via /promo/validate; the server recomputes at checkout) ----
 const promo = ref<AppliedPromo | null>(null)
-const promoItems = computed(() => cart.payable.map((l) => ({ product_id: l.product_id, qty: l.qty })))
+const promoItems = computed(() => cart.payable.map((l) => ({ product_id: l.product_id, qty: l.qty, ...(l.variant_id ? { variant_id: l.variant_id } : {}) })))
 const discountMinor = computed(() => (promo.value && !promo.value.stale ? promo.value.discount_minor : 0))
 const totals = computed(() => cart.totals(site.permille, discountMinor.value))
 const discountApplied = computed(() => Number(toMinor(totals.value.discount) ?? 0n))
@@ -108,20 +108,26 @@ const groups = computed(() =>
   ].filter((g) => g.rows.length),
 )
 function reasonText(r: string | null | undefined): string {
-  return r === 'archived' || r === 'unpublished' || r === 'out_of_stock' ? t(`cart.reason.${r}`) : t('cart.unavailable')
+  return r === 'archived' ||
+    r === 'unpublished' ||
+    r === 'out_of_stock' ||
+    r === 'variant_required' ||
+    r === 'variant_unavailable'
+    ? t(`cart.reason.${r}`)
+    : t('cart.unavailable')
 }
 
-function maxQty(productId: string): number {
-  const q = cart.quoteByProduct.get(productId)
+function maxQty(key: string): number {
+  const q = cart.quoteByProduct.get(key)
   return q && q.max_qty > 0 ? Math.min(CART_MAX_QTY, q.max_qty) : CART_MAX_QTY
 }
-function onQty(productId: string, v: number | string) {
-  cart.setQty(productId, Number(v))
+function onQty(key: string, v: number | string) {
+  cart.setQty(key, Number(v))
   void cart.refreshQuote()
 }
-async function removeLine(productId: string) {
+async function removeLine(key: string) {
   if (!(await confirm(t('cart.removeTitle'), ''))) return
-  cart.remove(productId)
+  cart.remove(key)
   void cart.refreshQuote()
 }
 
@@ -145,24 +151,24 @@ function infoDismiss(v: boolean) {
 }
 async function collectMissingInputs(): Promise<boolean> {
   for (const l of cart.payable) {
-    const q = cart.quoteByProduct.get(l.product_id)
+    const q = cart.quoteByProduct.get(l.key)
     if (!q?.needs_input || l.buyer_input) continue
     const p = await api.product(l.product_id)
     if (!p.buyer_input?.enabled) continue
     const v = await askInput(l.product_id, p.buyer_input)
     if (v === null) return false
-    cart.setInput(l.product_id, v)
+    cart.setInput(l.key, v)
   }
   return true
 }
-async function editInput(productId: string) {
+async function editInput(line: CartLine) {
   try {
-    const p = await api.product(productId)
+    const p = await api.product(line.product_id)
     if (!p.buyer_input?.enabled) return
-    infoFor.value = { productId, config: p.buyer_input }
+    infoFor.value = { productId: line.product_id, config: p.buyer_input }
     showInfo.value = true
     const v = await new Promise<string | null>((resolve) => (infoResolve = resolve))
-    if (v !== null) cart.setInput(productId, v)
+    if (v !== null) cart.setInput(line.key, v)
   } catch (e) {
     toastError(e)
   }
@@ -222,7 +228,7 @@ async function submit() {
       stashAccessCode(o.id, r.access_codes[o.order_no])
       firstOrder ??= o.id
     }
-    cart.removeMany(chosen.map((l) => l.product_id))
+    cart.removeMany(chosen.map((l) => l.key))
     const { pay_url } = await api.checkout.pay(checkoutNo, await channelId())
     const safe = safePayUrl(pay_url)
     if (!safe) throw new Error('unsafe pay_url')
@@ -269,15 +275,15 @@ async function submit() {
           <button type="button" class="clear" @click="clearUnavailable">{{ t('cart.clearUnavailable') }}</button>
         </div>
         <ul class="lines" :class="{ 'lines-off': g.key === 'off' }">
-          <li v-for="r in g.rows" :key="r.line.product_id">
+          <li v-for="r in g.rows" :key="r.line.key">
             <van-swipe-cell class="card">
               <div class="line" :class="{ off: !r.available }">
                 <van-checkbox
                   v-if="managing"
-                  :model-value="picked.has(r.line.product_id)"
+                  :model-value="picked.has(r.line.key)"
                   class="chk"
                   :aria-label="r.q?.title ?? ''"
-                  @update:model-value="togglePick(r.line.product_id, $event)"
+                  @update:model-value="togglePick(r.line.key, $event)"
                 />
                 <van-checkbox
                   v-else
@@ -285,7 +291,7 @@ async function submit() {
                   :disabled="!r.available"
                   class="chk"
                   :aria-label="r.q?.title ?? ''"
-                  @update:model-value="cart.setSelected(r.line.product_id, $event)"
+                  @update:model-value="cart.setSelected(r.line.key, $event)"
                 />
                 <RouterLink :to="`/p/${encodeURIComponent(r.line.product_id)}`" class="thumb">
                   <ProductThumb :src="r.q?.cover ?? null" :title="r.q?.title ?? ''" :size="72" :radius="8" />
@@ -293,10 +299,11 @@ async function submit() {
                 <div class="info">
                   <div class="title-row">
                     <div class="title">{{ r.q?.title ?? '…' }}</div>
-                    <button type="button" class="trash" :aria-label="t('cart.remove')" @click="removeLine(r.line.product_id)">
+                    <button type="button" class="trash" :aria-label="t('cart.remove')" @click="removeLine(r.line.key)">
                       <van-icon name="delete-o" size="20" />
                     </button>
                   </div>
+                  <div v-if="r.q?.variant_name" class="muted small variant-name">{{ r.q.variant_name }}</div>
                   <div v-if="!r.available && r.loaded" class="flag">{{ reasonText(r.q?.unavailable_reason) }}</div>
                   <template v-else-if="r.q">
                     <div class="muted small">
@@ -304,7 +311,7 @@ async function submit() {
                     </div>
                     <ManualPromise v-if="r.q.delivery_mode === 'manual'" class="small" :eta="r.q.delivery_eta_hours" compact />
                   </template>
-                  <button v-if="r.q?.needs_input && r.available" type="button" class="link" @click="editInput(r.line.product_id)">
+                  <button v-if="r.q?.needs_input && r.available" type="button" class="link" @click="editInput(r.line)">
                     {{ r.line.buyer_input ? t('cart.infoSet') + ' · ' + t('cart.editInfo') : t('cart.editInfo') }}
                   </button>
                   <div class="bottom">
@@ -312,18 +319,18 @@ async function submit() {
                     <van-stepper
                       :model-value="r.line.qty"
                       :min="1"
-                      :max="maxQty(r.line.product_id)"
+                      :max="maxQty(r.line.key)"
                       :disabled="!r.available"
                       integer
                       :input-width="40"
                       :button-size="32"
-                      @change="onQty(r.line.product_id, $event)"
+                      @change="onQty(r.line.key, $event)"
                     />
                   </div>
                 </div>
               </div>
               <template #right>
-                <van-button square type="danger" class="del" :text="t('cart.remove')" @click="removeLine(r.line.product_id)" />
+                <van-button square type="danger" class="del" :text="t('cart.remove')" @click="removeLine(r.line.key)" />
               </template>
             </van-swipe-cell>
             <p v-if="!r.available && r.loaded" class="muted small hint">{{ t('cart.unavailableHint') }}</p>

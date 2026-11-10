@@ -90,6 +90,7 @@ async def send_message(
         attachment_id=body.attachment_id,
         client_msg_id=body.client_msg_id,
         store=FileStore(res.settings.upload_dir),
+        reply_to=body.reply_to,
     )
     if created:
         await service.broadcast(res, db, conv, [msg])
@@ -103,6 +104,29 @@ async def send_message(
         )
     (view,) = await service.message_views(db, [msg])
     return view
+
+
+@router.get("/conversations/{conv_id}/pins")
+async def list_pins(
+    conv_id: uuid.UUID,
+    user: User = Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    conv = await service.buyer_conversation(db, conv_id, user)
+    return await service.pinned_messages(db, conv)
+
+
+@router.post("/conversations/{conv_id}/typing", status_code=204)
+async def typing(
+    conv_id: uuid.UUID,
+    user: User = Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+    res: Resources = Depends(get_res),
+) -> Response:
+    await enforce(res.redis, "chat:typing", str(user.id), 1, 3)
+    conv = await service.buyer_conversation(db, conv_id, user)
+    await service.publish_typing(res, conv, user, role="buyer")
+    return Response(status_code=204)
 
 
 @router.post("/conversations/{conv_id}/read", status_code=204)

@@ -35,7 +35,7 @@ const as = computed(() => afterSalesLabel(props.product?.after_sales_hours, prop
       </div>
     </RouterLink>
     <div class="prow-side">
-      <span class="price prow-price"><small>{{ price.symbol }}</small>{{ price.value }}</span>
+      <i18n-t v-if="product.price_from" keypath="product.priceFrom" tag="span" class="price prow-price"><template #price><small>{{ price.symbol }}</small>{{ price.value }}</template></i18n-t><span v-else class="price prow-price"><small>{{ price.symbol }}</small>{{ price.value }}</span>
       <button type="button" class="prow-buy" :disabled="soldOut" :aria-label="`${t('product.buy')} — ${product.title}`" @click="emit('buy', product)">
         {{ soldOut ? t('product.soldOutShort') : t('product.buy') }}
       </button>
