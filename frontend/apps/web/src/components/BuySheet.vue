@@ -19,6 +19,8 @@ import FeeLines from './FeeLines.vue'
 import ManualPromise from './ManualPromise.vue'
 import PromoField, { type AppliedPromo } from './PromoField.vue'
 import TurnstileBox from './TurnstileBox.vue'
+import VariantChips from './VariantChips.vue'
+import { defaultVariantId, findVariant, hasVariants, withVariant } from '../lib/variants'
 import { recalledSrc, stashAccessCode } from '../lib/attribution'
 import { usePow, isPowAbort } from '../composables/usePow'
 import { useTurnstile } from '../composables/useTurnstile'
@@ -28,7 +30,7 @@ import { toastError } from '../ui'
 import { isSoldOut, maxOrderQty } from '../lib/stock'
 import { siteAccessCleared } from '../lib/securityChallenge'
 
-const props = defineProps<{ show: boolean; product: (ProductSummary & { buyer_input?: BuyerInputConfig | null }) | null; qty?: number; src?: string | null }>()
+const props = defineProps<{ show: boolean; product: (ProductSummary & { buyer_input?: BuyerInputConfig | null }) | null; qty?: number; src?: string | null; variantId?: string | null }>()
 const emit = defineEmits<{ 'update:show': [v: boolean] }>()
 const { t, locale } = useI18n()
 const router = useRouter()
@@ -53,11 +55,15 @@ const inputValue = ref<string | null>(null)
 const resolved = ref<{ id: string; config: BuyerInputConfig | null } | null>(null)
 const resolving = ref(false)
 const resolveFailed = ref(false)
-const p = computed(() => {
+/** v11 W1: the variant picked in this sheet (products with variants are bought through one). */
+const variantSel = ref<string | null>(null)
+const base = computed(() => {
   const x = props.product
   if (!x || x.buyer_input !== undefined) return x
   return resolved.value?.id === x.id ? { ...x, buyer_input: resolved.value.config } : x
 })
+const variant = computed(() => findVariant(base.value, variantSel.value))
+const p = computed(() => (base.value ? withVariant(base.value, variant.value) : base.value))
 const configKnown = computed(() => p.value?.buyer_input !== undefined)
 async function resolveConfig() {
   const x = props.product
@@ -77,19 +83,22 @@ watch(siteAccessCleared, () => {
   if (props.show && resolveFailed.value) void resolveConfig()
 })
 const soldOut = computed(() => (p.value ? isSoldOut(p.value) : false))
-const canSubmit = computed(() => configKnown.value && !soldOut.value)
+const canSubmit = computed(() => configKnown.value && !soldOut.value && (!hasVariants(base.value) || variant.value !== null))
 const price = computed(() => (p.value ? moneyParts(p.value.price, p.value.currency, locale.value) : null))
 const maxQty = computed(() => (p.value ? maxOrderQty(p.value) : 1))
 const subtotal = computed(() => (p.value ? (multiplyAmount(p.value.price, qty.value) ?? p.value.price) : '0.00'))
 const discountMinor = computed(() => (promo.value && !promo.value.stale ? promo.value.discount_minor : 0))
 const bd = computed(() => feeBreakdown(subtotal.value, discountMinor.value, site.permille))
-const promoItems = computed(() => (p.value ? [{ product_id: p.value.id, qty: qty.value }] : []))
+const promoItems = computed(() =>
+  p.value ? [{ product_id: p.value.id, qty: qty.value, ...(variant.value ? { variant_id: variant.value.id } : {}) }] : [],
+)
 const needsInput = computed(() => p.value?.buyer_input?.enabled === true)
 
 watch(
   () => props.show,
   (v) => {
     if (v) {
+      variantSel.value = findVariant(props.product, props.variantId ?? null)?.id ?? defaultVariantId(props.product?.variants)
       qty.value = Math.min(Math.max(1, Math.floor(props.qty ?? 1)), maxQty.value)
       inputValue.value = null
       promo.value = null
@@ -99,9 +108,17 @@ watch(
   },
 )
 
+watch(maxQty, (m) => {
+  if (qty.value > m) qty.value = m
+})
+watch(variantSel, (now, before) => {
+  if (before !== null && now !== before) promo.value = null // previewed on the previous variant's price
+})
+
 function buyPath(): string {
   const id = encodeURIComponent(p.value?.id ?? '')
   const q = new URLSearchParams({ qty: String(qty.value) })
+  if (variant.value) q.set('variant', variant.value.id)
   const src = props.src ?? recalledSrc()
   if (src) q.set('src', src)
   return `/buy/${id}?${q.toString()}`
@@ -117,7 +134,7 @@ async function placeOrder() {
   submitting.value = true
   try {
     // Price is decided by the server; only product id + qty (+ attribution tag) are sent.
-    const order = await api.orders.create(x.id, qty.value, props.src ?? recalledSrc(), inputValue.value, promo.value?.code)
+    const order = await api.orders.create(x.id, qty.value, props.src ?? recalledSrc(), inputValue.value, promo.value?.code, variant.value?.id)
     stashAccessCode(order.id, order.access_code)
     emit('update:show', false)
     await router.push(`/orders/${encodeURIComponent(order.id)}`)
@@ -187,6 +204,10 @@ async function credsDone() {
           <div v-if="price" class="price big"><small>{{ price.symbol }}</small>{{ price.value }}</div>
           <div class="muted sheet-title">{{ p.title }}</div>
         </div>
+      </div>
+      <div v-if="base?.variants?.length" class="sheet-variants">
+        <div class="sheet-label">{{ t('product.variantLabel') }}</div>
+        <VariantChips v-model="variantSel" :variants="base.variants" />
       </div>
       <div class="sheet-row">
         <div>
@@ -266,6 +287,13 @@ async function credsDone() {
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+.sheet-variants {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--c-line);
+}
+.sheet-label {
+  margin-bottom: 8px;
 }
 .sheet-row {
   display: flex;

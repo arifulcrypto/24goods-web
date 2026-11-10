@@ -54,6 +54,8 @@ export default {
     rate_limited: 'Too many requests, please slow down',
     conflict: 'This was changed by someone else, please refresh',
     out_of_stock: 'Out of stock',
+    variant_required: 'Please choose an option',
+    variant_archived: 'This option is no longer available',
     invalid_state: 'This action is not available in the current state',
     quote_expired: 'This offer has expired',
     upload_rejected: 'File rejected (type or size not allowed)',

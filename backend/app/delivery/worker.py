@@ -55,6 +55,11 @@ class JobResult:
     ticket: AfterSales | None = None
 
 
+def _variant(order: Order) -> tuple:  # type: ignore[type-arg]
+    """A variant order only claims that variant's cards (v11 W1); others as before."""
+    return (CardStock.variant_id == order.variant_id,) if order.variant_id is not None else ()
+
+
 def _claimable():  # type: ignore[no-untyped-def]
     """Stock a buyer can still be delivered: available and not expired."""
     return (
@@ -78,7 +83,7 @@ async def handle_order_paid(db: AsyncSession, order_id: uuid.UUID) -> JobResult:
         card_ids = list(
             await db.scalars(
                 select(CardStock.id)
-                .where(CardStock.product_id == order.product_id, *_claimable())
+                .where(CardStock.product_id == order.product_id, *_claimable(), *_variant(order))
                 .order_by(CardStock.created_at, CardStock.id)
                 .limit(order.qty)
                 .with_for_update(skip_locked=True)
@@ -211,7 +216,7 @@ async def handle_replace(db: AsyncSession, payload: dict) -> JobResult:
     new_ids = list(
         await db.scalars(
             select(CardStock.id)
-            .where(CardStock.product_id == order.product_id, *_claimable())
+            .where(CardStock.product_id == order.product_id, *_claimable(), *_variant(order))
             .order_by(CardStock.created_at, CardStock.id)
             .limit(len(old_ids))
             .with_for_update(skip_locked=True)

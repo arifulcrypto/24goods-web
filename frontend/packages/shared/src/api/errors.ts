@@ -9,6 +9,8 @@ export const API_ERROR_CODES = [
   'rate_limited',
   'conflict',
   'out_of_stock',
+  'variant_required',
+  'variant_archived',
   'invalid_state',
   'quote_expired',
   'upload_rejected',

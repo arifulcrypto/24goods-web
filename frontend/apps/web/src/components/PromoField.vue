@@ -18,7 +18,7 @@ export interface AppliedPromo {
  * Promo code cell: input + Apply (POST /promo/validate = preview only). Hidden when
  * features.promo_codes is off or a reseller storefront is active (review-v5 §6/§7).
  */
-const props = defineProps<{ items: { product_id: string; qty: number }[] }>()
+const props = defineProps<{ items: { product_id: string; qty: number; variant_id?: string }[] }>()
 const applied = defineModel<AppliedPromo | null>({ default: null })
 const { t } = useI18n()
 const site = useSiteStore()
@@ -28,7 +28,7 @@ const input = ref('')
 const busy = ref(false)
 const error = ref('')
 
-const itemsKey = computed(() => props.items.map((i) => `${i.product_id}:${i.qty}`).join(','))
+const itemsKey = computed(() => props.items.map((i) => `${i.product_id}:${i.variant_id ?? ''}:${i.qty}`).join(','))
 
 async function validate(code: string, silent: boolean): Promise<boolean> {
   busy.value = true

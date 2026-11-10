@@ -25,7 +25,7 @@ const soldOut = computed(() => isSoldOut(props.product))
         {{ product.title }}
       </div>
       <div class="pcard-meta">
-        <span class="price"><small>{{ price.symbol }}</small>{{ price.value }}</span>
+        <span class="price"><small v-if="product.price_from">{{ t('product.priceFromPre') }}</small><small>{{ price.symbol }}</small>{{ price.value }}<small v-if="product.price_from">{{ t('product.priceFromSuf') }}</small></span>
         <span class="muted pcard-sold">{{ t('home.sold', { n: formatNumber(product.sold, locale) }) }}</span>
       </div>
     </div>

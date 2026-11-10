@@ -50,6 +50,7 @@ class CardStock(Base):
     voided_at: Mapped[datetime | None]
     voided_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
     replaced_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("card_stock.id"))
+    variant_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("product_variants.id"))
 
     @classmethod
     def public_columns(cls) -> tuple:
@@ -71,6 +72,7 @@ class CardStock(Base):
             cls.__table__.c.voided_at,
             cls.__table__.c.voided_by,
             cls.__table__.c.replaced_by,
+            cls.__table__.c.variant_id,
         )
 
 

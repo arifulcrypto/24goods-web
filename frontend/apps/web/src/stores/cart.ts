@@ -10,16 +10,26 @@ export const CART_MAX_QTY = 99
 const KEY = 'kesiv.cart.v1'
 
 export interface CartLine {
+  /** Identity of the line: the product id, plus `:variant_id` for a variant (v11 W1). */
+  key: string
   product_id: string
+  /** v11 W1: the variant bought (products with variants only). */
+  variant_id?: string
   qty: number
   /** Memory only: never written to storage (it may hold a token or account login, issue 49 A). */
   buyer_input?: string
   selected: boolean
 }
 
+export function lineKey(productId: string, variantId?: string | null): string {
+  return variantId ? `${productId}:${variantId}` : productId
+}
+
 /** What survives a reload: ids, quantities and ticks. Buyer information is never persisted. */
 function serialize(ls: readonly CartLine[]): string {
-  return JSON.stringify(ls.map((l) => ({ product_id: l.product_id, qty: l.qty, selected: l.selected })))
+  return JSON.stringify(
+    ls.map((l) => ({ product_id: l.product_id, ...(l.variant_id ? { variant_id: l.variant_id } : {}), qty: l.qty, selected: l.selected })),
+  )
 }
 
 function load(): CartLine[] {
@@ -32,11 +42,16 @@ function load(): CartLine[] {
     for (const x of raw) {
       if (!x || typeof x !== 'object') continue
       const l = x as Partial<CartLine>
-      if (typeof l.product_id !== 'string' || !l.product_id || seen.has(l.product_id)) continue
-      seen.add(l.product_id)
+      if (typeof l.product_id !== 'string' || !l.product_id) continue
+      const variantId = typeof l.variant_id === 'string' && l.variant_id ? l.variant_id : undefined
+      const key = lineKey(l.product_id, variantId)
+      if (seen.has(key)) continue
+      seen.add(key)
       const qty = Number.isInteger(l.qty) ? Math.min(CART_MAX_QTY, Math.max(1, l.qty as number)) : 1
       out.push({
+        key,
         product_id: l.product_id,
+        ...(variantId ? { variant_id: variantId } : {}),
         qty,
         selected: l.selected !== false,
       })
@@ -69,19 +84,19 @@ export const useCartStore = defineStore('cart', () => {
   const count = computed(() => lines.value.reduce((n, l) => n + l.qty, 0))
   const quoteByProduct = computed(() => {
     const m = new Map<string, CartQuoteLine>()
-    for (const q of quote.value?.lines ?? []) m.set(q.product_id, q)
+    for (const q of quote.value?.lines ?? []) m.set(lineKey(q.product_id, q.variant_id), q)
     return m
   })
   /** v5 §1: a line the server says cannot be bought (archived / unpublished / out of stock). */
   function isUnavailable(q: CartQuoteLine | undefined): boolean {
     return !!q && (!q.available || !!q.unavailable_reason)
   }
-  const availableLines = computed(() => lines.value.filter((l) => !isUnavailable(quoteByProduct.value.get(l.product_id))))
-  const unavailableLines = computed(() => lines.value.filter((l) => isUnavailable(quoteByProduct.value.get(l.product_id))))
+  const availableLines = computed(() => lines.value.filter((l) => !isUnavailable(quoteByProduct.value.get(l.key))))
+  const unavailableLines = computed(() => lines.value.filter((l) => isUnavailable(quoteByProduct.value.get(l.key))))
   /** Selected lines that the server says can be bought (unavailable ones are never checked out). */
   const payable = computed(() =>
     lines.value.filter((l) => {
-      const q = quoteByProduct.value.get(l.product_id)
+      const q = quoteByProduct.value.get(l.key)
       return l.selected && q?.available === true && !q.unavailable_reason
     }),
   )
@@ -92,7 +107,7 @@ export const useCartStore = defineStore('cart', () => {
     // per-line ceiling exactly like the server (issue 23 A); the server recomputes at checkout
     const subs: string[] = []
     for (const l of payable.value) {
-      const q = quoteByProduct.value.get(l.product_id)
+      const q = quoteByProduct.value.get(l.key)
       if (q) subs.push(lineSubtotal(l, q))
     }
     const b = feeBreakdownLines(subs, permille, discountMinor)
@@ -109,8 +124,9 @@ export const useCartStore = defineStore('cart', () => {
   }
 
   /** Returns false when the cart is full. */
-  function add(productId: string, qty = 1, buyerInput?: string | null): boolean {
-    const i = lines.value.findIndex((l) => l.product_id === productId)
+  function add(productId: string, qty = 1, buyerInput?: string | null, variantId?: string | null): boolean {
+    const key = lineKey(productId, variantId)
+    const i = lines.value.findIndex((l) => l.key === key)
     if (i >= 0) {
       const l = lines.value[i]!
       l.qty = Math.min(CART_MAX_QTY, l.qty + qty)
@@ -119,7 +135,9 @@ export const useCartStore = defineStore('cart', () => {
     } else {
       if (lines.value.length >= CART_MAX_LINES) return false
       lines.value.push({
+        key,
         product_id: productId,
+        ...(variantId ? { variant_id: variantId } : {}),
         qty: Math.min(CART_MAX_QTY, Math.max(1, qty)),
         selected: true,
         ...(buyerInput ? { buyer_input: buyerInput } : {}),
@@ -128,20 +146,20 @@ export const useCartStore = defineStore('cart', () => {
     persist()
     return true
   }
-  function setQty(productId: string, qty: number) {
-    const l = lines.value.find((x) => x.product_id === productId)
+  function setQty(key: string, qty: number) {
+    const l = lines.value.find((x) => x.key === key)
     if (!l) return
     l.qty = Math.min(CART_MAX_QTY, Math.max(1, Math.floor(qty)))
     persist()
   }
-  function setInput(productId: string, value: string) {
-    const l = lines.value.find((x) => x.product_id === productId)
+  function setInput(key: string, value: string) {
+    const l = lines.value.find((x) => x.key === key)
     if (!l) return
     l.buyer_input = value
     persist()
   }
-  function setSelected(productId: string, v: boolean) {
-    const l = lines.value.find((x) => x.product_id === productId)
+  function setSelected(key: string, v: boolean) {
+    const l = lines.value.find((x) => x.key === key)
     if (l) l.selected = v
     persist()
   }
@@ -149,8 +167,8 @@ export const useCartStore = defineStore('cart', () => {
     lines.value.forEach((l) => (l.selected = v))
     persist()
   }
-  function remove(productId: string) {
-    lines.value = lines.value.filter((l) => l.product_id !== productId)
+  function remove(key: string) {
+    lines.value = lines.value.filter((l) => l.key !== key)
     persist()
   }
   /** Forget every buyer input (sign-out or a different account signing in). */
@@ -170,13 +188,14 @@ export const useCartStore = defineStore('cart', () => {
   /** After a successful checkout: drop exactly the lines that were bought. */
   function removeMany(ids: readonly string[]) {
     const s = new Set(ids)
-    lines.value = lines.value.filter((l) => !s.has(l.product_id))
+    lines.value = lines.value.filter((l) => !s.has(l.key))
     persist()
   }
 
   function toInputs(ls: readonly CartLine[]): CheckoutLineInput[] {
     return ls.map((l) => ({
       product_id: l.product_id,
+      ...(l.variant_id ? { variant_id: l.variant_id } : {}),
       qty: l.qty,
       ...(l.buyer_input ? { buyer_input: l.buyer_input } : {}),
     }))
@@ -197,7 +216,7 @@ export const useCartStore = defineStore('cart', () => {
       // clamp quantities to what the server allows
       let changed = false
       for (const ql of q.lines) {
-        const l = lines.value.find((x) => x.product_id === ql.product_id)
+        const l = lines.value.find((x) => x.key === lineKey(ql.product_id, ql.variant_id))
         if (l && ql.available && ql.max_qty > 0 && l.qty > ql.max_qty) {
           l.qty = ql.max_qty
           changed = true

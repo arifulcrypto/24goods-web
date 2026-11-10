@@ -156,7 +156,7 @@ const tone = (s: Order['status']) =>
               <span class="muted small">{{ t('orders.orderNo', { no: o.order_no }) }}</span>
               <span class="status" :class="tone(o.status)">{{ t(`orderStatus.${o.status}`) }}</span>
             </div>
-            <div class="ocard-title">{{ o.title }}</div>
+            <div class="ocard-title">{{ o.title }}<span v-if="o.variant_name" class="muted"> · {{ o.variant_name }}</span></div>
             <div class="ocard-bottom">
               <span class="muted small">{{ formatDateTime(o.created_at, locale) }} · {{ t('orders.qtyN', { n: o.qty }) }}</span>
               <span class="price">{{ formatMoney(o.amount, o.currency, locale) }}</span>

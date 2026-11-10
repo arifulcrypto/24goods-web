@@ -48,7 +48,9 @@ async def validate(
     await turnstile_hook.check(request, ts, "promo_validate", body.turnstile_token)
     if sf is not None:  # promo is not applicable on reseller storefronts in v5
         raise service.PromoError("promo_not_applicable")
-    lines = await service.lines_for(db, tenant_id, [(i.product_id, i.qty) for i in body.items])
+    lines = await service.lines_for(
+        db, tenant_id, [(i.product_id, i.qty, i.variant_id) for i in body.items]
+    )
     try:
         ev = await service.evaluate(
             db,

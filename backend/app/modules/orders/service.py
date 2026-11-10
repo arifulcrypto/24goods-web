@@ -43,10 +43,12 @@ from app.models import (
     Order,
     Payment,
     Product,
+    ProductVariant,
     Quote,
     Tenant,
     User,
 )
+from app.modules.catalog import variants
 from app.modules.catalog.service import claimable, get_active_product
 from app.modules.chat import service as chat
 from app.modules.chat.messages import (
@@ -79,11 +81,14 @@ def new_order_no() -> str:
     return "G" + base64.b32encode(secrets.token_bytes(8)).decode()[:12]
 
 
-async def available_stock(db: AsyncSession, product_id: uuid.UUID) -> int:
-    n = await db.scalar(
-        select(func.count(CardStock.id)).where(CardStock.product_id == product_id, *claimable())
-    )
-    return int(n or 0)
+async def available_stock(
+    db: AsyncSession, product_id: uuid.UUID, variant_id: uuid.UUID | None = None
+) -> int:
+    """Claimable cards of the product; with ``variant_id`` only that variant's cards."""
+    stmt = select(func.count(CardStock.id)).where(CardStock.product_id == product_id, *claimable())
+    if variant_id is not None:
+        stmt = stmt.where(CardStock.variant_id == variant_id)
+    return int(await db.scalar(stmt) or 0)
 
 
 async def lock_manual_products(
@@ -128,28 +133,38 @@ async def reserve_manual_stock(
     return qty
 
 
-async def reserved_auto_stock(db: AsyncSession, tenant_id: uuid.UUID, product_id: uuid.UUID) -> int:
+async def reserved_auto_stock(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    product_id: uuid.UUID,
+    variant_id: uuid.UUID | None = None,
+) -> int:
     """Cards already promised to unpaid or paid-but-undelivered goods orders of this product
     (count-based reservation, derived from order status: expiry/cancel release it by
     themselves; delivered orders have already consumed their cards)."""
-    n = await db.scalar(
-        select(func.coalesce(func.sum(Order.qty), 0)).where(
-            Order.tenant_id == tenant_id,
-            Order.product_id == product_id,
-            Order.kind == "goods",
-            Order.delivery_mode == "auto_card",
-            Order.status.in_(("pending_payment", "paid")),
-        )
+    stmt = select(func.coalesce(func.sum(Order.qty), 0)).where(
+        Order.tenant_id == tenant_id,
+        Order.product_id == product_id,
+        Order.kind == "goods",
+        Order.delivery_mode == "auto_card",
+        Order.status.in_(("pending_payment", "paid")),
     )
-    return int(n or 0)
+    if variant_id is not None:
+        stmt = stmt.where(Order.variant_id == variant_id)
+    return int(await db.scalar(stmt) or 0)
 
 
 async def require_auto_stock(
-    db: AsyncSession, tenant_id: uuid.UUID, product_id: uuid.UUID, qty: int
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    product_id: uuid.UUID,
+    qty: int,
+    variant_id: uuid.UUID | None = None,
 ) -> None:
-    """Caller holds the product row lock: free cards minus reservations must cover ``qty``."""
-    free = await available_stock(db, product_id) - await reserved_auto_stock(
-        db, tenant_id, product_id
+    """Caller holds the product row lock: free cards minus reservations must cover ``qty``
+    (per variant when ``variant_id`` is given)."""
+    free = await available_stock(db, product_id, variant_id) - await reserved_auto_stock(
+        db, tenant_id, product_id, variant_id
     )
     if free < qty:
         raise OutOfStock("Not enough stock", extra={"product_id": str(product_id)})
@@ -160,10 +175,24 @@ async def release_manual_stock(db: AsyncSession, tenant_id: uuid.UUID, orders: l
     cancelled/expired transition; paid orders keep it). Aggregated per product and applied
     in product id order (stable lock order, like ``apply_sold``)."""
     back: dict[uuid.UUID, int] = {}
+    back_v: dict[uuid.UUID, int] = {}  # variant orders give back to the variant
     for o in orders:
         if o.product_id is not None and o.delivery_mode == "manual" and o.kind == "goods":
-            back[o.product_id] = back.get(o.product_id, 0) + o.stock_reserved
+            if o.variant_id is not None:
+                back_v[o.variant_id] = back_v.get(o.variant_id, 0) + o.stock_reserved
+            else:
+                back[o.product_id] = back.get(o.product_id, 0) + o.stock_reserved
             o.stock_reserved = 0  # idempotent: a second release gives back nothing
+    for vid in sorted(k for k in back_v if back_v[k] > 0):
+        await db.execute(
+            update(ProductVariant)
+            .where(
+                ProductVariant.id == vid,
+                ProductVariant.tenant_id == tenant_id,
+                ProductVariant.manual_stock.is_not(None),
+            )
+            .values(manual_stock=ProductVariant.manual_stock + back_v[vid])
+        )
     for pid in sorted(k for k in back if back[k] > 0):
         await db.execute(
             update(Product)
@@ -174,19 +203,18 @@ async def release_manual_stock(db: AsyncSession, tenant_id: uuid.UUID, orders: l
         )
 
 
-async def purchase_terms(db: AsyncSession, product_id: uuid.UUID | None) -> dict[str, Any] | None:
-    """Snapshot of the product's after-sales/subscription terms at purchase time (v8 F).
-    ``None`` for non-product orders; null values inside mean "tenant default at delivery"."""
+async def purchase_terms(
+    db: AsyncSession, product_id: uuid.UUID | None, variant: ProductVariant | None = None
+) -> dict[str, Any] | None:
+    """Snapshot of the after-sales/subscription terms at purchase time (v8 F): the variant's
+    where set, else the product's. ``None`` for non-product orders; null values inside mean
+    "tenant default at delivery"."""
     if product_id is None:
         return None
     p = await get_scoped(db, Product, product_id, session_tenant(db))
     if p is None:
         return None
-    return {
-        "after_sales_hours": p.after_sales_hours,
-        "after_sales_months": p.after_sales_months,
-        "subscription": p.subscription,
-    }
+    return variants.effective_terms(p, variant)
 
 
 async def count_payables(db: AsyncSession, buyer_id: uuid.UUID) -> int:
@@ -261,6 +289,7 @@ async def create_order(
     promo_code_id: uuid.UUID | None = None,
     reseller_id: uuid.UUID | None = None,
     reseller_markup_minor: int = 0,
+    variant: ProductVariant | None = None,
 ) -> tuple[Order, Message | None]:
     """Create a pending order. ``amount_minor`` is the SUBTOTAL (storefront markup included):
     the promo discount is subtracted and the channel fee added here, server-side
@@ -271,11 +300,18 @@ async def create_order(
         await enforce_payables_cap(db, settings, buyer)
     stock_reserved = 0
     if product_id is not None and delivery_mode == "manual" and kind == "goods":
-        stock_reserved = await reserve_manual_stock(db, buyer.tenant_id, product_id, qty)
+        if variant is not None:
+            stock_reserved = await variants.reserve_variant_stock(
+                db, buyer.tenant_id, variant.id, qty
+            )
+        else:
+            stock_reserved = await reserve_manual_stock(db, buyer.tenant_id, product_id, qty)
     elif product_id is not None and delivery_mode == "auto_card" and kind == "goods":
         # lock order: buyer row (above) -> product row -> promo; same-row relock is a no-op
         await lock_manual_products(db, buyer.tenant_id, [product_id])
-        await require_auto_stock(db, buyer.tenant_id, product_id, qty)
+        await require_auto_stock(
+            db, buyer.tenant_id, product_id, qty, variant.id if variant else None
+        )
     if fee_permille is None:
         cfg = entry_cfg(await tenant_settings(db, buyer.tenant_id))
         if not cfg.enabled:
@@ -317,7 +353,9 @@ async def create_order(
         reseller_id=reseller_id,
         reseller_markup_minor=reseller_markup_minor,
         stock_reserved=stock_reserved,
-        terms=await purchase_terms(db, product_id),
+        terms=await purchase_terms(db, product_id, variant),
+        variant_id=variant.id if variant else None,
+        variant_name=pick(variant.name_i18n, buyer.locale)[:120] if variant else None,
     )
     db.add(order)
     await db.flush()
@@ -341,6 +379,11 @@ async def create_order(
             "discount_minor": discount_minor,
             "reseller_id": str(reseller_id) if reseller_id else None,
             "reseller_markup_minor": reseller_markup_minor,
+            **(
+                {"variant_id": str(variant.id), "unit_price_minor": variant.price_minor}
+                if variant
+                else {}
+            ),
             **({"buyer_input": True} if buyer_input else {}),  # never the value
         },
     )
@@ -369,23 +412,31 @@ async def buy_now(
     buyer_input: str | None = None,
     promo_code: str | None = None,
     storefront: Storefront | None = None,
+    variant_id: uuid.UUID | None = None,
 ) -> tuple[Order, Message | None]:
     product = await get_active_product(db, product_id)
     pricer = await Pricer.load(db, storefront)
     if pricer is not None and pricer.is_hidden(product.id):
         raise NotFound("Product not found")
-    # MONEY: the unit price is the server's (base + storefront markup); never the client's.
-    unit = pricer.unit(product) if pricer else product.price_minor
-    markup = pricer.markup(product) * qty if pricer else 0
+    variant = await variants.resolve(db, buyer.tenant_id, product, variant_id)
+    base = variant.price_minor if variant else product.price_minor
+    # MONEY: the unit price is the server's (variant/base + storefront markup); never the client's.
+    unit = pricer.unit(product, base) if pricer else base
+    markup = pricer.markup(product, base) * qty if pricer else 0
     subtotal = unit * qty
     value = normalize_value(product.buyer_input, buyer_input)
-    if product.delivery_mode == "auto_card" and await available_stock(db, product.id) < qty:
+    if (
+        product.delivery_mode == "auto_card"
+        and await available_stock(db, product.id, variant.id if variant else None) < qty
+    ):
         raise OutOfStock("Not enough stock", extra={"product_id": str(product.id)})
     # lock order everywhere: buyer row (payables cap) -> product rows (sorted) -> promo row
     # (no deadlock between a buy-now and a checkout touching the same buyer/product/promo)
     await enforce_payables_cap(db, settings, buyer)
     if product.delivery_mode in ("manual", "auto_card"):
         await lock_manual_products(db, buyer.tenant_id, [product.id])
+        if variant is not None:
+            await variants.lock_variants(db, buyer.tenant_id, [variant.id])
     ev = None
     if promo_code and promo_code.strip():
         ts = await tenant_settings(db, buyer.tenant_id)
@@ -422,6 +473,7 @@ async def buy_now(
         reseller_id=storefront.id if storefront else None,
         reseller_markup_minor=markup,
         enforce_cap=False,  # done above, before the promo lock
+        variant=variant,
     )
     if ev is not None:
         await promo_svc.reserve(db, ev, buyer, order_id=order.id, ip=ip)

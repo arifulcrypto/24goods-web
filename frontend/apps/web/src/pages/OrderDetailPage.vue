@@ -516,6 +516,7 @@ function gotCode() {
               <button type="button" class="link-btn" @click="copy(order.order_no)">{{ order.order_no }}</button>
             </template>
           </van-cell>
+          <van-cell v-if="order.variant_name" :title="t('order.variant')" :value="order.variant_name" />
           <van-cell :title="t('order.unitQty')" :value="String(order.qty)" />
           <van-cell :title="t('order.mode')" :value="t(`deliveryModeLong.${order.delivery_mode}`)" />
           <van-cell :title="t('order.channel')" :value="channelLabel" />

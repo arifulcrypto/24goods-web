@@ -22,6 +22,20 @@ export interface User {
 
 export type DeliveryMode = 'auto_card' | 'manual'
 
+/** v11 W1: a purchasable SKU of a product (buyer view; prices already include the storefront markup). */
+export interface ProductVariant {
+  id: string
+  name: string
+  price: string
+  /** auto_card: available cards; manual: reserved-stock counter (null = unlimited) */
+  stock: number | null
+  /** Resolved after-sales window in hours / whole months (variant terms, else the product's, else site default). */
+  after_sales_hours?: number | null
+  after_sales_months?: number | null
+  /** The variant (or its product) is a subscription. */
+  subscription?: boolean
+}
+
 export interface ProductSummary {
   id: string
   title: string
@@ -41,6 +55,11 @@ export interface ProductSummary {
   delivery_eta_hours?: number | null
   /** Order-information form (null = off). Lists carry it too, so quick buy asks for it (issue 49 B). */
   buyer_input?: BuyerInputConfig | null
+  /** v11 W1: active variants (sorted). When non-empty, `price` is the lowest and `stock` the sum. */
+  has_variants?: boolean
+  variants?: ProductVariant[]
+  /** v11 W1: the variants have different prices, so `price` reads "from ¥X". */
+  price_from?: boolean
 }
 export type ProductStatus = 'active' | 'draft'
 export interface Product extends ProductSummary {
@@ -68,13 +87,46 @@ export interface BuyerInputConfig {
   placeholder: string
 }
 export type I18nText = Record<Locale, string>
-export interface AdminProduct extends Omit<Product, 'title' | 'description' | 'buyer_input'> {
+export interface AdminProduct
+  extends Omit<Product, 'title' | 'description' | 'buyer_input' | 'variants' | 'has_variants' | 'price_from'> {
   title_i18n: I18nText
   description_i18n: I18nText
   floor_price: string
   created_at: string
   /** v5.2 manual-delivery stock; null = unlimited */
   manual_stock?: number | null
+  /** v11 W1: every variant, archived included (staff only). */
+  variants?: AdminVariant[]
+}
+/** v11 W1: staff view of a variant. */
+export interface AdminVariant {
+  id: string
+  name_i18n: I18nText
+  price: string
+  floor_price: string
+  /** manual products: null = unlimited */
+  manual_stock: number | null
+  /** auto_card: available cards of this variant; manual: the counter */
+  stock: number | null
+  sort: number
+  status: 'active' | 'archived'
+  /** null = inherit the product's */
+  after_sales_months: number | null
+  after_sales_hours: number | null
+  subscription: Record<string, unknown> | null
+  sold: number
+}
+/** Body for POST/PATCH /admin/products/{id}/variants. */
+export interface AdminVariantInput {
+  name_i18n: I18nText
+  price: string
+  floor_price: string
+  manual_stock?: number | null
+  sort?: number
+  status?: 'active' | 'archived'
+  after_sales_months?: number | null
+  after_sales_hours?: number | null
+  subscription?: Record<string, unknown> | null
 }
 /** Body for POST /admin/products ("AdminProduct fields (no id)"), PATCH accepts a partial. */
 export interface AdminProductInput {
@@ -256,6 +308,9 @@ export interface Order {
   refund_reference?: string | null
   /** issue 23: server-computed fee/total per ENABLED channel (pending orders only; else null). */
   channel_totals?: ChannelTotals | null
+  /** v11 W1: the variant bought (name as of purchase), null for products without variants. */
+  variant_id?: string | null
+  variant_name?: string | null
 }
 
 /** `{channel_id: {fee, fee_rate, amount}}`: money strings computed by the server (never the client). */
@@ -275,6 +330,7 @@ export interface CheckoutView {
 }
 export interface CheckoutLineInput {
   product_id: string
+  variant_id?: string
   qty: number
   buyer_input?: string
 }
@@ -312,6 +368,9 @@ export interface UsdtPayView {
 }
 export interface CartQuoteLine {
   product_id: string
+  /** v11 W1 */
+  variant_id?: string | null
+  variant_name?: string | null
   title: string
   cover: string | null
   unit_price: string
@@ -328,7 +387,12 @@ export interface CartQuoteLine {
   delivery_mode?: DeliveryMode
   delivery_eta_hours?: number | null
 }
-export type UnavailableReason = 'archived' | 'unpublished' | 'out_of_stock'
+export type UnavailableReason =
+  | 'archived'
+  | 'unpublished'
+  | 'out_of_stock'
+  | 'variant_required'
+  | 'variant_unavailable'
 export interface CartQuote {
   lines: CartQuoteLine[]
   discount_minor?: number

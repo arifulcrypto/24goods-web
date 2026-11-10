@@ -52,6 +52,8 @@ const zhCN: MessageSchema = {
     rate_limited: '操作过于频繁，请稍后再试',
     conflict: '数据已被他人修改，请刷新',
     out_of_stock: '库存不足',
+    variant_required: '请先选择规格',
+    variant_archived: '该规格已下架',
     invalid_state: '当前状态下无法执行此操作',
     quote_expired: '该报价已过期',
     upload_rejected: '文件被拒绝（类型或大小不符合要求）',

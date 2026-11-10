@@ -181,7 +181,10 @@ async function bulk(action: BulkAction, category?: string) {
           </template>
         </el-table-column>
         <el-table-column :label="t('products.col.price')" width="120">
-          <template #default="{ row }"><span class="price">{{ formatMoney(row.price, row.currency, locale) }}</span></template>
+          <template #default="{ row }">
+            <span class="price">{{ formatMoney(row.price, row.currency, locale) }}</span>
+            <el-tag v-if="row.variants?.some((v: { status: string }) => v.status === 'active')" size="small" type="info" class="vtag">{{ t('variants.count', row.variants.filter((v: { status: string }) => v.status === 'active').length) }}</el-tag>
+          </template>
         </el-table-column>
         <el-table-column v-if="auth.isAdmin" :label="t('v5.product.margin')" width="110">
           <template #default="{ row }">
@@ -245,6 +248,9 @@ async function bulk(action: BulkAction, category?: string) {
 </template>
 
 <style scoped>
+.vtag {
+  margin-left: 6px;
+}
 .prod {
   display: flex;
   align-items: center;

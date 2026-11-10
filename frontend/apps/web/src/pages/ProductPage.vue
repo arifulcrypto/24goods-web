@@ -20,11 +20,13 @@ import BuySheet from '../components/BuySheet.vue'
 import BuyerInputSheet from '../components/BuyerInputSheet.vue'
 import ManualPromise from '../components/ManualPromise.vue'
 import MiniStrip from '../components/MiniStrip.vue'
+import VariantChips from '../components/VariantChips.vue'
 import { cleanSrc, rememberSrc } from '../lib/attribution'
 import { openSupport as support } from '../lib/support'
 import { useCartStore } from '../stores/cart'
 import { afterSalesLabel } from '../lib/afterSales'
 import { isSoldOut } from '../lib/stock'
+import { defaultVariantId, findVariant, withVariant } from '../lib/variants'
 import { useSiteStore } from '../stores/site'
 import { showImagePreview, showSuccessToast, showToast, toastError } from '../ui'
 
@@ -34,7 +36,12 @@ const router = useRouter()
 const cart = useCartStore()
 const site = useSiteStore()
 
-const product = ref<Product | null>(null)
+const rawProduct = ref<Product | null>(null)
+/** v11 W1: the picked variant (products with variants are bought through one). */
+const variantId = ref<string | null>(null)
+const variant = computed(() => findVariant(rawProduct.value, variantId.value))
+/** The product as the picked variant presents it: price, stock and after-sales follow it. */
+const product = computed(() => (rawProduct.value ? withVariant(rawProduct.value, variant.value) : null))
 const loading = ref(true)
 const notFound = ref(false)
 useNoindex(() => notFound.value)
@@ -58,8 +65,11 @@ watch(
     related.value = []
     rememberSrc(src.value)
     try {
-      product.value = await api.product(v)
-      addRecent(product.value.id)
+      const full = await api.product(v)
+      rawProduct.value = full
+      const wanted = typeof route.query.variant === 'string' ? route.query.variant : null
+      variantId.value = findVariant(full, wanted)?.id ?? defaultVariantId(full.variants)
+      addRecent(full.id)
       if (route.name === 'buy' && !soldOut.value) sheet.value = true
       void api
         .recommended({ for: v, limit: 8 })
@@ -107,7 +117,7 @@ function addToCart() {
 }
 function doAdd(input: string | null) {
   if (!product.value) return
-  if (!cart.add(product.value.id, 1, input)) {
+  if (!cart.add(product.value.id, 1, input, variant.value?.id)) {
     showToast(t('cart.full'))
     return
   }
@@ -180,6 +190,10 @@ function back() {
           <span class="muted">{{ t('product.soldCount', { n: formatNumber(product.sold, locale) }) }}</span>
         </div>
         <h1 class="title">{{ product.title }}</h1>
+        <div v-if="rawProduct?.variants?.length" class="variant-pick">
+          <div class="muted small">{{ t('product.variantLabel') }}</div>
+          <VariantChips v-model="variantId" :variants="rawProduct.variants" />
+        </div>
         <div class="facts">
           <span v-if="isAuto" class="badge-instant">{{ t(`deliveryMode.${product.delivery_mode}`) }}</span>
           <ManualPromise v-else :eta="product.delivery_eta_hours" compact />
@@ -242,7 +256,7 @@ function back() {
         />
       </van-action-bar>
 
-      <BuySheet v-model:show="sheet" :product="product" :qty="buyQty" :src="src" />
+      <BuySheet v-model:show="sheet" :product="rawProduct" :qty="buyQty" :src="src" :variant-id="variantId" />
       <BuyerInputSheet v-model:show="inputSheet" :config="product.buyer_input ?? null" @confirm="doAdd" />
     </template>
   </div>
@@ -251,6 +265,11 @@ function back() {
 <style scoped>
 .pdp {
   min-height: 100vh;
+}
+.variant-pick {
+  margin: 8px 0;
+  display: grid;
+  gap: 6px;
 }
 .gallery {
   position: relative;

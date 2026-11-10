@@ -63,13 +63,14 @@ class Pricer:
         o = self._ov.get(product_id)
         return bool(o and o.hidden)
 
-    def markup(self, p: Product) -> int:
+    def markup(self, p: Product, base: int | None = None) -> int:
+        """``base`` = the variant's price when buying a variant (default: the product's)."""
         o = self._ov.get(p.id)
         kind, value = (o.kind, o.value) if o else (self.sf.markup_kind, self.sf.markup_value)
-        return markup_per_unit(p.price_minor, kind, value, self.sf)
+        return markup_per_unit(p.price_minor if base is None else base, kind, value, self.sf)
 
-    def unit(self, p: Product) -> int:
-        return p.price_minor + self.markup(p)
+    def unit(self, p: Product, base: int | None = None) -> int:
+        return (p.price_minor if base is None else base) + self.markup(p, base)
 
 
 def reprice(out: dict[str, Any], p: Product, pricer: Pricer | None) -> dict[str, Any]:

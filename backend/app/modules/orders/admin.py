@@ -26,10 +26,12 @@ from app.models import (
     Payment,
     PaymentAttempt,
     Product,
+    ProductVariant,
     User,
 )
 from app.modules.aftersales import service as aftersales_svc
 from app.modules.catalog.service import escape_like
+from app.modules.catalog.variants import reserve_variant_stock
 from app.modules.chat.messages import post_system
 from app.modules.common.sitedefaults import delivery_deadlines, order_terms
 from app.modules.common.views import iso
@@ -150,7 +152,13 @@ async def change_price(
         product = await get_scoped(db, Product, order.product_id, order.tenant_id)
         if product is None:  # floor unknown: never reprice blind
             raise InvalidState("The order's product no longer exists", code="reprice_not_goods")
-        floor_total = product.floor_price_minor * order.qty
+        floor_unit = product.floor_price_minor
+        if order.variant_id is not None:  # a variant order's floor is the variant's
+            variant = await get_scoped(db, ProductVariant, order.variant_id, order.tenant_id)
+            if variant is None:
+                raise InvalidState("The order's variant no longer exists", code="reprice_not_goods")
+            floor_unit = variant.floor_price_minor
+        floor_total = floor_unit * order.qty
         if new_minor < floor_total:
             raise Validation("amount is below the floor price", code="reprice_below_floor")
     before = snapshot(order)
@@ -310,9 +318,9 @@ async def requeue_delivery(
     if order.product_id is None:
         raise InvalidState("The order has no product to deliver")
     await lock_manual_products(db, order.tenant_id, [order.product_id])
-    free = await available_stock(db, order.product_id) - await reserved_auto_stock(
-        db, order.tenant_id, order.product_id
-    )
+    free = await available_stock(
+        db, order.product_id, order.variant_id
+    ) - await reserved_auto_stock(db, order.tenant_id, order.product_id, order.variant_id)
     if free < order.qty:
         raise OutOfStock("Not enough stock to deliver this order yet")
     before = snapshot(order)
@@ -443,9 +451,14 @@ async def _accept_held(
         and order.stock_reserved == 0
     ):
         # released when the order expired before the (late) payment arrived
-        order.stock_reserved = await reserve_manual_stock(
-            db, order.tenant_id, order.product_id, order.qty
-        )
+        if order.variant_id is not None:
+            order.stock_reserved = await reserve_variant_stock(
+                db, order.tenant_id, order.variant_id, order.qty
+            )
+        else:
+            order.stock_reserved = await reserve_manual_stock(
+                db, order.tenant_id, order.product_id, order.qty
+            )
     if count_sale:
         assert order.product_id is not None
         await apply_sold(db, {order.product_id: order.qty})
@@ -748,7 +761,11 @@ async def order_detail(
         if order.product_id
         else None
     )
-    view["floor_price"] = fmt(product.floor_price_minor) if product else None  # per unit
+    floor = product.floor_price_minor if product else None  # per unit
+    if product is not None and order.variant_id is not None:
+        variant = await get_scoped(db, ProductVariant, order.variant_id, order.tenant_id)
+        floor = variant.floor_price_minor if variant else floor
+    view["floor_price"] = fmt(floor) if floor is not None else None
     if order.checkout_id is not None:
         siblings = list(
             await db.scalars(

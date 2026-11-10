@@ -50,6 +50,8 @@ export interface CardRowV3 {
   masked: string
   status: CardStatusV3
   batch_id: string | null
+  /** v11 W1: the variant (SKU) this card belongs to; null = product-level stock. */
+  variant_id?: string | null
   expires_at: string | null
   void_reason: string | null
   order_no: string | null
@@ -188,7 +190,7 @@ export function createAdminV3Api(c: ApiClient) {
       create: (b: AdminProductInputV3) => c.post<AdminProductV3>('/admin/products', b),
       update: (id: string, b: Partial<AdminProductInputV3>) => c.patch<AdminProductV3>(`/admin/products/${seg(id)}`, b),
       batches: (id: string) => c.get<{ items: CardBatch[] }>(`/admin/products/${seg(id)}/batches`).then((r) => r.items),
-      importCards: (id: string, b: { lines: string; note?: string; expires_at?: string }) =>
+      importCards: (id: string, b: { lines: string; note?: string; expires_at?: string; variant_id?: string }) =>
         c.post<CardImportResultV3>(`/admin/products/${seg(id)}/cards/import`, b),
       cards: (id: string, f: CardFilters, page: number, page_size: number) =>
         c.get<Paginated<CardRowV3>>(`/admin/products/${seg(id)}/cards`, buildCardQuery(f, page, page_size)),

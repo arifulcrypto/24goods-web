@@ -10,9 +10,11 @@ export interface CardFilters {
   /** 0/null = no expiry filter. */
   expiring_days: number | null
   order_no: string
+  /** v11 W1: only this variant's cards (empty = all). */
+  variant_id?: string
 }
 
-export const emptyCardFilters = (): CardFilters => ({ status: '', batch_id: '', expiring_days: null, order_no: '' })
+export const emptyCardFilters = (): CardFilters => ({ status: '', batch_id: '', expiring_days: null, order_no: '', variant_id: '' })
 
 const ORDER_NO_RE = /^[A-Za-z0-9-]{1,40}$/
 
@@ -25,6 +27,7 @@ export function buildCardQuery(f: CardFilters, page: number, pageSize: number): 
   if (f.status) q.status = f.status
   if (f.batch_id) q.batch_id = f.batch_id
   if (f.expiring_days && f.expiring_days > 0) q.expiring_days = Math.min(365, Math.max(1, Math.floor(f.expiring_days)))
+  if (f.variant_id) q.variant_id = f.variant_id
   const no = f.order_no.trim()
   if (no && ORDER_NO_RE.test(no)) q.order_no = no
   return q
