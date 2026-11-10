@@ -36,7 +36,7 @@ scripts/prod.sh deploy      # idempotent; sync first if deploy/ files (compose, 
 scripts/prod.sh smoke
 ```
 
-`deploy` logs in to GHCR for the pull only (token on stdin; `docker logout` afterwards) and appends the running image ids to `/opt/kesiv/image-history.log`. Migrations run as the `migrate` one-shot before the API restarts. Seed re-runs are idempotent and do not overwrite admin edits.
+`deploy` runs the migration as a one-off before recreating any container (a failed migration leaves the running release untouched), logs in to GHCR for the pull only (token on stdin; `docker logout` afterwards) and appends the running image ids to `/opt/kesiv/image-history.log`. Migrations run as the `migrate` one-shot before the API restarts. Seed re-runs are idempotent and do not overwrite admin edits.
 
 Changing the admin allowlist: edit `ADMIN_ALLOW_IPS` in `/opt/kesiv/deploy/.env`, then `cd /opt/kesiv/deploy && docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env up -d web`.
 
