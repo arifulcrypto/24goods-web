@@ -53,7 +53,6 @@ const busyQuoteId = ref<string | null>(null)
 const list = ref<InstanceType<typeof ChatMessageList> | null>(null)
 const opening = ref(true)
 
-const composer = ref<InstanceType<typeof ChatComposer> | null>(null)
 const replyTo = ref<Message | null>(null)
 const editing = ref<Message | null>(null)
 const pins = ref<Message[]>([])
@@ -465,7 +464,6 @@ function deliveredOrderId(it: { kind: string; message?: { type: string; payload:
       <van-button size="small" round type="primary" @click="startNew">{{ t('chat.startNew') }}</van-button>
     </div>
     <ChatComposer
-      ref="composer"
       v-else
       :voice="site.features.voice_messages"
       :disabled="connecting"

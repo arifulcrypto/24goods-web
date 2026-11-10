@@ -47,7 +47,6 @@ const me = computed(() => auth.user?.id ?? '')
 const wideSide = computed(() => width.value >= 1280)
 const narrow = computed(() => width.value < 820)
 
-const composer = ref<InstanceType<typeof StaffComposer> | null>(null)
 const replyTo = ref<Message | null>(null)
 const editing = ref<Message | null>(null)
 const pins = ref<Message[]>([])
@@ -428,7 +427,6 @@ function openProduct(id: string) {
         />
         <div v-if="active?.status === 'closed'" class="closed muted">{{ t('inbox.closedNotice') }}</div>
         <StaffComposer
-      ref="composer"
           v-else
           :disabled="!chat.conversationId.value"
           :reply="replyBar"
