@@ -362,6 +362,9 @@ def message_view(
             "created_at": iso(m.created_at),
         }
     payload = dict(m.payload) if m.payload is not None else None
+    if payload is not None:
+        # previous texts stay server-side (buyer and staff share this view)
+        payload.pop("edit_history", None)
     if payload is not None and payload_overlay:
         payload.update(payload_overlay)
     return {

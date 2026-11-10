@@ -297,6 +297,8 @@ async def create_record(
         )
         if order is None:
             raise NotFound("Order not found")
+        # same payment check as the order path
+        await paid_order(db, tenant, order.buyer_id, order.id)
         if await db.scalar(
             select(ServiceEntitlement.id).where(
                 ServiceEntitlement.tenant_id == tenant, ServiceEntitlement.order_id == order.id
@@ -317,6 +319,8 @@ async def create_record(
             )
         )
         if found is not None:  # links to an account when it exists; otherwise just a record
+            if order_id is not None and found.id != buyer_id:
+                raise Validation("buyer_email does not match the order's buyer")
             buyer_id = found.id
     start = aware(body.starts_at) if body.starts_at else utcnow()
     if body.ends_at is not None:

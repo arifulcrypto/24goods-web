@@ -231,3 +231,37 @@ async def test_quote_for_variant_product(env):
     )
     r = await _quote(agent, conv, product_id=str(p.id), variant_id=b["id"])
     assert r.status_code == 422
+
+
+async def test_edit_keeps_capped_history_audits_and_refreshes_reply_previews(env):
+    buyer, _ = await env.login("buyer")
+    agent, _ = await env.login("agent")
+    conv = await open_conversation(buyer)
+    m = (await send(buyer, conv, "h1", "v0")).json()
+    reply = (await staff_send(agent, conv, "h2", "re", reply_to=m["id"])).json()
+    path = f"{API}/chat/messages/{m['id']}"
+    for i in range(1, 8):
+        r = await buyer.patch(path, json={"text": f"v{i}"})
+        assert r.status_code == 200
+        assert "edit_history" not in r.json()["payload"]  # never sent to clients
+    async with env.owner_session() as db:
+        payload = await db.scalar(text("SELECT payload FROM messages WHERE id=:i"), {"i": m["id"]})
+        rp = await db.scalar(text("SELECT payload FROM messages WHERE id=:i"), {"i": reply["id"]})
+    hist = payload["edit_history"]
+    assert [h["text"] for h in hist] == ["v2", "v3", "v4", "v5", "v6"]
+    assert all(h["edited_at"] for h in hist)
+    assert rp["reply_to"]["preview"] == "v7"
+    # buyer views (list and push) never contain it
+    msgs = (await buyer.get(f"{API}/conversations/{conv['id']}/messages")).json()
+    assert "edit_history" not in str(msgs)
+    assert (await agent.get(f"{API}/admin/conversations/{conv['id']}/messages")).status_code == 200
+    async with env.owner_session() as db:
+        row = (
+            await db.execute(
+                text(
+                    "SELECT before, after FROM audit_log WHERE action='chat.message_edited' "
+                    "ORDER BY created_at DESC, id DESC LIMIT 1"
+                )
+            )
+        ).one()
+    assert row[0] == {"text": "v6"} and row[1] == {"text": "v7"}

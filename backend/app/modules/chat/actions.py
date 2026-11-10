@@ -59,7 +59,28 @@ async def _scrub_replies(db: AsyncSession, conv: Conversation, mid: int) -> list
     return rows
 
 
+async def _refresh_reply_previews(
+    db: AsyncSession, conv: Conversation, mid: int, text: str
+) -> list[Message]:
+    """An edited message must not live on in other messages' quoted preview either."""
+    rows = list(
+        await db.scalars(
+            select(Message).where(
+                Message.tenant_id == conv.tenant_id,
+                Message.conversation_id == conv.id,
+                Message.payload["reply_to"]["id"].astext == str(mid),
+            )
+        )
+    )
+    for r in rows:
+        rt = dict((r.payload or {}).get("reply_to") or {})
+        rt["preview"] = text[: service.REPLY_PREVIEW]
+        r.payload = {**(r.payload or {}), "reply_to": rt}
+    return rows
+
+
 EDIT_WINDOW_S = 48 * 3600
+EDIT_HISTORY_MAX = 5
 
 
 @router.patch("/chat/messages/{mid}")
@@ -90,8 +111,16 @@ async def edit(
         raise Validation("text is required")
     before = msg.text or ""
     if text != before:
+        now = datetime.now(timezone.utc).isoformat()
+        history = [*(p.get("edit_history") or []), {"text": before, "edited_at": now}]
         msg.text = text
-        msg.payload = {**p, "edited_at": datetime.now(timezone.utc).isoformat()}
+        msg.payload = {
+            **p,
+            "edited_at": now,
+            "edit_history": history[-EDIT_HISTORY_MAX:],
+        }
+        await db.flush()
+        replies = await _refresh_reply_previews(db, conv, mid, text)
         await audit(
             db,
             tenant_id=user.tenant_id,
@@ -99,11 +128,13 @@ async def edit(
             actor_role=user.role,
             action="chat.message_edited",
             target=f"message:{mid}",
+            before={"text": before},
+            after={"text": text},
             ip=client_ip(request),
             detail={"chars_before": len(before), "chars_after": len(text)},
         )
         await db.commit()
-        await service.broadcast(res, db, conv, [msg])
+        await service.broadcast(res, db, conv, [msg, *replies])
     return (await service.message_views(db, [msg]))[0]
 
 

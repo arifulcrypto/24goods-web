@@ -40,14 +40,16 @@ def lds(html: str) -> list[dict]:
     return [json.loads(m.replace("\\u003c", "<")) for m in LD.findall(html)]
 
 
-async def article(env, slug="terms", status="published", tenant_id=None, title="Terms"):
+async def article(
+    env, slug="terms", status="published", tenant_id=None, title="Terms", kind="page"
+):
     tid = tenant_id or env.tenant_id
     async with env.owner_session(tid) as db:
         db.add(
             Article(
                 tenant_id=tid,
                 slug=slug,
-                kind="page",
+                kind=kind,
                 title_i18n={"en": title, "zh-CN": "条款"},
                 body_i18n={"en": "x"},
                 body_html_i18n={"en": "<p>Be <strong>nice</strong>.</p>", "zh-CN": "<p>请友好</p>"},
@@ -375,3 +377,14 @@ async def test_ai_txt_is_silenced_with_the_rest_when_indexing_is_off(env):
     await set_settings(env, {"seo": {"indexing_enabled": False}})
     r = await env.client().get("/ai.txt")
     assert r.headers["x-robots-tag"] == "noindex, nofollow"
+
+
+async def test_announcements_are_not_public_seo_pages(env):
+    await article(env, "terms")
+    await article(env, "maint-notice", kind="notice", title="Maintenance")
+    c = env.client()
+    h = (await c.get("/help")).text
+    assert "/a/terms" in h and "maint-notice" not in h
+    assert (await c.get("/a/maint-notice")).status_code == 404
+    sm = (await c.get("/sitemap.xml")).text
+    assert "maint-notice" not in sm

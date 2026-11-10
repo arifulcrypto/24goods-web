@@ -123,8 +123,8 @@ async def typing(
     db: AsyncSession = Depends(get_db),
     res: Resources = Depends(get_res),
 ) -> Response:
-    conv = await service.buyer_conversation(db, conv_id, user)
     await enforce(res.redis, "chat:typing", str(user.id), 1, 3)
+    conv = await service.buyer_conversation(db, conv_id, user)
     await service.publish_typing(res, conv, user, role="buyer")
     return Response(status_code=204)
 
