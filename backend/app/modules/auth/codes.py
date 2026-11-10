@@ -31,6 +31,7 @@ from app.core.ratelimit import count, enforce, hit, ident_hash
 from app.core.resources import Resources
 from app.core.security import hash_password
 from app.models import User
+from app.modules.auth.schemas import INSTANT_DOMAIN
 
 log = logging.getLogger("app.auth.codes")
 
@@ -197,6 +198,15 @@ async def request_email_change_code(
         raise FeatureDisabled("Email is not enabled")
     if await db.scalar(select(User.id).where(User.email == new_email)) is not None:
         return
+    # per-ADDRESS budget as well (the code itself is scoped per user+address): several accounts
+    # must not be able to mail-bomb one victim address (#72 review L1)
+    addr = ident_hash(f"{user.tenant_id}:chg:{new_email}")
+    ok_min, _ = await hit(res.redis, "ecode:chg:min", addr, 1, 60)
+    if not ok_min:
+        return
+    ok_day, _ = await hit(res.redis, "ecode:chg:day", addr, 10, 86400)
+    if not ok_day:
+        return
     code = await issue(
         res.redis,
         res.settings,
@@ -249,3 +259,33 @@ async def reset_password(
     uid = user.id
     await db.commit()
     await res.sessions.revoke_user_sessions(uid)
+
+
+async def notify_email_changed(
+    db: AsyncSession, res: Resources, tenant_id: uuid.UUID, old_email: str, lang: str
+) -> None:
+    """Tell the PREVIOUS address that the login email changed (#72 review L2). Best effort: no
+    mailer, or an instant placeholder address, sends nothing."""
+    if old_email.endswith("@" + INSTANT_DOMAIN):
+        return
+    from app.modules.content.site import tenant_settings
+
+    ts = await tenant_settings(db, tenant_id)
+    cfg = await mailer.load_config(db, res.settings, tenant_id, ts, require_enabled=True)
+    if cfg is None:
+        return
+    name = site_name(ts, lang, res.settings.brand_name)
+    if lang == "zh-CN":
+        subject = f"{name}：你的登录邮箱已更改"
+        body = (
+            f"你在 {name} 的账户登录邮箱刚刚被更改，此邮箱不再用于登录。\n"
+            "如果这不是你本人操作，请立即联系客服。"
+        )
+    else:
+        subject = f"{name}: your sign-in email was changed"
+        body = (
+            f"The sign-in email of your {name} account was just changed; this address is no "
+            "longer used to sign in.\nIf you did not do this, contact support right away."
+        )
+    html = "<p>" + body.replace("\n", "</p><p>") + "</p>"
+    _spawn(_send_bg(cfg, old_email, subject, body, html))

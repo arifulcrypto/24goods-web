@@ -118,8 +118,8 @@ async def handle_order_paid(db: AsyncSession, order_id: uuid.UUID) -> JobResult:
             if order.product_id
             else None
         )
-        # nosemgrep: tenant-scoped-get -- Tenant has no tenant_id
-        tenant = await db.get(Tenant, order.tenant_id)
+        # Tenant has no tenant_id: a primary-key lookup is the scoped lookup
+        tenant = await db.get(Tenant, order.tenant_id)  # nosemgrep: tenant-scoped-get
         t_hours, t_months = order_terms(order, product)  # purchase-time snapshot (v8 F)
         order.after_sales_until, order.auto_confirm_at = delivery_deadlines(
             now,

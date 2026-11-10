@@ -113,6 +113,7 @@ async def requery_attempts(
     sink: list[NotifyOutcome] | None = None,
     *,
     only_failed: bool = False,
+    include_closed: bool = False,
 ) -> tuple[NotifyOutcome | None, bool]:
     """Returns (settled outcome, has durable EPay history). Failure never implies unpaid.
 
@@ -133,7 +134,7 @@ async def requery_attempts(
                 # failed = never dispatched (gateway unreachable) or resolved not-paid by staff
                 PaymentAttempt.status == "failed"
                 if only_failed
-                else PaymentAttempt.status.notin_(("settled", "failed", "closed")),
+                else PaymentAttempt.status.notin_(_skipped(include_closed)),
             )
             .order_by(PaymentAttempt.created_at)
             .limit(11)
@@ -205,6 +206,13 @@ async def requery_attempts(
 
 # The statuses the reconciler polls; ix_attempts_open (migration 0019) matches this predicate.
 OPEN_STATUSES = ("ready", "preparing", "unknown", "superseded")
+
+
+def _skipped(include_closed: bool) -> tuple[str, ...]:
+    """Attempt states a re-query skips: decided ones, plus ``closed`` for the background poll."""
+    return ("settled", "failed") if include_closed else ("settled", "failed", "closed")
+
+
 ATTEMPT_CLOSE_AFTER = timedelta(hours=72)
 CLOSE_PAYABLE_STATES = ("expired", "cancelled", "refunded")
 
@@ -620,6 +628,8 @@ async def requery_usdt_attempts(
     tid: uuid.UUID,
     no: str,
     sink: list[NotifyOutcome] | None = None,
+    *,
+    include_closed: bool = False,
 ) -> tuple[NotifyOutcome | None, bool]:
     rows = list(
         await db.scalars(
@@ -629,7 +639,7 @@ async def requery_usdt_attempts(
                 PaymentAttempt.local_ref == no,
                 PaymentAttempt.provider_id.is_(None),
                 # failed = refused / never created / resolved not-paid by staff; closed = abandoned
-                PaymentAttempt.status.notin_(("settled", "failed", "closed")),
+                PaymentAttempt.status.notin_(_skipped(include_closed)),
             )
             .order_by(PaymentAttempt.checked_at.asc().nullsfirst(), PaymentAttempt.created_at)
             .limit(11)
@@ -729,12 +739,17 @@ async def requery_all(
     tid: uuid.UUID,
     no: str,
     sink: list[NotifyOutcome] | None = None,
+    *,
+    include_closed: bool = False,
 ) -> NotifyOutcome | None:
+    """``include_closed``: the synchronous safety checks (buyer/staff cancel, release-hold close)
+    must ask about every original ever issued, including attempts the background poll closed
+    (#72 audit M1); the background poll itself keeps skipping them."""
     results = []
     failed = False
     for checker in (requery_attempts, requery_usdt_attempts):
         try:
-            result, _ = await checker(db, res, tid, no, sink)
+            result, _ = await checker(db, res, tid, no, sink, include_closed=include_closed)
             if result is not None:
                 results.append(result)
         except Exception as exc:

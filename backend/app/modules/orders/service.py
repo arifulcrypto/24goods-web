@@ -912,12 +912,8 @@ async def expire_pending(
                     await broadcast_order(res, db, order, [msgs.get(order.id)])
                 # quote cards: same message id re-published with status "expired"
                 for conv_id, message_id in expired_quotes:
-                    conv = await get_scoped(db, Conversation, conv_id, order.tenant_id)
-                    card = (
-                        await get_scoped(db, Message, message_id, order.tenant_id)
-                        if message_id
-                        else None
-                    )
+                    conv = await get_scoped(db, Conversation, conv_id, tid)
+                    card = await get_scoped(db, Message, message_id, tid) if message_id else None
                     if conv is not None and card is not None:
                         await chat.broadcast(res, db, conv, [card])
     return total

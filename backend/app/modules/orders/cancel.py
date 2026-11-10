@@ -98,7 +98,7 @@ async def _settle_if_paid(
         )
     )
     if managed:
-        outcome = await requery_all(db, res, tid, out_trade_no)
+        outcome = await requery_all(db, res, tid, out_trade_no, include_closed=True)
         if outcome is not None:
             return outcome
     if not managed and is_usdt(channel):

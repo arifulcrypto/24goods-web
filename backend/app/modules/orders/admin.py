@@ -46,7 +46,7 @@ from app.modules.orders.service import (
     reserved_auto_stock,
 )
 from app.modules.payments.channels import split_amount
-from app.modules.payments.settle import apply_sold, payment_for_order
+from app.modules.payments.settle import apply_sold, lock_checkout, payment_for_order
 from app.modules.promo import service as promo_svc
 
 
@@ -57,6 +57,69 @@ async def lock_order(db: AsyncSession, order_id: uuid.UUID, tenant_id: uuid.UUID
     if order is None:
         raise NotFound("Order not found")
     return order
+
+
+async def lock_for_release(db: AsyncSession, order_id: uuid.UUID, tenant_id: uuid.UUID) -> Order:
+    """Lock an order that may leave ``manual_review``: a checkout member takes the checkout lock
+    first (checkout -> orders by id, the order every settlement path uses), so updating the
+    checkout's own status afterwards cannot invert the lock order."""
+    co_id = await db.scalar(
+        select(Order.checkout_id).where(Order.id == order_id, Order.tenant_id == tenant_id)
+    )
+    if co_id is not None:
+        await lock_checkout(db, co_id, tenant_id)
+    return await lock_order(db, order_id, tenant_id)
+
+
+async def _checkout_left_review(
+    db: AsyncSession, order: Order, agent: User, ip: str | None
+) -> None:
+    """#72 audit L1: once no member of a held checkout is still held, the checkout is paid
+    (caller holds the checkout lock via ``lock_for_release``)."""
+    if order.checkout_id is None:
+        return
+    co = await db.scalar(
+        select(Checkout).where(
+            Checkout.id == order.checkout_id, Checkout.tenant_id == order.tenant_id
+        )
+    )
+    if co is None or co.status != "manual_review":
+        return
+    held = await db.scalar(
+        select(func.count(Order.id)).where(
+            Order.checkout_id == co.id,
+            Order.tenant_id == co.tenant_id,
+            Order.status == "manual_review",
+        )
+    )
+    if held:
+        return
+    co.status = "paid"
+    await audit(
+        db,
+        tenant_id=co.tenant_id,
+        action="checkout.hold_released",
+        actor_id=agent.id,
+        actor_role=agent.role,
+        target=f"checkout:{co.id}",
+        before={"status": "manual_review"},
+        after={"status": "paid"},
+        ip=ip,
+    )
+
+
+async def _sale_counted(db: AsyncSession, order: Order) -> bool:
+    """A sale is counted (``products.sold``) exactly when the order once entered ``paid``."""
+    return (
+        await db.scalar(
+            select(func.count(OrderEvent.id)).where(
+                OrderEvent.order_id == order.id,
+                OrderEvent.tenant_id == order.tenant_id,
+                OrderEvent.to_status == "paid",
+            )
+        )
+        or 0
+    ) > 0
 
 
 async def change_price(
@@ -229,7 +292,7 @@ async def requeue_delivery(
     exist again. Never infers payment from the status: a succeeded payment covering the
     order and its booked ledger entry are re-checked here; the delivery worker then runs the
     normal path (it locks the order and re-claims cards)."""
-    order = await lock_order(db, order_id, agent.tenant_id)
+    order = await lock_for_release(db, order_id, agent.tenant_id)
     if order.kind != "goods" or order.delivery_mode != "auto_card":
         raise InvalidState("Only auto-delivery goods orders can be requeued")
     if order.status != "manual_review":
@@ -258,6 +321,7 @@ async def requeue_delivery(
     await add_event(
         db, order, "manual_review", "paid", actor_id=agent.id, reason="delivery_requeued"
     )
+    await _checkout_left_review(db, order, agent, ip)
     db.add(
         Outbox(
             tenant_id=order.tenant_id,
@@ -357,15 +421,20 @@ async def release_hold(
 async def _accept_held(
     db: AsyncSession, order_id: uuid.UUID, reason: str, agent: User, ip: str | None
 ) -> tuple[Order, Message | None]:
-    order = await lock_order(db, order_id, agent.tenant_id)
+    order = await lock_for_release(db, order_id, agent.tenant_id)
     if order.status != "manual_review":
         raise InvalidState("Only an order held for review can be released")
     if order.kind == "reseller_signup":
         raise InvalidState("A held sign-up order cannot be released here; refund it instead")
     pay = await _verified_payment(db, order)
+    # #72 audit M3: count the sale from state (never entered ``paid`` before), for every mode
+    count_sale = order.product_id is not None and not await _sale_counted(db, order)
     if order.kind == "goods" and order.delivery_mode == "auto_card":
+        if count_sale:
+            assert order.product_id is not None
+            await apply_sold(db, {order.product_id: order.qty})
         return await requeue_delivery(db, order_id, agent, ip, reason=reason)
-    held_reason, held_by = await hold_reason(db, order)
+    held_reason, _held_by = await hold_reason(db, order)
     before = snapshot(order)
     if (
         order.kind == "goods"
@@ -377,14 +446,15 @@ async def _accept_held(
         order.stock_reserved = await reserve_manual_stock(
             db, order.tenant_id, order.product_id, order.qty
         )
-    if held_by == "gateway" and order.product_id is not None:
-        # a held settlement never counted the sale (settle._apply_one, ``late``)
+    if count_sale:
+        assert order.product_id is not None
         await apply_sold(db, {order.product_id: order.qty})
     order.status = "paid"
     order.version += 1
     await add_event(
         db, order, "manual_review", "paid", actor_id=agent.id, reason=f"hold_accepted: {reason}"
     )
+    await _checkout_left_review(db, order, agent, ip)
     db.add(
         Outbox(
             tenant_id=order.tenant_id,
@@ -408,6 +478,10 @@ async def _accept_held(
             "reason": reason,
             "hold_reason": held_reason,
             "payment_id": str(pay.id),
+            # #72 audit L2: an overpayment is visible in the trail (the surplus is refunded by hand)
+            "paid_minor": pay.amount_minor,
+            "order_minor": order.amount_minor,
+            "overpaid": pay.amount_minor > order.amount_minor and pay.checkout_id is None,
         },
         severity="warning",
     )

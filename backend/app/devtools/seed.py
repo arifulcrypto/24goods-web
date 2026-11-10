@@ -288,8 +288,8 @@ async def _tenant(maker, settings: Settings) -> uuid.UUID:  # type: ignore[no-un
             await db.commit()
             tid = t.id
         else:  # rename the pre-v3 demo tenant
-            # nosemgrep: tenant-scoped-get -- Tenant has no tenant_id
-            tenant = await db.get(Tenant, tid)
+            # Tenant has no tenant_id: a primary-key lookup is the scoped lookup
+            tenant = await db.get(Tenant, tid)  # nosemgrep: tenant-scoped-get
             if tenant is not None and tenant.name != settings.brand_name:
                 tenant.name = settings.brand_name
                 await db.commit()
@@ -409,8 +409,8 @@ async def _content(db: AsyncSession, tid: uuid.UUID, admin: User, *, demo: bool 
                     created_by=admin.id,
                 )
             )
-    # nosemgrep: tenant-scoped-get -- Tenant has no tenant_id
-    tenant = await db.get(Tenant, tid)
+    # Tenant has no tenant_id: a primary-key lookup is the scoped lookup
+    tenant = await db.get(Tenant, tid)  # nosemgrep: tenant-scoped-get
     if tenant is not None and "announcement" not in (tenant.settings or {}):
         ann = dict(ANNOUNCEMENT if demo else ANNOUNCEMENT_PROD)
         ann["body_html_i18n"] = render_i18n(ann["body_i18n"])

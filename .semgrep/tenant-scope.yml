@@ -9,8 +9,14 @@ rules:
       `# nosemgrep: tenant-scoped-get -- <reason>`.
     paths:
       include:
-        - backend/app/
-    pattern-either:
-      - pattern: $DB.get($MODEL, ...)
-      - pattern: await $DB.get($MODEL, ...)
-    pattern-not: $X.get("...", ...)
+        - "/backend/app/"
+    patterns:
+      # a SQLAlchemy session lookup by model class: `db.get(Order, id)`, `session.get(User, id)`.
+      # A capitalised first argument is a mapped class; dict/header/redis `.get(...)` calls are not.
+      - pattern: $DB.get($MODEL, $ID, ...)
+      - metavariable-regex:
+          metavariable: $DB
+          regex: ^(db|session|sess|s|odb|adb)$
+      - metavariable-regex:
+          metavariable: $MODEL
+          regex: ^[A-Z][A-Za-z0-9_]*$

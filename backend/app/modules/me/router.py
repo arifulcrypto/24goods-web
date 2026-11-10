@@ -129,9 +129,17 @@ async def email_change_confirm(
     user: User = Depends(current_user),
     db: AsyncSession = Depends(get_db),
     res: Resources = Depends(get_res),
+    lang: str = Depends(get_lang),
 ) -> dict:
     out = await service.confirm_email_change(
-        db, res, user, body.email, body.code, client_ip(request)
+        db,
+        res,
+        user,
+        body.email,
+        body.code,
+        client_ip(request),
+        current_token=res.sessions.token_from(request.cookies),
+        lang=lang,
     )
     return user_view(out)
 

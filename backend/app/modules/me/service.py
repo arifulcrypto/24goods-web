@@ -104,8 +104,11 @@ async def confirm_email_change(
     email: str,
     code: str,
     ip: str | None,
+    current_token: str | None = None,
+    lang: str = "en",
 ) -> User:
-    """Set the login email once the code mailed to it is proven (single use, 5 attempts)."""
+    """Set the login email once the code mailed to it is proven (single use, 5 attempts).
+    A regular account's other sessions are signed out and the previous address is told."""
     await enforce(res.redis, "me:email_confirm", str(user.id), 20, 3600)
     ident = codes.email_change_ident(user.id, email)
     if not await codes.verify(res.redis, res.settings, user.tenant_id, ident, "email_change", code):
@@ -138,6 +141,9 @@ async def confirm_email_change(
     except IntegrityError:
         await db.rollback()
         raise Conflict("This email can't be used") from None
+    if not before["is_instant"]:
+        await res.sessions.revoke_user_sessions(user.id, keep=current_token)
+    await codes.notify_email_changed(db, res, user.tenant_id, str(before["email"]), lang)
     return user
 
 
