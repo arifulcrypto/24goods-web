@@ -644,7 +644,8 @@ async def withdraw_quote(
     msg = await quote_svc.quote_message(db, quote)  # same id, updated status
     conv = await chat.staff_conversation(db, quote.conversation_id)
     await chat.broadcast(res, db, conv, [m for m in (msg, sysmsg) if m is not None])
-    return quote_svc.quote_payload(quote, ((msg.payload if msg else None) or {}).get("variant_name"))
+    vname = ((msg.payload if msg else None) or {}).get("variant_name")
+    return quote_svc.quote_payload(quote, vname)
 
 
 # ---------------------------------------------------------------- agents
