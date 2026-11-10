@@ -547,7 +547,7 @@ default_description_i18n, og_image}` (`og_image`: empty, `/path` or `https://` U
 - New 409 `too_many_unpaid` (unpaid-order cap; was generic `conflict`) and 422 `buyer_input_too_long` (was generic `validation`; also for the pydantic 4000-char cap). Pasted order info drops zero-width/BOM characters.
 
 
-## V6 unmerged additions (PR #31)
+## V6 additions (PR #31, merged 2026-11-08)
 
 - `GET/POST /admin/payment-gateways`: administrator sessions only; immutable encrypted write-only
   merchant keys. Create requires `label,gateway,merchant_id,secret,current_password,mode` (`qr` or
@@ -585,3 +585,41 @@ default_description_i18n, og_image}` (`og_image`: empty, `/path` or `https://` U
   tenant/host/browser-bound HttpOnly clearance cookie for 30 minutes. Gated catalog/SEO responses
   are private/no-store and vary by Cookie. Enabling requires purging/draining any pre-existing public
   CDN caches as an operator step. PoW presets are bounded, and Turnstile difficulty is provider-owned.
+
+## v7–v11 additions (subscriptions, integrity, CS, payments UX, gateways, issue #72)
+
+All `/api/v1`. Admin routes are tenant-pinned, audited and rate limited like the rest of `/admin`.
+Details live in the ADRs named in brackets.
+
+**Buyer**
+- `POST /orders/{ref}/expedite` — ask CS to hurry a paid manual order once (ADR-032).
+- `PATCH /orders/{ref}/input` — edit buyer input while the order is still editable.
+- `POST /orders/{ref}/after-sales` — open a ticket; `kind=not_received` after the delivery ETA (ADR-031).
+- `PUT|DELETE /me/avatar`, `GET /avatars/{user_id}` — profile picture (re-encoded, ADR-032).
+- `GET|POST /me/announcement-ack` — announcement acknowledgement.
+- `POST /me/email-change` `{email, current_password?}` → `{"sent": true}` for any address (no
+  enumeration); `POST /me/email-change/confirm` `{email, code}` switches the login email and marks it
+  verified. `POST /me/credentials` no longer changes the email (#72 S6, ADR-036).
+
+**Staff / admin**
+- `POST /admin/orders/{id}/requeue-delivery` (admin) — held auto-card order back to the queue (ADR-031).
+- `POST /admin/orders/{id}/refund` (admin) `{reference, note?}` — paid, undelivered order (ADR-031).
+- `POST /admin/orders/{id}/release-hold` (admin) `{outcome: "accept"|"close", reason}` — exit from
+  `manual_review`: accept a verified recorded payment, or close when no payment is recorded and a
+  fresh re-query says unpaid (409 `already_paid` if the gateway now reports paid, 503 if any attempt
+  is unresolved). `GET /admin/orders/{id}` adds `hold {reason, by, has_payment}` (#72 B2, ADR-035).
+- `POST /admin/payment-attempts/{id}/resolve` (admin) — staff confirm an `unknown` attempt created
+  no charge (ADR-033).
+- `GET /admin/payment-gateways-health`, `POST /admin/payment-gateways/{ref}/test`,
+  `POST /admin/payment-gateways/bepusdt/test` — gateway self-tests (ADR-033).
+- `PATCH /admin/payment-gateways/{ref}` `{enabled, priority}`, `PUT /admin/payment-gateways/order`,
+  `PUT /admin/payment-gateways/routing` `{mode}`, `DELETE /admin/payment-gateways/{ref}`;
+  `POST /admin/payment-gateways/{ref}/test-payment`, `GET /admin/payment-gateways/test-payments[/{id}]`
+  (ADR-034).
+- `GET /admin/operations` adds `payment_review.open_payment_attempts` and
+  `paid_undelivered_auto_card` (#72 B3/A4); `GET /admin/operations/events`.
+- `GET|POST /admin/services`, `GET|PATCH /admin/services/{id}`, `POST /admin/services/{id}/activate`,
+  `GET /admin/services/{id}/renewal-candidates`, `POST /admin/services/{id}/renewals` — subscription
+  services (ADR-030).
+- `GET /admin/after-sales[/{id}]`, `POST /admin/after-sales/{id}/action`.
+

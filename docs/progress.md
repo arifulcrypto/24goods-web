@@ -4,6 +4,23 @@ Update this file in every PR. Phases are defined in [review-v2.md §8](review-v2
 
 ## Current state — hand-off (read this first in a new session)
 
+**Issue #72 remediation (2026-11-10, branch `fix/issue-72`, one PR):** every held order and payment
+attempt now has an exit (ADR-035): USDT refusal no longer locks the order (B1); admin "release hold"
+accepts a verified payment or closes an unpaid held order after a fresh re-query (B2); attempts reach
+a terminal `closed` state (B3, migration `0019_attempt_closed`, additive); a second trade on a refunded
+order alerts staff (S12); redirect gateways are healthy only after a real payment/self-test (A3); dead
+delivery jobs alert staff and the Operations overview shows open attempts and paid-undelivered
+auto-card orders (A4); the periodic jobs take a Redis lock (A1); email change needs a code sent to the
+new address (S6, ADR-036); tenant-scoped primary-key lookups + Semgrep rule (S10); ledger property and
+concurrent-settlement tests (A8); clearer buyer copy for held orders (B4). Supply chain (S4/S11):
+SECURITY.md, CODEOWNERS, secret scanning + push protection, Dependabot alerts/security updates (npm,
+docker, docker-compose ecosystems added), private vulnerability reporting, CodeQL enabled
+(`ENABLE_CODEQL=true`, free while the repo is public — turn it off if it goes private), Semgrep image
+and all base images pinned by digest, `pnpm audit --prod` blocking at high.
+**Still open (owner):** S1 independent review, S2 backups/restore drill (#28), S3 credential rotation
+(#30), S5 public vs private repository. Not done in code: S7 (seal buyer input / manual delivery
+text), S8 (staff TOTP), S9 (separate media origin), A5–A7, A9 — see #72 for the reasons.
+
 **Production deployed 2026-11-09 01:30 UTC: `a8160cb`** (#50 + #51, owner-approved) from `e1fb9e7`;
 no migrations. Pre-deploy backup with the installed v1 script, sha256-verified off-host copy in
 `/root/kesiv-backups/predeploy-20261109T012730Z/`, `pg_restore --list` OK (40 tables). Rollback:
@@ -237,8 +254,9 @@ Xiaodou merchant secret and PID should still be treated as exposed (#30).
 
 _Last updated 2026-11-08 UTC._
 
-- **Prod** https://shop.kesiv.com (c4, IIJ Japan) runs **`7f36926`** (v5.2 + #23), verified
-  2026-11-08 via `scripts/prod.sh status`. That is **15 commits behind `main`**, missing migrations
+- *(Superseded 2026-11-10: production has since been deployed several times and runs
+  `1528264` / migration `0018`, see "Current state" at the top.)* **Prod** https://shop.kesiv.com (c4, IIJ Japan) ran **`7f36926`** (v5.2 + #23), verified
+  2026-11-08 via `scripts/prod.sh status`. That was **15 commits behind `main`**, missing migrations
   `0010_payment_attempts`, `0011_operations_renewals`, `0012_cs_reply_templates`. `0010` matters
   most: `PaymentAttempt` is the durable attempt binding the USDT reconcile path depends on, so real
   USDT testing on prod today exercises v5.2, not the current pipeline. **Real BEpusdt v1.24.3 is
@@ -307,7 +325,7 @@ Tracking: [#27 payments](https://github.com/arifulcrypto/24goods-web/issues/27),
 - Documentation review caught and corrected the unsafe blanket restore restart and an exactly-once
   notification overclaim. Implementation and independent security review remain pending.
 
-## Current phase: **MVP-0: local demo with mock data** (finishing) → next: **M1 production MVP**
+## Phase: **live MVP in production** (since 2026-11-06) → gate still open: **M1 independent security review** (#72 S1)
 
 ### Active owner-authorized implementation: issues #25–#30
 
@@ -487,9 +505,8 @@ Tracking: [#27 payments](https://github.com/arifulcrypto/24goods-web/issues/27),
       Mainland China restriction, statutory withdrawal rights for digital goods, and refund terms.
       Anthropic's ToS text will **not** be copied; original text in a comparable structure instead.
       Needs a qualified lawyer before it governs real transactions.
-- [ ] **Approval to deploy `main` to production** (c4), prerequisite for the owner's intended live
-      USDT transfer — prod is 15 commits behind and missing `0010_payment_attempts`. Wants a
-      pre-deploy backup and recorded rollback image digests.
+- [x] ~~Approval to deploy `main` to production~~ — done; production is deployed per release with a
+      pre-deploy backup and rollback images (see "Current state").
 - [ ] Legal review of payments for mainland users (aggregator + later USDT).
 - [ ] Which hostname of your domain to use for production. For HTTPS on the demo, point `demo.<domain>` at the demo host's IP.
 - [ ] Chatwoot re-evaluation at M2: only if there are ≥3 agents, on a ≥4 GB server.

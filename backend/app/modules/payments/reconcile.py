@@ -12,6 +12,7 @@ from typing import Any
 from sqlalchemy import and_, inspect, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.audit import audit
 from app.core.db import tenant_session
 from app.core.errors import Unavailable
 from app.core.resources import Resources
@@ -95,6 +96,10 @@ async def _mark_settled(
     if att is None:
         return
     att.status = "settled"
+    if att.provider_id is not None:
+        from app.modules.payments.gateways import mark_gateway_ok
+
+        await mark_gateway_ok(db, tid, att.provider_id)
     if trade_no:
         att.data = {**att.data, "confirmed_trade_no": trade_no[:256]}
     att.checked_at = datetime.now(timezone.utc)
@@ -108,6 +113,7 @@ async def requery_attempts(
     sink: list[NotifyOutcome] | None = None,
     *,
     only_failed: bool = False,
+    include_closed: bool = False,
 ) -> tuple[NotifyOutcome | None, bool]:
     """Returns (settled outcome, has durable EPay history). Failure never implies unpaid.
 
@@ -128,7 +134,7 @@ async def requery_attempts(
                 # failed = never dispatched (gateway unreachable) or resolved not-paid by staff
                 PaymentAttempt.status == "failed"
                 if only_failed
-                else PaymentAttempt.status.notin_(("settled", "failed")),
+                else PaymentAttempt.status.notin_(_skipped(include_closed)),
             )
             .order_by(PaymentAttempt.created_at)
             .limit(11)
@@ -197,6 +203,18 @@ async def requery_attempts(
         )
     return await merge_outcomes(db, tid, outcomes), bool(refs)
 
+
+# The statuses the reconciler polls; ix_attempts_open (migration 0019) matches this predicate.
+OPEN_STATUSES = ("ready", "preparing", "unknown", "superseded")
+
+
+def _skipped(include_closed: bool) -> tuple[str, ...]:
+    """Attempt states a re-query skips: decided ones, plus ``closed`` for the background poll."""
+    return ("settled", "failed") if include_closed else ("settled", "failed", "closed")
+
+
+ATTEMPT_CLOSE_AFTER = timedelta(hours=72)
+CLOSE_PAYABLE_STATES = ("expired", "cancelled", "refunded")
 
 RECHECK_WINDOW = timedelta(hours=24)
 RECHECK_EVERY = timedelta(minutes=10)
@@ -277,12 +295,14 @@ async def run(res: Resources) -> int:
         async with tenant_session(res.maker, tid) as db:
             await alert_stale_unknown(res, db, tid, now)
             total += await recheck_failed(res, db, tid, now)
+            await close_abandoned(res, db, tid, now)
+            await alert_dead_jobs(res, db, tid, now)
             refs = list(
                 await db.scalars(
                     select(PaymentAttempt.local_ref)
                     .where(
                         PaymentAttempt.tenant_id == tid,
-                        PaymentAttempt.status.in_(("ready", "preparing", "unknown", "superseded")),
+                        PaymentAttempt.status.in_(OPEN_STATUSES),
                         # back off: every 2 min for the first hour of an attempt's life, then hourly
                         or_(
                             PaymentAttempt.checked_at.is_(None),
@@ -348,6 +368,154 @@ async def run(res: Resources) -> int:
                     row.attempts += 1
                 await db.commit()
     return total
+
+
+async def _definitively_unpaid(
+    db: AsyncSession, res: Resources, tid: uuid.UUID, att: PaymentAttempt, no: str
+) -> bool:
+    """Fresh gateway query for one attempt; True only for an unambiguous unpaid / not found."""
+    try:
+        if att.provider_id is not None:
+            ref = att.gateway_ref  # captured: the rollback below expires the row
+            routed, _ = await routed_resources(db, res, tid, ref)
+            await db.rollback()
+            q = await routed.zpay.query_order(ref)
+            return not (q.found and q.paid)  # a paid answer is left to the normal poll
+        trade_id = (att.data or {}).get("trade_id")
+        if not trade_id:
+            return False  # nothing to ask: stays open for staff
+        client = usdt.original_client(res, att)
+        await db.rollback()
+        info = await client.query_info(trade_id)
+        if not info.found:
+            return True
+        return info.status in (bepusdt.STATUS_WAITING, bepusdt.STATUS_EXPIRED)
+    except (ZPayQueryError, bepusdt.BepusdtError, Unavailable, asyncio.TimeoutError):
+        return False
+
+
+async def close_abandoned(res: Resources, db: AsyncSession, tid: uuid.UUID, now: datetime) -> int:
+    """B3: give abandoned attempts a terminal state so they stop being polled for ever.
+
+    An open attempt older than ATTEMPT_CLOSE_AFTER whose payable is expired / cancelled /
+    refunded becomes ``closed`` iff a fresh query in this tick says unpaid / not found. A failed
+    or ambiguous query leaves it open. A late notify still settles it (routing is by
+    ``gateway_ref``, not status)."""
+    candidates = list(
+        await db.scalars(
+            select(PaymentAttempt)
+            .where(
+                PaymentAttempt.tenant_id == tid,
+                PaymentAttempt.status.in_(OPEN_STATUSES),
+                PaymentAttempt.created_at < now - ATTEMPT_CLOSE_AFTER,
+                PaymentAttempt.data["stale_alerted"].as_string().is_(None),
+            )
+            .order_by(PaymentAttempt.created_at)
+            .limit(40)
+        )
+    )
+    todo: list[tuple[uuid.UUID, str]] = []
+    states: dict[str, str | None] = {}
+    for att in candidates:
+        if len(todo) >= 4:
+            break
+        no = att.local_ref
+        if no not in states:
+            model, col = (
+                (Checkout, Checkout.checkout_no) if no.startswith("C") else (Order, Order.order_no)
+            )
+            states[no] = await db.scalar(
+                select(model.status).where(col == no, model.tenant_id == tid)
+            )
+        if states[no] in CLOSE_PAYABLE_STATES:
+            todo.append((att.id, no))
+    closed = 0
+    started = time.monotonic()
+    for att_id, no in todo:
+        if time.monotonic() - started > 10:
+            break
+        att = await db.scalar(
+            select(PaymentAttempt).where(
+                PaymentAttempt.id == att_id, PaymentAttempt.tenant_id == tid
+            )
+        )
+        if att is None or att.status not in OPEN_STATUSES:
+            continue
+        try:
+            unpaid = await asyncio.wait_for(_definitively_unpaid(db, res, tid, att, no), timeout=8)
+        except asyncio.TimeoutError:
+            unpaid = False
+        if not unpaid:
+            await db.rollback()
+            continue
+        att = await db.scalar(
+            select(PaymentAttempt)
+            .where(PaymentAttempt.id == att_id, PaymentAttempt.tenant_id == tid)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if att is None or att.status not in OPEN_STATUSES:
+            await db.rollback()
+            continue
+        before = att.status
+        att.status = "closed"
+        att.checked_at = now
+        att.data = {**(att.data or {}), "closed_at": now.isoformat()}
+        await audit(
+            db,
+            tenant_id=tid,
+            action="payment.attempt_closed",
+            target="payment_attempt:" + str(att_id),
+            before={"status": before},
+            after={"status": "closed"},
+            detail={"local_ref": no, "payable_status": states.get(no)},
+        )
+        await db.commit()
+        closed += 1
+    return closed
+
+
+DEAD_JOB_ATTEMPTS = 8  # app.delivery.worker.MAX_ATTEMPTS; the delivery process has no egress
+DEAD_JOB_WINDOW = timedelta(days=7)
+
+
+async def alert_dead_jobs(res: Resources, db: AsyncSession, tid: uuid.UUID, now: datetime) -> int:
+    """A4: a delivery job that died (8 failures, ``delivery.job_dead``) leaves its order ``paid``.
+    The delivery process cannot reach Telegram, so the API process finds the dead outbox rows and
+    raises the same staff alert the duplicate-payment path does (once per job, Redis-deduped)."""
+    from app.core import notify_tg
+    from app.models import Outbox
+
+    rows = list(
+        (
+            await db.execute(
+                select(Outbox.id, Outbox.topic, Outbox.payload)
+                .where(
+                    Outbox.tenant_id == tid,
+                    Outbox.attempts >= DEAD_JOB_ATTEMPTS,
+                    Outbox.last_error.is_not(None),
+                    Outbox.processed_at.is_not(None),
+                    Outbox.processed_at > now - DEAD_JOB_WINDOW,
+                )
+                .order_by(Outbox.id.desc())
+                .limit(10)
+            )
+        ).all()
+    )
+    await db.rollback()
+    for oid, topic, payload in rows:
+        notify_tg.notify_bg(
+            res,
+            tid,
+            "payment_review",
+            [
+                f"Delivery job {topic} #{oid} failed {DEAD_JOB_ATTEMPTS} times and was dropped",
+                f"Order {str((payload or {}).get('order_id', ''))[:36]} may be undelivered",
+            ],
+            link=notify_tg.admin_link(res, "orders"),
+            once=(f"dead_job:{oid}", 30 * 86400),
+        )
+    return len(rows)
 
 
 STALE_UNKNOWN = timedelta(hours=24)
@@ -460,6 +628,8 @@ async def requery_usdt_attempts(
     tid: uuid.UUID,
     no: str,
     sink: list[NotifyOutcome] | None = None,
+    *,
+    include_closed: bool = False,
 ) -> tuple[NotifyOutcome | None, bool]:
     rows = list(
         await db.scalars(
@@ -468,7 +638,8 @@ async def requery_usdt_attempts(
                 PaymentAttempt.tenant_id == tid,
                 PaymentAttempt.local_ref == no,
                 PaymentAttempt.provider_id.is_(None),
-                PaymentAttempt.status != "settled",
+                # failed = refused / never created / resolved not-paid by staff; closed = abandoned
+                PaymentAttempt.status.notin_(_skipped(include_closed)),
             )
             .order_by(PaymentAttempt.checked_at.asc().nullsfirst(), PaymentAttempt.created_at)
             .limit(11)
@@ -568,12 +739,17 @@ async def requery_all(
     tid: uuid.UUID,
     no: str,
     sink: list[NotifyOutcome] | None = None,
+    *,
+    include_closed: bool = False,
 ) -> NotifyOutcome | None:
+    """``include_closed``: the synchronous safety checks (buyer/staff cancel, release-hold close)
+    must ask about every original ever issued, including attempts the background poll closed
+    (#72 audit M1); the background poll itself keeps skipping them."""
     results = []
     failed = False
     for checker in (requery_attempts, requery_usdt_attempts):
         try:
-            result, _ = await checker(db, res, tid, no, sink)
+            result, _ = await checker(db, res, tid, no, sink, include_closed=include_closed)
             if result is not None:
                 results.append(result)
         except Exception as exc:

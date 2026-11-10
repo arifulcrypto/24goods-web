@@ -21,3 +21,25 @@ updates:
       interval: weekly
     cooldown:
       default-days: 7  # don't propose releases younger than a week (supply-chain hygiene)
+  # #72 S11: the frontend workspace (pnpm) and the deploy images, digest-pinned since #72
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7  # matches pnpm-workspace.yaml minimumReleaseAge spirit
+    groups:
+      frontend-minor:
+        update-types: [minor, patch]
+  - package-ecosystem: docker
+    directory: /deploy
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+  - package-ecosystem: docker-compose
+    directory: /deploy
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7

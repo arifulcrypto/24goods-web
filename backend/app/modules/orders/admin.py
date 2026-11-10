@@ -11,9 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import audit
 from app.core.deps import Page
-from app.core.errors import InvalidState, NotFound, OutOfStock, Validation
+from app.core.errors import AlreadyPaid, InvalidState, NotFound, OutOfStock, Validation
 from app.core.money import MoneyError, fmt, parse_amount
 from app.core.resources import Resources
+from app.core.scoped import get_scoped
 from app.core.settings_v5 import section
 from app.models import (
     Attachment,
@@ -22,6 +23,7 @@ from app.models import (
     Order,
     OrderEvent,
     Outbox,
+    Payment,
     PaymentAttempt,
     Product,
     User,
@@ -36,12 +38,15 @@ from app.modules.orders import cancel as cancel_svc
 from app.modules.orders.events import add_event, snapshot
 from app.modules.orders.service import (
     available_stock,
+    broadcast_order,
     lock_manual_products,
     order_views,
+    release_manual_stock,
+    reserve_manual_stock,
     reserved_auto_stock,
 )
 from app.modules.payments.channels import split_amount
-from app.modules.payments.settle import payment_for_order
+from app.modules.payments.settle import apply_sold, lock_checkout, payment_for_order
 from app.modules.promo import service as promo_svc
 
 
@@ -52,6 +57,69 @@ async def lock_order(db: AsyncSession, order_id: uuid.UUID, tenant_id: uuid.UUID
     if order is None:
         raise NotFound("Order not found")
     return order
+
+
+async def lock_for_release(db: AsyncSession, order_id: uuid.UUID, tenant_id: uuid.UUID) -> Order:
+    """Lock an order that may leave ``manual_review``: a checkout member takes the checkout lock
+    first (checkout -> orders by id, the order every settlement path uses), so updating the
+    checkout's own status afterwards cannot invert the lock order."""
+    co_id = await db.scalar(
+        select(Order.checkout_id).where(Order.id == order_id, Order.tenant_id == tenant_id)
+    )
+    if co_id is not None:
+        await lock_checkout(db, co_id, tenant_id)
+    return await lock_order(db, order_id, tenant_id)
+
+
+async def _checkout_left_review(
+    db: AsyncSession, order: Order, agent: User, ip: str | None
+) -> None:
+    """#72 audit L1: once no member of a held checkout is still held, the checkout is paid
+    (caller holds the checkout lock via ``lock_for_release``)."""
+    if order.checkout_id is None:
+        return
+    co = await db.scalar(
+        select(Checkout).where(
+            Checkout.id == order.checkout_id, Checkout.tenant_id == order.tenant_id
+        )
+    )
+    if co is None or co.status != "manual_review":
+        return
+    held = await db.scalar(
+        select(func.count(Order.id)).where(
+            Order.checkout_id == co.id,
+            Order.tenant_id == co.tenant_id,
+            Order.status == "manual_review",
+        )
+    )
+    if held:
+        return
+    co.status = "paid"
+    await audit(
+        db,
+        tenant_id=co.tenant_id,
+        action="checkout.hold_released",
+        actor_id=agent.id,
+        actor_role=agent.role,
+        target=f"checkout:{co.id}",
+        before={"status": "manual_review"},
+        after={"status": "paid"},
+        ip=ip,
+    )
+
+
+async def _sale_counted(db: AsyncSession, order: Order) -> bool:
+    """A sale is counted (``products.sold``) exactly when the order once entered ``paid``."""
+    return (
+        await db.scalar(
+            select(func.count(OrderEvent.id)).where(
+                OrderEvent.order_id == order.id,
+                OrderEvent.tenant_id == order.tenant_id,
+                OrderEvent.to_status == "paid",
+            )
+        )
+        or 0
+    ) > 0
 
 
 async def change_price(
@@ -79,7 +147,7 @@ async def change_price(
         raise InvalidState("This order's price cannot be changed", code="reprice_not_goods")
     floor_total = 0
     if order.product_id is not None:
-        product = await db.get(Product, order.product_id)
+        product = await get_scoped(db, Product, order.product_id, order.tenant_id)
         if product is None:  # floor unknown: never reprice blind
             raise InvalidState("The order's product no longer exists", code="reprice_not_goods")
         floor_total = product.floor_price_minor * order.qty
@@ -160,7 +228,7 @@ async def deliver_manual(
     if order.delivery_mode != "manual" or order.status != "paid":
         raise InvalidState("Only paid manual orders can be delivered")
     if attachment_id is not None:
-        att = await db.get(Attachment, attachment_id)
+        att = await get_scoped(db, Attachment, attachment_id, agent.tenant_id)
         # Only a file the acting staff member uploaded: never a buyer's private chat upload
         # (that would hand it to another buyer through the order), not even for admins.
         if att is None or att.owner_id != agent.id or att.purpose not in ("chat", "delivery"):
@@ -168,7 +236,11 @@ async def deliver_manual(
         att.purpose = "delivery"
     before = snapshot(order)
     now = datetime.now(timezone.utc)
-    product = await db.get(Product, order.product_id) if order.product_id else None
+    product = (
+        await get_scoped(db, Product, order.product_id, order.tenant_id)
+        if order.product_id
+        else None
+    )
     t_hours, t_months = order_terms(order, product)
     until, confirm_at = delivery_deadlines(
         now,
@@ -210,13 +282,17 @@ async def deliver_manual(
 
 
 async def requeue_delivery(
-    db: AsyncSession, order_id: uuid.UUID, agent: User, ip: str | None
+    db: AsyncSession,
+    order_id: uuid.UUID,
+    agent: User,
+    ip: str | None,
+    reason: str | None = None,
 ) -> tuple[Order, Message | None]:
     """v8 A.2: put a held (out-of-stock) auto-card order back on the delivery queue once cards
     exist again. Never infers payment from the status: a succeeded payment covering the
     order and its booked ledger entry are re-checked here; the delivery worker then runs the
     normal path (it locks the order and re-claims cards)."""
-    order = await lock_order(db, order_id, agent.tenant_id)
+    order = await lock_for_release(db, order_id, agent.tenant_id)
     if order.kind != "goods" or order.delivery_mode != "auto_card":
         raise InvalidState("Only auto-delivery goods orders can be requeued")
     if order.status != "manual_review":
@@ -245,6 +321,7 @@ async def requeue_delivery(
     await add_event(
         db, order, "manual_review", "paid", actor_id=agent.id, reason="delivery_requeued"
     )
+    await _checkout_left_review(db, order, agent, ip)
     db.add(
         Outbox(
             tenant_id=order.tenant_id,
@@ -263,7 +340,7 @@ async def requeue_delivery(
         before=before,
         after=snapshot(order),
         ip=ip,
-        detail={"payment_id": str(pay.id)},
+        detail={"payment_id": str(pay.id), "reason": reason},
         severity="warning",
     )
     msg = await post_system(
@@ -275,6 +352,267 @@ async def requeue_delivery(
     )
     await db.commit()
     return order, msg
+
+
+HOLD_OUTCOMES = ("accept", "close")
+
+
+async def hold_reason(db: AsyncSession, order: Order) -> tuple[str | None, str | None]:
+    """Reason and actor kind of the latest transition into ``manual_review``."""
+    ev = await db.scalar(
+        select(OrderEvent)
+        .where(
+            OrderEvent.order_id == order.id,
+            OrderEvent.tenant_id == order.tenant_id,
+            OrderEvent.to_status == "manual_review",
+        )
+        .order_by(OrderEvent.id.desc())
+        .limit(1)
+    )
+    return (ev.reason, ev.actor_kind) if ev is not None else (None, None)
+
+
+async def _verified_payment(db: AsyncSession, order: Order) -> Payment:
+    """Same evidence rule as ``requeue_delivery``: never infer payment from the status."""
+    pay = await payment_for_order(db, order)
+    if (
+        pay is None
+        or pay.status != "succeeded"
+        or pay.currency != order.currency
+        or pay.amount_minor < order.amount_minor
+        or not await aftersales_svc._has_open_ledger(db, order)
+    ):
+        raise InvalidState("A verified payment covering this order is required")
+    if order.paid_at is None:  # recorded after the hold (settle._record_unrecorded_payment)
+        order.paid_at = pay.created_at
+    return pay
+
+
+async def release_hold(
+    db: AsyncSession,
+    res: Resources,
+    order_id: uuid.UUID,
+    outcome: str,
+    reason: str,
+    agent: User,
+    ip: str | None,
+) -> tuple[Order, Message | None]:
+    """#72 B2: the exit from ``manual_review``.
+
+    - ``accept``: a verified payment covers the order -> auto-card goes back on the delivery
+      queue (``requeue_delivery``), anything else becomes ``paid`` (manual stock re-reserved
+      under the product lock, refused if none is left) so staff can deliver it.
+    - ``close``: only when NO payment is recorded for the payable AND a fresh gateway re-query
+      of every attempt says unpaid / not found (anything unresolved -> 503, a paid answer is
+      settled and the close refused) -> ``cancelled``, stock and promo released. A checkout
+      closes as a whole, like a cancel.
+    """
+    clean = (reason or "").strip()
+    if not clean:
+        raise Validation("A reason is required")
+    clean = clean[:200]
+    if outcome == "accept":
+        return await _accept_held(db, order_id, clean, agent, ip)
+    if outcome == "close":
+        return await _close_held(db, res, order_id, clean, agent, ip)
+    raise Validation("Unknown outcome")
+
+
+async def _accept_held(
+    db: AsyncSession, order_id: uuid.UUID, reason: str, agent: User, ip: str | None
+) -> tuple[Order, Message | None]:
+    order = await lock_for_release(db, order_id, agent.tenant_id)
+    if order.status != "manual_review":
+        raise InvalidState("Only an order held for review can be released")
+    if order.kind == "reseller_signup":
+        raise InvalidState("A held sign-up order cannot be released here; refund it instead")
+    pay = await _verified_payment(db, order)
+    # #72 audit M3: count the sale from state (never entered ``paid`` before), for every mode
+    count_sale = order.product_id is not None and not await _sale_counted(db, order)
+    if order.kind == "goods" and order.delivery_mode == "auto_card":
+        if count_sale:
+            assert order.product_id is not None
+            await apply_sold(db, {order.product_id: order.qty})
+        return await requeue_delivery(db, order_id, agent, ip, reason=reason)
+    held_reason, _held_by = await hold_reason(db, order)
+    before = snapshot(order)
+    if (
+        order.kind == "goods"
+        and order.delivery_mode == "manual"
+        and order.product_id is not None
+        and order.stock_reserved == 0
+    ):
+        # released when the order expired before the (late) payment arrived
+        order.stock_reserved = await reserve_manual_stock(
+            db, order.tenant_id, order.product_id, order.qty
+        )
+    if count_sale:
+        assert order.product_id is not None
+        await apply_sold(db, {order.product_id: order.qty})
+    order.status = "paid"
+    order.version += 1
+    await add_event(
+        db, order, "manual_review", "paid", actor_id=agent.id, reason=f"hold_accepted: {reason}"
+    )
+    await _checkout_left_review(db, order, agent, ip)
+    db.add(
+        Outbox(
+            tenant_id=order.tenant_id,
+            topic="order.paid",
+            key=f"{order.id}:release:{order.version}",
+            payload={"order_id": str(order.id), "tenant_id": str(order.tenant_id)},
+        )
+    )
+    await audit(
+        db,
+        tenant_id=order.tenant_id,
+        action="order.hold_released",
+        actor_id=agent.id,
+        actor_role=agent.role,
+        target=f"order:{order.id}",
+        before=before,
+        after=snapshot(order),
+        ip=ip,
+        detail={
+            "outcome": "accept",
+            "reason": reason,
+            "hold_reason": held_reason,
+            "payment_id": str(pay.id),
+            # #72 audit L2: an overpayment is visible in the trail (the surplus is refunded by hand)
+            "paid_minor": pay.amount_minor,
+            "order_minor": order.amount_minor,
+            "overpaid": pay.amount_minor > order.amount_minor and pay.checkout_id is None,
+        },
+        severity="warning",
+    )
+    msg = await post_system(
+        db,
+        tenant_id=order.tenant_id,
+        conversation_id=order.conversation_id,
+        event="paid",
+        text=(
+            "Payment confirmed. An agent will deliver your order shortly."
+            if order.delivery_mode == "manual"
+            else None
+        ),
+        order_id=str(order.id),
+        awaiting_delivery=order.delivery_mode == "manual",
+    )
+    await db.commit()
+    return order, msg
+
+
+async def _group_has_payment(db: AsyncSession, co: Checkout | None, orders: list[Order]) -> bool:
+    cond = Payment.order_id.in_([o.id for o in orders])
+    if co is not None:
+        cond = or_(cond, Payment.checkout_id == co.id)
+    return (
+        await db.scalar(
+            select(func.count(Payment.id)).where(Payment.tenant_id == orders[0].tenant_id, cond)
+        )
+        or 0
+    ) > 0
+
+
+async def _close_held(
+    db: AsyncSession,
+    res: Resources,
+    order_id: uuid.UUID,
+    reason: str,
+    agent: User,
+    ip: str | None,
+) -> tuple[Order, Message | None]:
+    from app.modules.payments.reconcile import emit_outcome
+
+    actor_id, actor_role, tid = agent.id, agent.role, agent.tenant_id
+
+    async def load() -> tuple[Checkout | None, list[Order]]:
+        co, orders = await cancel_svc._load_group(db, tid, order_id, None)
+        if (co is not None and co.status != "manual_review") or any(
+            o.status != "manual_review" for o in orders
+        ):
+            raise InvalidState("Only an order held for review can be closed here")
+        if await _group_has_payment(db, co, orders):
+            raise InvalidState(
+                "A payment is recorded for this order; accept it or refund it instead"
+            )
+        return co, orders
+
+    co, orders = await load()
+    no = co.checkout_no if co is not None else orders[0].order_no
+    amount = co.amount_minor if co is not None else orders[0].amount_minor
+    channel = co.channel if co is not None else orders[0].channel
+    co_id = co.id if co is not None else None
+    single_id = orders[0].id if co is None else None
+    await db.rollback()  # never hold row locks across the gateway re-query
+    found = await cancel_svc._settle_if_paid(db, res, co_id, single_id, no, amount, channel)
+    if found is not None:
+        await emit_outcome(res, db, found)
+        raise AlreadyPaid("The gateway reports this order as paid; accept the payment instead")
+    co, orders = await load()  # re-check under the locks: nothing may have landed meanwhile
+    msgs: list[Message | None] = []
+    held = {o.id: (await hold_reason(db, o))[0] for o in orders}
+    for o in orders:
+        before = snapshot(o)
+        o.status = "cancelled"
+        o.cancel_reason = reason
+        o.version += 1
+        await add_event(
+            db, o, "manual_review", "cancelled", actor_id=actor_id, reason=f"hold_closed: {reason}"
+        )
+        await audit(
+            db,
+            tenant_id=tid,
+            action="order.hold_released",
+            actor_id=actor_id,
+            actor_role=actor_role,
+            target=f"order:{o.id}",
+            before=before,
+            after=snapshot(o),
+            ip=ip,
+            detail={"outcome": "close", "reason": reason, "hold_reason": held[o.id]},
+            severity="warning",
+        )
+        msgs.append(
+            await post_system(
+                db,
+                tenant_id=tid,
+                conversation_id=o.conversation_id,
+                event="order_cancelled",
+                text=f"Order closed by support: {reason}",
+                order_id=str(o.id),
+                reason=reason,
+                by="staff",
+            )
+        )
+    await release_manual_stock(db, tid, orders)
+    if co is not None:
+        await promo_svc.release(
+            db, checkout_id=co.id, tenant_id=tid, expect=co.promo_code_id is not None
+        )
+        co.status = "cancelled"
+        await audit(
+            db,
+            tenant_id=tid,
+            action="checkout.hold_closed",
+            actor_id=actor_id,
+            actor_role=actor_role,
+            target=f"checkout:{co.id}",
+            before={"status": "manual_review"},
+            after={"status": "cancelled"},
+            ip=ip,
+            detail={"reason": reason, "orders": len(orders)},
+        )
+    else:
+        await promo_svc.release(
+            db, order_id=orders[0].id, tenant_id=tid, expect=orders[0].promo_code_id is not None
+        )
+    await db.commit()
+    for o, m in zip(orders, msgs, strict=True):
+        await broadcast_order(res, db, o, [m])
+    target = next(o for o in orders if o.id == order_id)
+    msg = next(m for o, m in zip(orders, msgs, strict=True) if o.id == order_id)
+    return target, msg
 
 
 async def refund_undelivered(
@@ -405,7 +743,11 @@ async def order_detail(
     if order is None:
         raise NotFound("Order not found")
     (view,) = await admin_views(db, [order])
-    product = await db.get(Product, order.product_id) if order.product_id else None
+    product = (
+        await get_scoped(db, Product, order.product_id, order.tenant_id)
+        if order.product_id
+        else None
+    )
     view["floor_price"] = fmt(product.floor_price_minor) if product else None  # per unit
     if order.checkout_id is not None:
         siblings = list(
@@ -449,6 +791,10 @@ async def order_detail(
         {"id": str(a.id), "status": a.status, "created_at": iso(a.created_at)} for a in unresolved
     ]
     pay = await payment_for_order(db, order)
+    if order.status == "manual_review":
+        # #72 B2: why it is held and which exit applies (accept needs a recorded payment)
+        reason, by = await hold_reason(db, order)
+        view["hold"] = {"reason": reason, "by": by, "has_payment": pay is not None}
     view["payment"] = (
         {
             "channel": pay.channel,

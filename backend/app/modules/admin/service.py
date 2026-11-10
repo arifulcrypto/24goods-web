@@ -19,6 +19,7 @@ from app.core.audit import audit
 from app.core.deps import Page
 from app.core.errors import NotFound, Validation
 from app.core.money import fmt
+from app.core.scoped import get_scoped, session_tenant
 from app.core.security import STAFF_ROLES
 from app.models import (
     AgentStatus,
@@ -115,10 +116,14 @@ async def assign(
 ) -> list[Message]:
     agent: User | None = None
     if agent_id is not None:
-        agent = await db.get(User, agent_id)
+        agent = await get_scoped(db, User, agent_id, staff.tenant_id)
         if agent is None or agent.role not in STAFF_ROLES:
             raise Validation("agent_id must be a staff member")
-    previous = await db.get(User, conv.assigned_agent_id) if conv.assigned_agent_id else None
+    previous = (
+        await get_scoped(db, User, conv.assigned_agent_id, conv.tenant_id)
+        if conv.assigned_agent_id
+        else None
+    )
     msgs: list[Message] = []
     if (previous.id if previous else None) != (agent.id if agent else None):
         if previous is not None:
@@ -193,7 +198,9 @@ def agent_status_view(row: AgentStatus | None, role: str = "admin") -> dict[str,
 
 
 async def get_agent_status(db: AsyncSession, staff: User) -> dict[str, Any]:
-    return agent_status_view(await db.get(AgentStatus, staff.id), staff.role)
+    return agent_status_view(
+        await get_scoped(db, AgentStatus, staff.id, staff.tenant_id), staff.role
+    )
 
 
 async def set_agent_status(
@@ -209,7 +216,7 @@ async def set_agent_status(
         )
     )
     await db.commit()
-    row = await db.get(AgentStatus, staff.id, populate_existing=True)
+    row = await get_scoped(db, AgentStatus, staff.id, staff.tenant_id, populate_existing=True)
     return agent_status_view(row, staff.role)
 
 
@@ -396,7 +403,7 @@ async def audit_csv(db: AsyncSession, flt: AuditFilter) -> str:
 
 
 async def ensure_conversation(db: AsyncSession, conv_id: uuid.UUID) -> Conversation:
-    conv = await db.get(Conversation, conv_id)
+    conv = await get_scoped(db, Conversation, conv_id, session_tenant(db))
     if conv is None:
         raise NotFound("Conversation not found")
     return conv

@@ -56,7 +56,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:17-alpine
+        image: postgres:17-alpine@sha256:3540c0362c809df084ffac0ae69fe794515f9de92692f02178bcdce0ef0302ac
         env:
           POSTGRES_PASSWORD: test
           POSTGRES_DB: test
@@ -64,7 +64,7 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 3s --health-retries 20
       redis:
-        image: redis:7-alpine
+        image: redis:7-alpine@sha256:c5d34a98396a4775e223c74e929162c35c5a2182901ba26b50ade939941ce14b
         ports: ["6379:6379"]
         options: >-
           --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 20
@@ -129,22 +129,21 @@ jobs:
       - run: pnpm test
       - name: Build both apps + bundle budget (web initial JS <= 150 KB gzip)
         run: pnpm build
-      - name: pnpm audit (advisory)
-        continue-on-error: true
-        run: pnpm audit --prod
+      - name: pnpm audit (runtime dependencies, blocking at high)
+        run: pnpm audit --prod --audit-level high
 
   semgrep:
     name: Semgrep (SAST)
     runs-on: ubuntu-latest
     container:
-      image: semgrep/semgrep:latest
+      image: semgrep/semgrep:1.182.1@sha256:451b3d875c00dac7ed5db5293e584a07de11449a409c10b3c2d2652f429630b6
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Semgrep scan
         run: >-
-          semgrep scan --config p/python --config p/owasp-top-ten --config p/secrets
+          semgrep scan --config p/python --config p/owasp-top-ten --config p/secrets --config .semgrep
           --config p/javascript --config p/typescript
           --error --metrics=off
 

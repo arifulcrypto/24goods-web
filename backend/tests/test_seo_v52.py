@@ -72,7 +72,11 @@ async def test_product_page_meta_and_jsonld(env):
     assert 'property="og:title" content="Steam Wallet — Kesiv"' in h
     assert 'name="twitter:card"' in h
     assert "<h1>Steam Wallet</h1>" in h and "19.90 CNY" in h  # pre-rendered body
-    assert r.headers["cache-control"] == "public, max-age=0, s-maxage=300, must-revalidate"
+    assert r.headers["cache-control"] == "no-cache"  # #36: never shared-cached unvalidated
+    etag = r.headers["etag"]
+    assert etag.startswith('"') and len(etag) == 34
+    again = await env.client().get(f"/p/{p.id}", headers={"If-None-Match": etag})
+    assert again.status_code == 304 and again.content == b""
     product, crumbs = lds(h)
     offer = product["offers"]
     assert product["@type"] == "Product" and product["name"] == "Steam Wallet"

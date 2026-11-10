@@ -7,6 +7,7 @@ import contextlib
 import functools
 import logging
 import re
+import secrets
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -96,9 +97,41 @@ async def _job(name: str, coro, res: Resources | None = None) -> None:  # type: 
                 log.warning("task heartbeat unavailable")
 
 
-async def run_jobs_once(res: Resources, *, hourly: bool) -> None:
+JOBS_LOCK_KEY = "jobs:loop:lock"
+JOBS_LOCK_TTL_S = 600  # longer than one pass; a crashed holder frees it on expiry
+# compare-and-delete: only the holder releases the lock (never one taken over after expiry)
+_UNLOCK = (
+    "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) end return 0"
+)
+
+
+async def run_jobs_once(res: Resources, *, hourly: bool) -> bool:
+    """One pass of the periodic jobs. #72 A1: a Redis lock keeps two API replicas from running
+    the same pass concurrently (the jobs are idempotent, but double gateway queries and double
+    emails are not free); returns False when another process holds it."""
+    token = secrets.token_hex(16)
+    try:
+        if not await res.redis.set(JOBS_LOCK_KEY, token, nx=True, ex=JOBS_LOCK_TTL_S):
+            log.info("periodic jobs skipped: another process holds the lock")
+            return False
+    except Exception:
+        log.warning("periodic jobs lock unavailable; running unlocked")
+        token = ""
+    try:
+        await _run_jobs(res, hourly=hourly)
+    finally:
+        if token:
+            with contextlib.suppress(Exception):
+                await res.redis.eval(_UNLOCK, 1, JOBS_LOCK_KEY, token)
+    return True
+
+
+async def _run_jobs(res: Resources, *, hourly: bool) -> None:
     from app.modules.payments.reconcile import run as reconcile_payments
 
+    # Reconciliation stays BEFORE expiry (#72 A1 considered the reverse and declined it): an order
+    # paid just before its deadline whose notify was lost must be settled as paid, not expired
+    # first and then held as a late payment. Expiry waiting for the ~20 s budget is harmless.
     await _job("payment reconciliation", reconcile_payments(res), res)
     await _job("subscription sync", operations_jobs.sync_subscriptions(res), res)
     await _job("service reminder scheduling", operations_jobs.schedule_reminders(res), res)

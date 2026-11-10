@@ -1,0 +1,22 @@
+rules:
+  - id: tenant-scoped-get
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Bare `db.get(Model, id)` looks a row up by primary key only and leans on RLS alone for
+      tenant isolation (AGENTS.md invariant 4). Use `app.core.scoped.get_scoped(db, Model, id,
+      tenant_id)`. For a model without tenant_id (Tenant, CustomDomain) add
+      `# nosemgrep: tenant-scoped-get -- <reason>`.
+    paths:
+      include:
+        - "/backend/app/"
+    patterns:
+      # a SQLAlchemy session lookup by model class: `db.get(Order, id)`, `session.get(User, id)`.
+      # A capitalised first argument is a mapped class; dict/header/redis `.get(...)` calls are not.
+      - pattern: $DB.get($MODEL, $ID, ...)
+      - metavariable-regex:
+          metavariable: $DB
+          regex: ^(db|session|sess|s|odb|adb)$
+      - metavariable-regex:
+          metavariable: $MODEL
+          regex: ^[A-Z][A-Za-z0-9_]*$

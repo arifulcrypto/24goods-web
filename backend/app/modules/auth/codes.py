@@ -31,10 +31,11 @@ from app.core.ratelimit import count, enforce, hit, ident_hash
 from app.core.resources import Resources
 from app.core.security import hash_password
 from app.models import User
+from app.modules.auth.schemas import INSTANT_DOMAIN
 
 log = logging.getLogger("app.auth.codes")
 
-Purpose = Literal["register", "reset"]
+Purpose = Literal["register", "reset", "email_change"]
 CODE_TTL_S = 600
 MAX_ATTEMPTS = 5
 _pending: set[asyncio.Task[None]] = set()
@@ -176,6 +177,58 @@ async def request_code(
     _spawn(_send_bg(cfg, email, subject, body, html))
 
 
+def email_change_ident(user_id: uuid.UUID, email: str) -> str:
+    """Code scope for an email change: bound to the requesting user AND the new address, so a
+    code can't be replayed by another account or for another address."""
+    return f"{user_id}|{email}"
+
+
+async def request_email_change_code(
+    db: AsyncSession,
+    res: Resources,
+    user: User,
+    ts: dict,
+    new_email: str,
+    lang: str,
+) -> None:
+    """Mail a code to ``new_email``. Returns silently (nothing sent) when the address is already
+    registered or rate-limited, so the caller's response is identical in every case."""
+    cfg = await mailer.load_config(db, res.settings, user.tenant_id, ts, require_enabled=True)
+    if cfg is None:
+        raise FeatureDisabled("Email is not enabled")
+    if await db.scalar(select(User.id).where(User.email == new_email)) is not None:
+        return
+    # per-ADDRESS budget as well (the code itself is scoped per user+address): several accounts
+    # must not be able to mail-bomb one victim address (#72 review L1)
+    addr = ident_hash(f"{user.tenant_id}:chg:{new_email}")
+    ok_min, _ = await hit(res.redis, "ecode:chg:min", addr, 1, 60)
+    if not ok_min:
+        return
+    ok_day, _ = await hit(res.redis, "ecode:chg:day", addr, 10, 86400)
+    if not ok_day:
+        return
+    code = await issue(
+        res.redis,
+        res.settings,
+        user.tenant_id,
+        email_change_ident(user.id, new_email),
+        "email_change",
+    )
+    if code is None:
+        return
+    subject, body, html = render_template(
+        ts,
+        "verify_code",
+        lang,
+        {
+            "site_name": site_name(ts, lang, res.settings.brand_name),
+            "code": code,
+            "minutes": str(CODE_TTL_S // 60),
+        },
+    )
+    _spawn(_send_bg(cfg, new_email, subject, body, html))
+
+
 async def reset_password(
     db: AsyncSession,
     res: Resources,
@@ -206,3 +259,33 @@ async def reset_password(
     uid = user.id
     await db.commit()
     await res.sessions.revoke_user_sessions(uid)
+
+
+async def notify_email_changed(
+    db: AsyncSession, res: Resources, tenant_id: uuid.UUID, old_email: str, lang: str
+) -> None:
+    """Tell the PREVIOUS address that the login email changed (#72 review L2). Best effort: no
+    mailer, or an instant placeholder address, sends nothing."""
+    if old_email.endswith("@" + INSTANT_DOMAIN):
+        return
+    from app.modules.content.site import tenant_settings
+
+    ts = await tenant_settings(db, tenant_id)
+    cfg = await mailer.load_config(db, res.settings, tenant_id, ts, require_enabled=True)
+    if cfg is None:
+        return
+    name = site_name(ts, lang, res.settings.brand_name)
+    if lang == "zh-CN":
+        subject = f"{name}：你的登录邮箱已更改"
+        body = (
+            f"你在 {name} 的账户登录邮箱刚刚被更改，此邮箱不再用于登录。\n"
+            "如果这不是你本人操作，请立即联系客服。"
+        )
+    else:
+        subject = f"{name}: your sign-in email was changed"
+        body = (
+            f"The sign-in email of your {name} account was just changed; this address is no "
+            "longer used to sign in.\nIf you did not do this, contact support right away."
+        )
+    html = "<p>" + body.replace("\n", "</p><p>") + "</p>"
+    _spawn(_send_bg(cfg, old_email, subject, body, html))

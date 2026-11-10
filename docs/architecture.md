@@ -209,6 +209,20 @@ Rollback: `git revert` → CI → new `:main`; or pin `API_IMAGE`/`WEB_IMAGE` to
 | ADR-024 | Crawler/first-paint HTML rendered by the API; the SPA stays (supplements ADR-009) | Implemented |
 | ADR-025 | Versioned provider instances and typed local-QR presentation; payment challenge | Proposed, not implemented |
 | ADR-026 | Least-privilege operations overview, complete recovery sets and staff renewal reminders | Proposed, not implemented |
+| ADR-020 | Production edge: Cloudflare proxied + Origin CA + Authenticated Origin Pulls | Implemented |
+| ADR-021 | Checkout-level payments and a buyer-paid channel surcharge | Implemented |
+| ADR-022 | Turnstile script as a documented third-party exception | Implemented |
+| ADR-023 | USDT via self-hosted BEpusdt | Implemented |
+| ADR-027 | Record legacy pay URLs; the record adds checks, never removes them | Implemented |
+| ADR-028 | Versioned payment instances and durable private attempts | Implemented |
+| ADR-029 | Small operational surface and manual service periods | Implemented |
+| ADR-030 | Subscription products and month-based after-sales | Implemented |
+| ADR-031 | Order, stock, refund and subscription integrity | Implemented |
+| ADR-032 | Every order reaches customer service; avatars | Implemented |
+| ADR-033 | Payment-channel resilience and diagnostics | Implemented |
+| ADR-034 | Several EPay gateways, priority + sticky failover, test payments | Implemented |
+| ADR-035 | Every held order and payment attempt has an exit (#72) | Implemented |
+| ADR-036 | Email change needs proof of ownership (#72 S6) | Implemented |
 
 ### ADR-015: List storefront, generated covers, Kesiv brand config
 - **Context:** The reference shops (gmailbuy and others) sell by plain, dense lists with tags in the title; buyers of virtual goods compare price and stock, not photos. Most products have no image.
@@ -291,7 +305,7 @@ Rollback: `git revert` → CI → new `:main`; or pin `API_IMAGE`/`WEB_IMAGE` to
 - **Consequences:** No full hosting panel, root terminal or automatic recurring debit is introduced. Geography/UA are untrusted hints; optional static decoys provide detection only. Backup keys have separate recovery controls and restored systems start with outgoing notifications/delivery fenced. Planned runtime privileges, dependencies and schedules need an implementation review. Detailed design: [v6 §§4–10](review-v6-payments-ops.md).
 
 
-### ADR-025: Versioned payment instances and durable private attempts
+### ADR-028: Versioned payment instances and durable private attempts (was a second ADR-025)
 
 Context: one process-wide EPay key and Redis-only USDT display state cannot safely represent rotation, uncertain creation or independent upstream retries.
 
@@ -299,7 +313,7 @@ Decision: keep the existing internal `zpay_alipay` channel for stored-data compa
 
 Consequences: EPay-compatible Alipay is configurable; native RSA/Lantu/official Alipay interfaces need distinct documented adapters and approval. Database/settings-key recovery is required when old versions drain. Local QR reduces redirects but does not hide the storefront/upstream from QR contents, wallets, receipts or payment infrastructure. Valid signatures and same-provider queries cannot independently establish honest settlement.
 
-### ADR-026: Small operational surface and manual service periods
+### ADR-029: Small operational surface and manual service periods (was a second ADR-026)
 
 Context: staff needs resource/log/recovery visibility and monthly top-up reminders without giving the API a root hosting panel or recurring debit authority.
 
@@ -315,7 +329,7 @@ Decision: write a `legacy_pay_urls(tenant_id, local_ref)` row in the transaction
 
 Consequences: the backfill over-marks (USDT and durable-provider payables included), so on a deployment with no env key a payable pending at deploy time cannot be cancelled manually; it returns 503. This is bounded: every order and checkout gets an `expires_at` from the tenant TTL at creation, and the expiry job does not pass through the cancel gate, so these expire on schedule. Only rows that predate expiry altogether could be held longer. The cost is deliberate: under-marking would allow cancels over money. The pay flow re-checks that the payable is still pending after the marker commits, so a cancel that completes inside the pay window never leaves a URL in the buyer's hands. Late legacy notifies for a payable that also has a durable attempt are still rejected into manual review, so a paid legacy URL is caught by cancel or by staff, never silently dropped. Unexpected reconciliation errors now become 503 (logged with traceback) rather than 500, and one failing ref no longer aborts the tick for the remaining tenants.
 
-### ADR: subscription products and month-based after-sales (review-v7)
+### ADR-030: subscription products and month-based after-sales (review-v7)
 
 Context: staff typed UUIDs to track monthly services by hand, and the after-sales default was a fixed 28 days that never matched a monthly billing cycle.
 
@@ -324,7 +338,7 @@ Decision: a product carries an optional `subscription` config and an optional `a
 Consequences: months are an approximation (x720 h) only in the legacy `after_sales_hours` view; the order's `after_sales_until` stays authoritative. The delivery worker only passes `product_months` into `delivery_deadlines`. No recurring charge and no buyer-side renew button; renewals still require a separate paid order.
 
 
-### ADR: order, stock, refund and subscription integrity (review-v8, issue #59)
+### ADR-031: order, stock, refund and subscription integrity (review-v8, issue #59)
 
 Context: the last auto-card could be sold twice (stock was only checked, not reserved, so the second paid order landed in `manual_review` with no way out); "refunded" only recorded a ledger entry, not that the money went back; a refunded subscription renewal left the full service period in place; the reseller balance ignored open disputes; manual stock release returned `qty` even when the stock had been unlimited at order time; and an order's after-sales/subscription terms followed later product edits.
 
@@ -333,7 +347,7 @@ Decision: (A) auto-card stock is reserved by count: creation takes the product r
 Consequences: a refund of a `manual_review` order only reverses the ledger when a payment posting exists (payment anomalies may have none). Reservation counts paid-but-undelivered auto-card orders until the worker consumes the cards, so a stalled worker temporarily shrinks sellable stock rather than overselling. Migration `0015_order_integrity` is additive; the delivery worker only reads `orders.terms` under its existing table-level SELECT, and app_api gains UPDATE on `service_renewals`.
 
 
-### ADR: every order is visible to customer service; avatars (review-v8b, issue #58 §3-§5)
+### ADR-032: every order is visible to customer service; avatars (review-v8b, issue #58 §3-§5)
 
 Context: a buyer who never opened chat had no conversation, so their order had no order card or system messages and the desk only chimed for paid manual orders; chat showed an avatar only for the other side and users had no picture.
 
@@ -342,7 +356,7 @@ Decision: order creation (buy-now, checkout, reseller sign-up) attaches the orde
 Consequences: orders created without prior chat leave a visible open conversation per buyer; the avatar file is deleted on replace, removal and account deletion; cached avatar URLs carry `?v=<key prefix>` so changes show up at once.
 
 
-### ADR: payment-channel resilience and diagnostics (review-v9, issue #63)
+### ADR-033: payment-channel resilience and diagnostics (review-v9, issue #63)
 
 Context: on 2026-11-09 the EPay host stopped accepting TCP connections from production. `prepare()` marked the attempt `unknown`, so every later pay and cancel for the checkout returned 503 until it expired, and the reconciler re-queried every 2 minutes. "Unknown" is right when a request may have reached the gateway, but a connect failure proves it did not.
 
@@ -355,7 +369,7 @@ Consequences: a buyer whose gateway is down can switch method or cancel at once;
 Audit follow-ups (same ADR): a `failed` attempt is a conclusion drawn without gateway evidence, so it is never final for money. (1) A notify never consults attempt status: for a failed or released attempt it is verified and re-queried like any other, so a pending order becomes `paid` and a cancelled/expired one goes to `manual_review` (tested). (2) The reconciler re-queries `failed` attempts with reason `gateway_unreachable` or `resolved_not_paid` younger than 24 h at most every 10 minutes and settles through the same path (`recheck_failed`). (3) Releasing a `preparing` attempt needs it to be older than 2 minutes, and `prepare()` re-reads the attempt under its row lock before recording the gateway result: if staff released it meanwhile the result is dropped, the pay URL is not handed out and the buyer gets `channel_unreachable`. (4) The member-channel backfill lifts FORCE RLS for its one statement and restores it in `finally` (the owner role has no tenant GUC); a test runs it without one. (5) The 3-per-order reminder cap answers 409 `expedite_limit`.
 
 
-### ADR: several EPay gateways, priority + sticky failover, test payments (review-v10)
+### ADR-034: several EPay gateways, priority + sticky failover, test payments (review-v10)
 
 Context: the owner adds more than one EPay-compatible gateway and wants the one that worked last time reused, a visible/settable priority, and a way to verify a channel by paying through it. Until now a tenant had a single active gateway (`payments.epay_provider_id`).
 
@@ -367,3 +381,26 @@ Test payments: `POST /admin/payment-gateways/{id}/test-payment` (0.01-10.00 CNY,
 
 Consequences: a dead or refusing gateway costs the buyer at most its connect timeout before the next one is tried, and the order stays payable. Failover can leave a `failed` attempt per gateway tried (audited). With two enabled gateways a buyer may hold a QR from the first-choice gateway that later changes; the superseded attempt is still re-queried and settled by the existing multi-original recovery. PAYMENT notify and pay-page paths are unchanged apart from the `T` dispatch.
 
+### ADR-035: Every held order and payment attempt has an exit (issue #72 B1-B3, S12, A1, A3, A4)
+
+Context: an end-to-end audit (#72) found dead ends on the money path: a USDT refusal locked the order (no pay, no cancel); a `manual_review` order with no recorded payment, or a held manual-delivery order with a valid payment, had no staff action except a manual refund; payment attempts for abandoned orders were re-queried hourly for ever; a second paid trade on a refunded order raised no alert; a redirect-mode gateway was marked healthy without ever being contacted; a dead delivery job notified nobody; and two API replicas could run the periodic jobs at once.
+
+Decision:
+- **USDT refusal** (`BepusdtRefused`) ends the attempt `failed` (`gateway_refused`); only transport errors and timeouts stay `unknown`. The USDT re-query skips `failed`/`closed` attempts, so "resolve: not paid" unblocks cancel as well as pay.
+- **Release hold** (`POST /admin/orders/{id}/release-hold`, admin, reason required, audited `order.hold_released`): `accept` needs the same verified-payment evidence as requeue (succeeded payment covering the amount, same currency, open ledger); auto-card is requeued, other orders become `paid` (manual stock re-reserved under the product lock, refused when none is left; `sold` counted when the hold came from the gateway). `close` needs NO payment for the payable and a fresh re-query of every attempt (the cancel path's `_settle_if_paid`) saying unpaid; an unresolved query fails closed (503), a paid answer is settled and the close refused (409 `already_paid`); a checkout closes as a whole. The order detail exposes `hold {reason, by, has_payment}`.
+- **Terminal attempt status `closed`** (migration `0019_attempt_closed`, partial index `ix_attempts_open` on the polled set): the reconciler closes an attempt whose payable is expired/cancelled/refunded, older than 72 h, and whose fresh re-query says unpaid/not found. Routing of notifies is by `gateway_ref`, so a late payment on a closed attempt still settles (held as late). The Operations overview shows `open_payment_attempts` and `paid_undelivered_auto_card`.
+- **Second trade on a refunded order** takes the duplicate-payment path (critical audit + staff refund alert); `UNIQUE(order_id)` on payments means no second Payment row.
+- **Redirect gateways** count as OK only after a verified notify/settlement or a passing self-test.
+- **Dead delivery jobs** (8 failures) raise a staff alert from the API reconciler (deduped per job); the delivery process stays without egress.
+- **Periodic jobs** take a Redis lock per pass (compare-and-delete release, 10 min TTL). Reconciliation deliberately stays *before* order expiry: reversing it would expire an order paid just before its deadline whose notify was lost, and hold it as a late payment.
+
+Consequences: no held order or attempt is stranded; every exit is audited and fails closed on missing evidence. Closing attempts reduces gateway query volume. A USDT attempt without a `trade_id` cannot be re-queried and therefore is never auto-closed (staff resolve it). Running the job loop in its own process was not done (one API replica in production); the lock makes a second replica safe.
+
+
+### ADR-036: Email change needs proof of ownership (issue #72 S6)
+
+Context: `POST /me/credentials` stored a new email immediately (marked unverified). Anyone signed in could squat an address on their account, blocking its real owner from registering, and the distinct conflict reply told them whether an address was registered.
+
+Decision: `POST /me/email-change` (current password unless the account is instant) sends a one-time code (`auth/codes.py`, purpose `email_change`, bound to the user id and the new address; registration TTL, attempt and send limits plus per-user/per-IP request limits) and always answers `{"sent": true}`; a taken address gets no mail, and sending runs in the background so timing does not differ. `POST /me/email-change/confirm` verifies the code, re-checks uniqueness, sets the email as verified, clears `is_instant` and audits `me.email_changed`. `/me/credentials` is password-only. Unlike registration (which may accept unverified addresses when `email_verify_on_register` is off), an email change always needs a code: with no mailer configured it answers 403 `feature_disabled`.
+
+Consequences: an unconfirmed address is never stored as a login email. Deployments without SMTP cannot change emails (instant accounts can still set a password). Sessions are not revoked on an email change (only on a password change), matching the existing convention.

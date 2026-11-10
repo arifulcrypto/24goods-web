@@ -17,8 +17,8 @@ Buyers chat with the seller, get a custom quote, pay in the chat and receive the
 | Storefront | Mobile-first buyer app (Vue 3 + Vant), EN / zh-CN, search, categories, product pages, order lookup |
 | Delivery | Automatic card-key delivery from an encrypted vault; manual delivery with text + attachments; after-sales window |
 | Chat & quotes | Xianyu-style buyer ↔ staff chat with images and voice clips, quote cards, in-chat payment, staff CS inbox |
-| Payments | EPay-protocol gateways (ZPay / Alipay); USDT via self-hosted BEpusdt (in progress); per-channel fees and on/off switches |
-| Resellers | White-label storefronts (`?store=slug`, subdomains / custom domains planned), markup, earnings ledger |
+| Payments | EPay-protocol gateways (ZPay / Alipay); USDT via self-hosted BEpusdt (Arbitrum One, X Layer, TRC20); several EPay gateways with priority + sticky failover; per-channel fees and on/off switches |
+| Resellers | White-label storefronts (`?store=slug`, subdomains, verified custom domains), markup, earnings ledger |
 | Staff console | PC admin (Vue 3 + Element Plus): products, product import from URL/page, inventory, orders, repricing, promos, ledger, audit log, settings |
 | Security | Card secrets sealed with asymmetric envelope encryption, PostgreSQL Row-Level Security per tenant, verified payment notifies, Turnstile, rate limits, staff IP allowlist |
 
@@ -32,7 +32,7 @@ Browser ──► Cloudflare ──► Caddy (static SPAs + reverse proxy)
                               └─► Redis      (sessions, rate limits, pub/sub)
 ```
 
-- Backend: Python 3.12, FastAPI, SQLAlchemy 2 (async), Alembic, PostgreSQL 16, Redis 7.
+- Backend: Python 3.12, FastAPI, SQLAlchemy 2 (async), Alembic, PostgreSQL 17, Redis 7.
 - Frontend: pnpm workspace with two static Vite SPAs (`apps/web`, `apps/admin`) and `packages/shared`. No Node at runtime.
 - Design decisions are recorded as ADRs in [docs/architecture.md](docs/architecture.md).
 

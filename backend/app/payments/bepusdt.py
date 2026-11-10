@@ -181,8 +181,13 @@ class BepusdtClient:
             name = type(exc).__name__
             log.warning("bepusdt call failed path=%s error=%s", path, name)
             raise BepusdtError(f"request failed: {name}") from None
-        if data.get("status_code") != 200 or not isinstance(data.get("data"), dict):
+        code = data.get("status_code")
+        if isinstance(code, int) and not isinstance(code, bool) and code != 200:
+            # a well-formed refusal: nothing was created (callers may fail the attempt)
             raise BepusdtRefused("gateway refused the request")
+        if code != 200 or not isinstance(data.get("data"), dict):
+            # malformed success: the outcome is unknown, never treated as a refusal (#72 audit M2)
+            raise BepusdtError("malformed gateway response")
         return data["data"]
 
     async def create_transaction(

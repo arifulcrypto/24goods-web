@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.audit import audit
 from app.core.db import set_tenant, tenant_session
 from app.core.money import fmt
+from app.core.scoped import get_scoped
 from app.delivery.context import DeliveryContext
 from app.models import (
     AfterSales,
@@ -112,8 +113,13 @@ async def handle_order_paid(db: AsyncSession, order_id: uuid.UUID) -> JobResult:
             for cid in card_ids
         )
         now = datetime.now(timezone.utc)
-        product = await db.get(Product, order.product_id) if order.product_id else None
-        tenant = await db.get(Tenant, order.tenant_id)
+        product = (
+            await get_scoped(db, Product, order.product_id, order.tenant_id)
+            if order.product_id
+            else None
+        )
+        # Tenant has no tenant_id: a primary-key lookup is the scoped lookup
+        tenant = await db.get(Tenant, order.tenant_id)  # nosemgrep: tenant-scoped-get
         t_hours, t_months = order_terms(order, product)  # purchase-time snapshot (v8 F)
         order.after_sales_until, order.auto_confirm_at = delivery_deadlines(
             now,
@@ -313,7 +319,7 @@ async def process_one(ctx: DeliveryContext) -> bool:
         except Exception as exc:  # job failure must not kill the loop; retried with backoff
             failed = type(exc).__name__
             log.error("outbox job failed id=%s error=%s", outbox_id, failed)
-        row = await db.get(Outbox, outbox_id, populate_existing=True)
+        row = await get_scoped(db, Outbox, outbox_id, tenant_id, populate_existing=True)
         assert row is not None
         now = datetime.now(timezone.utc)
         if failed is None:

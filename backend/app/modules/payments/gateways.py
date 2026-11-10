@@ -186,6 +186,15 @@ async def _gateway_failed(db: AsyncSession, tid: uuid.UUID, pid: uuid.UUID, reas
     )
 
 
+async def mark_gateway_ok_by_instance(db: AsyncSession, tid: uuid.UUID, instance_id: str) -> None:
+    """Settled payment through a gateway: ``instance_id`` is the client's id ("" for legacy)."""
+    try:
+        pid = uuid.UUID(instance_id)
+    except ValueError:
+        return
+    await mark_gateway_ok(db, tid, pid)
+
+
 async def mark_gateway_ok(db: AsyncSession, tid: uuid.UUID, pid: uuid.UUID) -> None:
     await db.execute(
         update(PaymentGateway)
@@ -451,7 +460,10 @@ async def _try_gateway(
         or str(target.updated_at) != target_version
     )
     current.status = "superseded" if changed else "ready"
-    await mark_gateway_ok(db, tid, pid)
+    if mode != "redirect":
+        # A redirect URL is built locally without contacting the gateway, so it proves nothing:
+        # such a gateway is OK only on a settled payment or a passing self-test (A3).
+        await mark_gateway_ok(db, tid, pid)
     await audit(
         db, tenant_id=tid, action="payment.attempt_ready", target="payment_attempt:" + str(att_id)
     )

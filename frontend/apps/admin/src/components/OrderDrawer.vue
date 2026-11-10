@@ -324,6 +324,34 @@ async function requeue() {
     requeueBusy.value = false
   }
 }
+// ---- #72 B2: release a held order (accept the recorded payment / close when nothing was paid) ----
+const HOLD_REASONS = ['requery_mismatch', 'late_payment', 'second_payment', 'out_of_stock', 'bad_amount', 'bad_status', 'missing_trade_no', 'member_paid_directly']
+const hold = computed(() => (order.value?.status === 'manual_review' ? order.value.hold ?? null : null))
+const holdReasonText = computed(() => {
+  const r = hold.value?.reason ?? ''
+  return t(`orders.hold.reasons.${HOLD_REASONS.includes(r) ? r : 'other'}`)
+})
+const canReleaseHold = computed(() => auth.isAdmin && !!hold.value && order.value?.kind !== 'reseller_signup')
+const holdDlg = reactive({ open: false, outcome: 'accept' as 'accept' | 'close', reason: '', busy: false })
+function openHold(outcome: 'accept' | 'close') {
+  holdDlg.outcome = outcome
+  holdDlg.reason = ''
+  holdDlg.open = true
+}
+async function submitHold() {
+  const o = order.value
+  if (!o || holdDlg.busy || !holdDlg.reason.trim()) return
+  holdDlg.busy = true
+  try {
+    applyUpdate(await apiV4.orders.releaseHold(o.id, { outcome: holdDlg.outcome, reason: holdDlg.reason.trim() }))
+    toastOk(t(holdDlg.outcome === 'accept' ? 'orders.hold.acceptDone' : 'orders.hold.closeDone'))
+    holdDlg.open = false
+  } catch (e) {
+    toastError(e)
+  } finally {
+    holdDlg.busy = false
+  }
+}
 const refundDlg = ref(false)
 const refund = reactive({ reference: '', note: '', busy: false, error: '' })
 function openRefund() {
@@ -380,6 +408,28 @@ defineExpose({ reload: () => props.orderId && load(props.orderId) })
           <el-button v-if="canClose" type="danger" plain @click="closeDlg = true">{{ t('orders.close') }}</el-button>
         </div>
 
+        <el-alert
+          v-if="hold"
+          class="gap"
+          type="warning"
+          show-icon
+          :closable="false"
+          :title="t('orders.hold.title', { reason: holdReasonText })"
+          :description="t(hold.has_payment ? 'orders.hold.withPayment' : 'orders.hold.noPayment')"
+        >
+          <template v-if="canReleaseHold">
+            <el-button v-if="hold.has_payment" size="small" type="warning" plain @click="openHold('accept')">{{ t('orders.hold.accept') }}</el-button>
+            <el-button v-else size="small" type="danger" plain @click="openHold('close')">{{ t('orders.hold.close') }}</el-button>
+          </template>
+        </el-alert>
+        <el-dialog v-model="holdDlg.open" :title="t(holdDlg.outcome === 'accept' ? 'orders.hold.acceptTitle' : 'orders.hold.closeTitle')" width="min(92vw, 480px)" append-to-body>
+          <p class="muted small">{{ t(holdDlg.outcome === 'accept' ? 'orders.hold.withPayment' : 'orders.hold.noPayment') }}</p>
+          <el-input v-model="holdDlg.reason" type="textarea" :rows="3" maxlength="200" show-word-limit :placeholder="t('orders.hold.reason')" />
+          <template #footer>
+            <el-button @click="holdDlg.open = false">{{ t('common.cancel') }}</el-button>
+            <el-button :type="holdDlg.outcome === 'accept' ? 'warning' : 'danger'" :disabled="!holdDlg.reason.trim()" :loading="holdDlg.busy" @click="submitHold">{{ t(holdDlg.outcome === 'accept' ? 'orders.hold.accept' : 'orders.hold.close') }}</el-button>
+          </template>
+        </el-dialog>
         <el-alert
           v-for="u in order.unresolved_attempts ?? []"
           :key="u.id"

@@ -7,6 +7,7 @@ from the Host header, every query tenant-filtered. ADR-024.
 
 from __future__ import annotations
 
+import hashlib
 import re
 import time
 import uuid
@@ -38,9 +39,9 @@ router = APIRouter(include_in_schema=False)
 
 SLUG_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,62}")
 OK_CACHE = "public, max-age=300"  # sitemap + robots
-# HTML embeds hashed asset URLs: browsers must revalidate (a deploy removes the old assets),
-# shared caches (Cloudflare) may keep it 5 minutes.
-HTML_CACHE = "public, max-age=0, s-maxage=300, must-revalidate"
+# HTML embeds hashed asset URLs that a deploy removes: no cache may serve it without
+# revalidating (#36); the strong ETag below makes that revalidation a cheap 304.
+HTML_CACHE = "no-cache"
 MISS_CACHE = "public, max-age=60"
 SITEMAP_TTL_S = 600.0
 SITEMAP_MAX_PRODUCTS = 10_000
@@ -195,6 +196,12 @@ def _respond(
     headers = {"Cache-Control": cache}
     if not ctx.indexable or status != 200:
         headers["X-Robots-Tag"] = "noindex, nofollow"
+    if status == 200 and content_type.startswith("text/html"):
+        etag = '"' + hashlib.sha256(body.encode()).hexdigest()[:32] + '"'
+        headers["ETag"] = etag
+        inm = request.headers.get("if-none-match", "")
+        if etag in (t.strip() for t in inm.split(",")):
+            return Response(status_code=304, headers=headers)
     return Response(body, status_code=status, media_type=content_type, headers=headers)
 
 

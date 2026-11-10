@@ -2,7 +2,7 @@ import v5 from './v5.en'
 /** Admin console EN messages (source). zh-CN.ts must have every key (test/i18n.test.ts). */
 export default {
   challengeSettings: {"title": "Optional access and payment checks", "note": "Self-hosted proof of work protects selected initiation actions; it is not volumetric DDoS protection. Optional Turnstile can be added below. Callback verification and payment status recovery never require a challenge. Choose Low for older mobile devices; verify usability before enabling.", "payment": "Verify before initiating payment", "visit": "Verify storefront visits", "difficulty": "Self-hosted proof-of-work preset", "low": "Low", "standard": "Standard", "high": "High"},
-  ops: {yes:"Yes",no:"No",states:{"ready": "Ready", "unknown": "Unknown", "unavailable": "Unavailable", "success": "Success", "denied": "Denied", "failed": "Failed", "pending": "Pending activation", "active": "Active", "cancelled": "Cancelled", "reported": "Reported", "restricted": "Restricted"},uncertain: 'Uncertain payment attempts',"title": "Operations", "refresh": "Refresh", "scope": "Read-only API/container telemetry. Host-wide visibility and recovery evidence are unknown unless separately collected. Samples refresh every 60 seconds while visible.", "stale": "Telemetry is missing or stale.", "unknown": "Unknown", "memory": "Container memory", "process": "API RSS", "disk": "Upload filesystem free space", "inodes": "Free inodes", "dependencies": "Dependencies", "load": "Host-visible load", "queue": "Queues and payments", "pending": "Pending outbox", "failed": "Failed outbox", "paymentReview": "Payments requiring review", "recovery": "Recovery evidence", "lastBackup": "Last complete backup", "offsite": "Offsite receipt verified", "lastRestore": "Last isolated restore test", "maintenance": "Maintenance review", "maintenanceNote": "Review key ownership, expiry and rotation regularly. Track OS/container/runtime advisories against the actual installed versions. A green health check is not a security audit.", "reviewKeys": "Review payment credentials", "events": "Operational events", "family": "Event family", "operation": "Operation", "login": "Login", "security": "Security", "system": "System", "task": "Task", "payment": "Payment", "date": "Date (UTC)", "action": "Action", "status": "Status", "reason": "Reason", "resource": "Resource", "actor": "Actor", "agent": "Browser / user agent", "hints": "IP and browser headers are untrusted hints. Unknown location is not inferred from the IP. Do not classify ordinary crawlers or shared addresses as confirmed attackers."},
+  ops: {yes:"Yes",no:"No",states:{"ready": "Ready", "unknown": "Unknown", "unavailable": "Unavailable", "success": "Success", "denied": "Denied", "failed": "Failed", "pending": "Pending activation", "active": "Active", "cancelled": "Cancelled", "reported": "Reported", "restricted": "Restricted"},uncertain: 'Uncertain payment attempts',openAttempts: 'Open payment attempts',undelivered: 'Paid, undelivered auto-card orders (over 15 min)',"title": "Operations", "refresh": "Refresh", "scope": "Read-only API/container telemetry. Host-wide visibility and recovery evidence are unknown unless separately collected. Samples refresh every 60 seconds while visible.", "stale": "Telemetry is missing or stale.", "unknown": "Unknown", "memory": "Container memory", "process": "API RSS", "disk": "Upload filesystem free space", "inodes": "Free inodes", "dependencies": "Dependencies", "load": "Host-visible load", "queue": "Queues and payments", "pending": "Pending outbox", "failed": "Failed outbox", "paymentReview": "Payments requiring review", "recovery": "Recovery evidence", "lastBackup": "Last complete backup", "offsite": "Offsite receipt verified", "lastRestore": "Last isolated restore test", "maintenance": "Maintenance review", "maintenanceNote": "Review key ownership, expiry and rotation regularly. Track OS/container/runtime advisories against the actual installed versions. A green health check is not a security audit.", "reviewKeys": "Review payment credentials", "events": "Operational events", "family": "Event family", "operation": "Operation", "login": "Login", "security": "Security", "system": "System", "task": "Task", "payment": "Payment", "date": "Date (UTC)", "action": "Action", "status": "Status", "reason": "Reason", "resource": "Resource", "actor": "Actor", "agent": "Browser / user agent", "hints": "IP and browser headers are untrusted hints. Unknown location is not inferred from the IP. Do not classify ordinary crawlers or shared addresses as confirmed attackers."},
   services: {"title": "Service renewals", "note": "Staff-managed entitlements and reminders. No recurring debit. Use a separate server-priced order for each renewal; extend only after verified payment and explicit staff service confirmation.", "add": "Track a service", "filter": "Due filter", "upcoming": "Due within 7 days", "overdue": "Overdue", "mine": "Assigned to me", "label": "Service label", "owner": "Staff owner ID", "end": "Expiry (UTC)", "timezone": "Business timezone (IANA)", "activate": "Confirm activation now", "manage": "Manage", "buyer": "Buyer ID", "order": "Original verified paid order ID", "policy": "Period policy", "month": "Calendar month", "days": "Fixed days", "email": "Email assigned staff", "telegram": "Telegram staff reminders", "activationNote": "The period starts only when staff confirms actual service activation. Payment or order creation does not start it automatically.", "reason": "Audit reason (no customer secrets)", "endIso": "Adjusted expiry (ISO 8601 with timezone)", "cancel": "Cancel entitlement", "renewalNote": "Create and collect a separate renewal order first. Confirm service completion before linking its verified payment. Duplicate linking never extends twice.", "renewalOrder": "Verified paid renewal order ID", "renew": "Confirm service and extend once"},
   subscription: {
     section: 'Subscription',
@@ -232,6 +232,29 @@ export default {
     usdt_trc20: 'USDT (TRC20)',
   },
   orders: {
+    hold: {
+      title: 'Held for review: {reason}',
+      withPayment: 'A payment is recorded for this order. Accept it to continue (auto-delivery goes back on the queue, manual orders become paid and can be delivered), or refund it.',
+      noPayment: 'No payment is recorded. Closing re-checks every payment attempt with the gateway first and only closes when the gateway says unpaid.',
+      accept: 'Accept payment',
+      close: 'Close without payment',
+      acceptTitle: 'Accept the recorded payment',
+      closeTitle: 'Close the held order',
+      reason: 'Reason (shown in the audit log)',
+      acceptDone: 'Payment accepted',
+      closeDone: 'Order closed',
+      reasons: {
+        requery_mismatch: 'the gateway query disagreed with the payment notice',
+        late_payment: 'paid after the order expired',
+        second_payment: 'a second payment arrived',
+        out_of_stock: 'out of stock at delivery',
+        bad_amount: 'the paid amount did not match',
+        bad_status: 'the gateway reported an unexpected status',
+        missing_trade_no: 'the gateway sent no transaction number',
+        member_paid_directly: 'a checkout item was paid on its own',
+        other: 'see the timeline',
+      },
+    },
     unknownAttempt: {
       title: 'Payment outcome unknown',
       body: 'The payment gateway did not confirm whether a payment was created, so the buyer cannot pay again or cancel. Check the gateway console for this order.',

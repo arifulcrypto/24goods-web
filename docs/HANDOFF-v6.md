@@ -1,3 +1,5 @@
+> **Archived (2026-11-10, #72):** PR #31 merged on 2026-11-08. The "keep PR #31 unmerged" instruction below is obsolete; current state is in `docs/progress.md`.
+
 # V6 handoff — stopped at the owner's requested checkpoint
 
 Read this first, then `docs/progress.md`, `AGENTS.md`, `docs/implementation-v6.md` and `docs/reviews/v6-implementation.md`.

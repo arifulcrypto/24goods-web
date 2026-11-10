@@ -50,6 +50,13 @@ class CancelIn(BaseModel):
     reason: str = Field(min_length=1, max_length=500)
 
 
+class ReleaseHoldIn(BaseModel):
+    """#72 B2: staff exit from ``manual_review``."""
+
+    outcome: Literal["accept", "close"]
+    reason: str = Field(min_length=1, max_length=200)
+
+
 class BuyerCancelIn(BaseModel):
     reason: str | None = Field(None, max_length=200)
 

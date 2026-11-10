@@ -13,10 +13,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core import apitoken
 from app.core.audit import audit
 from app.core.errors import ApiError, Conflict, Forbidden, Validation
+from app.core.ratelimit import enforce
 from app.core.resources import Resources
 from app.core.security import STAFF_ROLES, hash_password, verify_password
 from app.models import AfterSales, Attachment, Conversation, Message, Order, User
-from app.modules.auth.schemas import INSTANT_DOMAIN, normalize_email
+from app.modules.auth import codes
+from app.modules.auth.schemas import INSTANT_DOMAIN
 from app.modules.me.schemas import CredentialsIn, DeleteIn, ProfileIn
 from app.modules.uploads.processing import Processed
 from app.modules.uploads.storage import FileStore
@@ -68,30 +70,18 @@ async def change_credentials(
     current_token: str | None,
     ip: str | None,
 ) -> User:
-    """Set an email and/or a new password. Instant accounts need no current password."""
-    if body.email is None and body.new_password is None:
-        raise Validation("email or new_password is required")
+    """Set a new password. The email changes only through the confirmed-code flow below."""
+    if body.new_password is None:
+        raise Validation("new_password is required")
     if not user.is_instant:
         ok, _ = await verify_password(user.pw_hash, body.current_password or "")
         if not ok:
             raise InvalidPassword("Current password is incorrect")
     fields: list[str] = []
-    if body.email is not None:
-        email = normalize_email(body.email)
-        if email != user.email:
-            taken = await db.scalar(select(User.id).where(User.email == email, User.id != user.id))
-            if taken is not None:
-                raise Conflict("This email can't be used")
-            user.email = email
-            user.email_verified = False
-            fields.append("email")
     if body.new_password is not None:
         user.pw_hash = await hash_password(body.new_password)
         await apitoken.revoke_user_tokens(db, user.tenant_id, user.id)
         fields.append("password")
-    if user.is_instant and not user.email.endswith("@" + INSTANT_DOMAIN):
-        user.is_instant = False  # now a regular account (kept out of the instant purge)
-        fields.append("is_instant")
     await audit(
         db,
         tenant_id=user.tenant_id,
@@ -102,13 +92,58 @@ async def change_credentials(
         ip=ip,
         detail={"fields": fields},
     )
+    await db.commit()
+    await res.sessions.revoke_user_sessions(user.id, keep=current_token)
+    return user
+
+
+async def confirm_email_change(
+    db: AsyncSession,
+    res: Resources,
+    user: User,
+    email: str,
+    code: str,
+    ip: str | None,
+    current_token: str | None = None,
+    lang: str = "en",
+) -> User:
+    """Set the login email once the code mailed to it is proven (single use, 5 attempts).
+    A regular account's other sessions are signed out and the previous address is told."""
+    await enforce(res.redis, "me:email_confirm", str(user.id), 20, 3600)
+    ident = codes.email_change_ident(user.id, email)
+    if not await codes.verify(res.redis, res.settings, user.tenant_id, ident, "email_change", code):
+        raise codes.InvalidCode("The verification code is invalid or expired")
+    taken = await db.scalar(select(User.id).where(User.email == email, User.id != user.id))
+    if taken is not None:
+        raise Conflict("This email can't be used")
+    before = {
+        "email": user.email,
+        "email_verified": user.email_verified,
+        "is_instant": user.is_instant,
+    }
+    user.email = email
+    user.email_verified = True
+    if user.is_instant and not email.endswith("@" + INSTANT_DOMAIN):
+        user.is_instant = False  # now a regular account (kept out of the instant purge)
+    await audit(
+        db,
+        tenant_id=user.tenant_id,
+        action="me.email_changed",
+        actor_id=user.id,
+        actor_role=user.role,
+        target=f"user:{user.id}",
+        before=before,
+        after={"email": user.email, "email_verified": True, "is_instant": user.is_instant},
+        ip=ip,
+    )
     try:
         await db.commit()
     except IntegrityError:
         await db.rollback()
         raise Conflict("This email can't be used") from None
-    if "password" in fields:
+    if not before["is_instant"]:
         await res.sessions.revoke_user_sessions(user.id, keep=current_token)
+    await codes.notify_email_changed(db, res, user.tenant_id, str(before["email"]), lang)
     return user
 
 

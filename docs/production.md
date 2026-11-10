@@ -162,6 +162,8 @@ The ZPay client therefore has a fallback path (`backend/app/payments/egress.py`)
 
 ## Refreshing Cloudflare IP ranges
 
+`scripts/check-cf-ips.sh` reports drift (exit 1); the weekly `Edge drift` workflow runs it and fails when Cloudflare publishes new ranges.
+
 `curl https://www.cloudflare.com/ips-v4; curl https://www.cloudflare.com/ips-v6`, update `trusted_proxies static ...` and the date comment in `deploy/Caddyfile.prod`, validate (`caddy validate` in the web image), sync, `up -d web`.
 
 ## Known issue: runc 1.1 inside c4

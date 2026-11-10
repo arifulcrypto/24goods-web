@@ -473,7 +473,7 @@ async def apply_order_payment(
     order = await db.scalar(select(Order).where(Order.id == order_id).with_for_update())
     assert order is not None
 
-    if order.status in PAID_STATES or order.status == "manual_review":
+    if order.status in PAID_STATES or order.status in ("manual_review", "refunded"):
         existing = await payment_for_order(db, order)
         if existing is None and order.status == "manual_review":
             # reached manual review without a Payment (e.g. re-query mismatch): record it now
@@ -520,11 +520,7 @@ async def apply_order_payment(
     # Late payments (order expired/cancelled, however late) are still RECORDED
     # (Payment + ledger) and held in manual_review: received money must never vanish.
     late = order.status in ("expired", "cancelled")
-    if order.status == "refunded":
-        existing = await payment_for_order(db, order)
-        if existing is not None and existing.gateway_trade_no == trade_no:
-            await db.rollback()  # benign duplicate of the notify that was refunded later
-            return NotifyOutcome(SUCCESS, order)
+    # a refunded order took the duplicate branch above (S12): same audit, same staff alert
     if order.status not in ("pending_payment", "expired", "cancelled"):
         await audit(
             db,
@@ -649,7 +645,7 @@ async def apply_checkout_payment(
     co, orders = await lock_checkout(db, checkout_id)
     first = orders[0] if orders else None
 
-    if co.status in ("paid", "manual_review"):
+    if co.status in ("paid", "manual_review", "refunded"):
         existing = await db.scalar(select(Payment).where(Payment.checkout_id == co.id))
         if existing is None and co.status == "manual_review":
             # reached manual review without a Payment (e.g. re-query mismatch): record it now

@@ -39,7 +39,7 @@ async def test_instant_account_shape_and_session(env):
     assert pw_hash.startswith("$argon2id$") and body["credentials"]["password"] not in pw_hash
 
 
-async def test_instant_ignores_email_and_credentials_email_conflict_is_generic(env):
+async def test_instant_ignores_email_and_credentials_cannot_set_email(env):
     c = env.client()
     r = await instant(c, email="victim@example.com")  # field no longer exists: ignored
     assert r.status_code == 200, r.text
@@ -48,7 +48,8 @@ async def test_instant_ignores_email_and_credentials_email_conflict_is_generic(e
     reg, _ = await env.login("buyer")
     taken = (await reg.get("/api/v1/auth/me")).json()["email"]
     r = await c.post("/api/v1/me/credentials", json={"email": taken})
-    assert r.status_code == 409 and r.json()["error"]["message"] == "This email can't be used"
+    assert r.status_code == 422  # the email is no longer settable here (S6)
+    assert await env.scalar("SELECT count(*) FROM users WHERE email=:e", e=taken) == 1
 
 
 async def test_instant_net_cap_default_and_soft_pow_ramp(env):
@@ -75,7 +76,7 @@ async def test_instant_net_cap_default_and_soft_pow_ramp(env):
     assert r.json()["bits"] == base
 
 
-async def test_login_by_handle_and_by_email(env):
+async def test_login_by_handle_and_by_email(env, monkeypatch):
     c = env.client()
     cred = (await instant(c)).json()["credentials"]
     for ident in (cred["login"], cred["login"].upper()):
@@ -87,8 +88,26 @@ async def test_login_by_handle_and_by_email(env):
         "/api/v1/auth/login", json={"email": cred["login"], "password": "wrong-password"}
     )
     assert r.status_code == 401
-    # email login works after the account sets an email via /me/credentials
-    r = await c.post("/api/v1/me/credentials", json={"email": "me@example.com"})
+    # email login works after the account confirms an email (S6: code mailed to the new address)
+    from app.core import mailer
+    from app.modules.auth import codes
+    from tests.test_v5_core import configure_email
+
+    sent: list[str] = []
+
+    async def fake(cfg, to, subject, body, html=None):
+        sent.append(body)
+
+    monkeypatch.setattr(mailer, "send_mail", fake)
+    admin, _ = await env.login("admin")
+    await configure_email(env, admin)
+    r = await c.post("/api/v1/me/email-change", json={"email": "me@example.com"})
+    assert r.status_code == 200
+    await codes.drain_pending()
+    code = next(w for w in sent[0].split() if w.strip("*.").isdigit()).strip("*.")
+    r = await c.post(
+        "/api/v1/me/email-change/confirm", json={"email": "me@example.com", "code": code}
+    )
     assert r.status_code == 200 and r.json()["is_instant"] is False
     r = await env.client().post(
         "/api/v1/auth/login", json={"email": "me@example.com", "password": cred["password"]}

@@ -3,7 +3,7 @@ import type { AdminMessages } from './index'
 
 const zhCN: AdminMessages = {
   challengeSettings: {"title": "可选访问与支付验证", "note": "自托管工作量证明保护指定发起操作，不抵御大流量 DDoS。可在下方叠加 Turnstile。回调核验及支付状态恢复不会要求验证码。老旧手机建议选择低难度，启用前请验证可用性。", "payment": "发起支付前验证", "visit": "访问主站前验证", "difficulty": "自托管工作量证明难度", "low": "低", "standard": "标准", "high": "高"},
-  ops: {yes:"是",no:"否",states:{"ready": "就绪", "unknown": "未知", "unavailable": "不可用", "success": "成功", "denied": "已拒绝", "failed": "失败", "pending": "待开通", "active": "有效", "cancelled": "已取消", "reported": "已报告", "restricted": "受限"},uncertain: '结果未知的支付尝试',"title": "运维概览", "refresh": "刷新", "scope": "只读 API／容器遥测。未单独采集的主机及恢复证据显示未知。页面可见时每 60 秒刷新。", "stale": "遥测缺失或已过期。", "unknown": "未知", "memory": "容器内存", "process": "API 常驻内存", "disk": "上传文件系统可用空间", "inodes": "可用 inode", "dependencies": "依赖服务", "load": "可见主机负载", "queue": "队列与支付", "pending": "待处理事件", "failed": "失败事件", "paymentReview": "待人工核验支付", "recovery": "恢复证据", "lastBackup": "最近完整备份", "offsite": "异地副本已核验", "lastRestore": "最近隔离恢复演练", "maintenance": "维护检查", "maintenanceNote": "定期核验密钥归属、到期及轮换，按实际安装版本检查系统、容器和运行时公告。健康检查正常不等于安全审计通过。", "reviewKeys": "检查支付凭证", "events": "运维事件", "family": "事件类别", "operation": "操作", "login": "登录", "security": "安全", "system": "系统", "task": "任务", "payment": "支付", "date": "时间（UTC）", "action": "动作", "status": "状态", "reason": "原因", "resource": "资源", "actor": "操作者", "agent": "浏览器／用户代理", "hints": "IP 与浏览器请求头均为不可信线索，未查询的位置显示未知。普通爬虫或共享 IP 不能直接判定为攻击者。"},
+  ops: {yes:"是",no:"否",states:{"ready": "就绪", "unknown": "未知", "unavailable": "不可用", "success": "成功", "denied": "已拒绝", "failed": "失败", "pending": "待开通", "active": "有效", "cancelled": "已取消", "reported": "已报告", "restricted": "受限"},uncertain: '结果未知的支付尝试',openAttempts: '未结束的支付尝试',undelivered: '已付款未发货的自动发卡订单（超过 15 分钟）',"title": "运维概览", "refresh": "刷新", "scope": "只读 API／容器遥测。未单独采集的主机及恢复证据显示未知。页面可见时每 60 秒刷新。", "stale": "遥测缺失或已过期。", "unknown": "未知", "memory": "容器内存", "process": "API 常驻内存", "disk": "上传文件系统可用空间", "inodes": "可用 inode", "dependencies": "依赖服务", "load": "可见主机负载", "queue": "队列与支付", "pending": "待处理事件", "failed": "失败事件", "paymentReview": "待人工核验支付", "recovery": "恢复证据", "lastBackup": "最近完整备份", "offsite": "异地副本已核验", "lastRestore": "最近隔离恢复演练", "maintenance": "维护检查", "maintenanceNote": "定期核验密钥归属、到期及轮换，按实际安装版本检查系统、容器和运行时公告。健康检查正常不等于安全审计通过。", "reviewKeys": "检查支付凭证", "events": "运维事件", "family": "事件类别", "operation": "操作", "login": "登录", "security": "安全", "system": "系统", "task": "任务", "payment": "支付", "date": "时间（UTC）", "action": "动作", "status": "状态", "reason": "原因", "resource": "资源", "actor": "操作者", "agent": "浏览器／用户代理", "hints": "IP 与浏览器请求头均为不可信线索，未查询的位置显示未知。普通爬虫或共享 IP 不能直接判定为攻击者。"},
   services: {"title": "服务续期", "note": "由客服管理服务有效期和提醒，不自动扣款。每次续期使用独立服务端定价订单，核验到账并确认服务完成后才延长。", "add": "登记服务", "filter": "到期筛选", "upcoming": "7 天内到期", "overdue": "已到期", "mine": "分配给我", "label": "服务名称", "owner": "负责人 ID", "end": "到期时间（UTC）", "timezone": "业务时区（IANA）", "activate": "确认现在开通", "manage": "管理", "buyer": "客户 ID", "order": "原始已核验支付订单 ID", "policy": "周期规则", "month": "自然月", "days": "固定天数", "email": "邮件提醒负责人", "telegram": "Telegram 客服提醒", "activationNote": "仅在客服确认实际开通后开始计算周期，付款或创建订单不会自动开始。", "reason": "审计原因（勿填写客户秘密）", "endIso": "调整到期时间（带时区的 ISO 8601）", "cancel": "取消服务", "renewalNote": "先创建并收取独立续期订单，确认服务完成后关联已核验到账的订单。重复关联不会重复延长。", "renewalOrder": "已核验付款的续期订单 ID", "renew": "确认服务完成并续期一次"},
   subscription: {
     section: '订阅',
@@ -233,6 +233,29 @@ const zhCN: AdminMessages = {
     usdt_trc20: 'USDT（TRC20）',
   },
   orders: {
+    hold: {
+      title: '人工复核中：{reason}',
+      withPayment: '该订单已记录一笔付款。可接受付款继续处理（自动发货订单重新排队，人工订单变为已支付后可发货），或办理退款。',
+      noPayment: '未记录任何付款。关闭前会先向网关重新查询每一次支付尝试，只有网关确认未支付时才会关闭。',
+      accept: '接受付款',
+      close: '无付款关闭',
+      acceptTitle: '接受已记录的付款',
+      closeTitle: '关闭复核中的订单',
+      reason: '原因（记入审计日志）',
+      acceptDone: '已接受付款',
+      closeDone: '订单已关闭',
+      reasons: {
+        requery_mismatch: '网关查询结果与支付通知不一致',
+        late_payment: '订单过期后才付款',
+        second_payment: '收到第二笔付款',
+        out_of_stock: '发货时库存不足',
+        bad_amount: '支付金额不符',
+        bad_status: '网关返回了异常状态',
+        missing_trade_no: '网关未返回交易号',
+        member_paid_directly: '合并订单中的单项被单独支付',
+        other: '详见时间线',
+      },
+    },
     unknownAttempt: {
       title: '支付结果未知',
       body: '支付网关未确认是否已创建支付，买家暂时无法再次支付或取消。请到网关后台核对该订单。',
