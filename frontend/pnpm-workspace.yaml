@@ -4,8 +4,8 @@ packages:
 
 # vue-i18n >= 11.4.3 declares engines.node >= 22 (dev-time metadata of a browser
 # runtime library). We need >= 11.4.14 for GHSA-8rc2-428q-7ww3 (XSS via escapeParameter),
-# so engines of dependencies are not enforced; the toolchain itself (vite 8, vitest 4)
-# supports Node ^20.19 and 22 LTS.
+# so engines of dependencies are not enforced; the toolchain itself (vite 8, vitest 5)
+# supports Node ^22.12, 24 and 26 LTS (CI and the web image use 26).
 engineStrict: false
 
 # --- supply-chain hardening (Semgrep pnpm-* rules) --------------------------------

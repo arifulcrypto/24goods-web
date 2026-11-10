@@ -50,7 +50,7 @@ need() { command -v "$1" >/dev/null || die "missing '$1' — $2"; }
 # ------------------------------------------------------------------ setup
 cmd_setup() {
   need docker "install Docker"
-  need pnpm "install Node 20+ and pnpm (corepack enable)"
+  need pnpm "install Node 26 LTS (>= 22.12) and pnpm (npm install -g pnpm@<frontend/package.json packageManager>)"
   need openssl "install openssl"
   if [[ ! -x "$PY" ]]; then
     need uv "pip install uv  (or see https://docs.astral.sh/uv/)"

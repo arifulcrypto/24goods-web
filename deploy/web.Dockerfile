@@ -2,16 +2,22 @@
 # Builds both SPAs and bakes them + the Caddyfile into a Caddy image.
 # Build context: repository root.
 
-FROM node:22-alpine@sha256:0e1754758c2df4cfa3e68d59e2e1b7374bb7fd9ea6328eaaacf15cc934af8202 AS build
-WORKDIR /src
-RUN corepack enable
+# Node 26 = Active LTS (since 2026-10-28, EOL 2029-04-30). Node >= 25 images ship without
+# Corepack, so pnpm is installed with npm at the exact version pinned in package.json
+# `packageManager` (single source of truth; Dependabot bumps it there).
+FROM node:26-alpine@sha256:8996bb5821d62a8fd9bb27c1cb07462f3fdce6e47d640c6a881ead0b064ce216 AS build
 WORKDIR /src/frontend
+COPY frontend/package.json ./
+RUN pm="$(node -p "require('./package.json').packageManager.split('+')[0]")" \
+ && case "$pm" in pnpm@[0-9]*) ;; *) echo "unexpected packageManager: $pm" >&2; exit 1 ;; esac \
+ && npm install --global --no-audit --no-fund --no-update-notifier "$pm" \
+ && test "pnpm@$(pnpm --version)" = "$pm"
 # Manifests first: the dependency layer is reused (CI layer cache) unless the lockfile changes.
-COPY frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml ./
+COPY frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml ./
 COPY frontend/apps/web/package.json ./apps/web/
 COPY frontend/apps/admin/package.json ./apps/admin/
 COPY frontend/packages/shared/package.json ./packages/shared/
-RUN corepack install && pnpm install --frozen-lockfile
+RUN pnpm install --frozen-lockfile
 COPY frontend/ ./
 RUN pnpm build
 
