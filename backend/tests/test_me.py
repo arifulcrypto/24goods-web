@@ -47,19 +47,19 @@ async def test_change_password_revokes_other_sessions(env):
     assert r.status_code == 422  # nothing to change
 
 
-async def test_credentials_email_conflict_and_short_password(env):
+async def test_credentials_no_longer_sets_email_and_short_password(env):
     c, _ = await env.login("buyer")
     await env.user("buyer", email="taken@example.com")
     r = await c.post(
         "/api/v1/me/credentials", json={"current_password": PASSWORD, "email": "taken@example.com"}
     )
-    assert r.status_code == 409
+    assert r.status_code == 422  # S6: the email changes only via /me/email-change(+confirm)
     r = await c.post(
         "/api/v1/me/credentials", json={"current_password": PASSWORD, "new_password": "short"}
     )
     assert r.status_code == 422
     r = await c.post(
-        "/api/v1/me/credentials", json={"current_password": PASSWORD, "email": "n@x.invalid"}
+        "/api/v1/me/email-change", json={"current_password": PASSWORD, "email": "n@x.invalid"}
     )
     assert r.status_code == 422
 
