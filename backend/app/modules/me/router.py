@@ -9,15 +9,23 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import audit
-from app.core.deps import client_ip, current_user, get_db, get_res
+from app.core.deps import client_ip, current_user, get_db, get_lang, get_res
 from app.core.errors import NotFound, Validation
 from app.core.ratelimit import enforce
 from app.core.resources import Resources
+from app.core.security import verify_password
 from app.models import User
+from app.modules.auth import codes
 from app.modules.common.views import user_view
 from app.modules.content.site import tenant_settings
 from app.modules.me import service
-from app.modules.me.schemas import CredentialsIn, DeleteIn, ProfileIn
+from app.modules.me.schemas import (
+    CredentialsIn,
+    DeleteIn,
+    EmailChangeConfirmIn,
+    EmailChangeIn,
+    ProfileIn,
+)
 from app.modules.uploads.avatar import avatar_from_upload, avatar_mime
 from app.modules.uploads.router import get_store
 from app.modules.uploads.storage import FileStore
@@ -89,6 +97,42 @@ async def credentials(
     await enforce(res.redis, "me:credentials", str(user.id), 10, 3600)
     token = res.sessions.token_from(request.cookies)
     out = await service.change_credentials(db, res, user, body, token, client_ip(request))
+    return user_view(out)
+
+
+@router.post("/email-change")
+async def email_change(
+    body: EmailChangeIn,
+    request: Request,
+    user: User = Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+    res: Resources = Depends(get_res),
+    lang: str = Depends(get_lang),
+) -> dict:
+    """Mail a code to the NEW address. Same ``{"sent": true}`` whether or not it is taken
+    (a taken address simply receives nothing)."""
+    await enforce(res.redis, "me:email_change", str(user.id), 10, 3600)
+    await enforce(res.redis, "me:email_change:ip", client_ip(request) or "-", 20, 3600)
+    if not user.is_instant:
+        ok, _ = await verify_password(user.pw_hash, body.current_password or "")
+        if not ok:
+            raise service.InvalidPassword("Current password is incorrect")
+    ts = await tenant_settings(db, user.tenant_id)
+    await codes.request_email_change_code(db, res, user, ts, body.email, lang)
+    return {"sent": True}
+
+
+@router.post("/email-change/confirm")
+async def email_change_confirm(
+    body: EmailChangeConfirmIn,
+    request: Request,
+    user: User = Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+    res: Resources = Depends(get_res),
+) -> dict:
+    out = await service.confirm_email_change(
+        db, res, user, body.email, body.code, client_ip(request)
+    )
     return user_view(out)
 
 

@@ -22,14 +22,28 @@ class ProfileIn(BaseModel):
 
 class CredentialsIn(BaseModel):
     current_password: str | None = Field(None, max_length=128)
-    email: str | None = Field(None, max_length=254)
     new_password: str | None = Field(None, min_length=10, max_length=128)
+
+
+class EmailChangeIn(BaseModel):
+    email: str = Field(max_length=254)
+    current_password: str | None = Field(None, max_length=128)
 
     @field_validator("email")
     @classmethod
-    def _email(cls, v: str | None) -> str | None:
-        if v is None or not v.strip():
-            return None
+    def _email(cls, v: str) -> str:
+        from app.modules.auth.schemas import normalize_email
+
+        return normalize_email(v)
+
+
+class EmailChangeConfirmIn(BaseModel):
+    email: str = Field(max_length=254)
+    code: str = Field(max_length=12)
+
+    @field_validator("email")
+    @classmethod
+    def _email(cls, v: str) -> str:
         from app.modules.auth.schemas import normalize_email
 
         return normalize_email(v)

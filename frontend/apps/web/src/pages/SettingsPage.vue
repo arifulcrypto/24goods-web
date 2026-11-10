@@ -22,21 +22,14 @@ function setQuality(v: string) {
   setMediaPreference(v as 'auto' | 'low' | 'high', compressUploads.value)
 }
 
-// ---- change credentials / secure account ----
+// ---- change password ----
 const credShow = ref(false)
-const credEmail = ref('')
 const credCurrent = ref('')
 const credNew = ref('')
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-const credValid = computed(() => {
-  const emailOk = !credEmail.value.trim() || EMAIL_RE.test(credEmail.value.trim())
-  const pwOk = !credNew.value || credNew.value.length >= 10
-  const changed = !!credEmail.value.trim() || !!credNew.value
-  const currentOk = auth.user?.is_instant || !credNew.value || !!credCurrent.value
-  return emailOk && pwOk && changed && !!currentOk
-})
+const credValid = computed(
+  () => credNew.value.length >= 10 && (auth.user?.is_instant || !!credCurrent.value),
+)
 function openCred() {
-  credEmail.value = auth.user?.email ?? ''
   credCurrent.value = ''
   credNew.value = ''
   credShow.value = true
@@ -45,9 +38,7 @@ async function saveCred() {
   if (!credValid.value || saving.value) return
   saving.value = true
   try {
-    const body: { current_password?: string; email?: string; new_password?: string } = {}
-    if (credEmail.value.trim() && credEmail.value.trim() !== auth.user?.email) body.email = credEmail.value.trim()
-    if (credNew.value) body.new_password = credNew.value
+    const body: { current_password?: string; new_password: string } = { new_password: credNew.value }
     if (credCurrent.value) body.current_password = credCurrent.value
     auth.setUser(await api.me.credentials(body))
     credShow.value = false
@@ -58,6 +49,56 @@ async function saveCred() {
   } finally {
     credCurrent.value = ''
     credNew.value = ''
+    saving.value = false
+  }
+}
+
+// ---- change email: send a code to the new address, then enter it (S6) ----
+const mailShow = ref(false)
+const mailStep = ref<'email' | 'code'>('email')
+const mailAddr = ref('')
+const mailCurrent = ref('')
+const mailCode = ref('')
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+const mailAddrValid = computed(
+  () => EMAIL_RE.test(mailAddr.value.trim()) && (auth.user?.is_instant || !!mailCurrent.value),
+)
+function openMail() {
+  mailStep.value = 'email'
+  mailAddr.value = ''
+  mailCurrent.value = ''
+  mailCode.value = ''
+  mailShow.value = true
+}
+async function sendMailCode() {
+  if (!mailAddrValid.value || saving.value) return
+  saving.value = true
+  try {
+    await api.me.emailChange({
+      email: mailAddr.value.trim(),
+      ...(mailCurrent.value ? { current_password: mailCurrent.value } : {}),
+    })
+    mailStep.value = 'code'
+    showToast(t('me.emailCodeSent', { email: mailAddr.value.trim() }))
+  } catch (e) {
+    if (isApiError(e) && (e.code === 'invalid_password' || e.code === 'unauthorized')) showToast(t('me.wrongPassword'))
+    else toastError(e)
+  } finally {
+    mailCurrent.value = ''
+    saving.value = false
+  }
+}
+async function confirmMail() {
+  if (mailCode.value.length !== 6 || saving.value) return
+  saving.value = true
+  try {
+    auth.setUser(await api.me.confirmEmailChange({ email: mailAddr.value.trim(), code: mailCode.value }))
+    mailShow.value = false
+    showSuccessToast(t('common.saved'))
+  } catch (e) {
+    if (isApiError(e) && e.code === 'invalid_code') showToast(t('errors.email_code_invalid'))
+    else toastError(e)
+  } finally {
     saving.value = false
   }
 }
@@ -135,18 +176,33 @@ onMounted(() => {
     <section v-if="auth.user" class="section card">
       <h2 class="group-title">{{ t('me.accountSecurity') }}</h2>
       <van-cell-group :border="false">
-        <van-cell :title="auth.user.is_instant ? t('me.secureTitle') : t('me.changeCredentials')" icon="lock" is-link @click="openCred" />
+        <van-cell :title="auth.user.is_instant ? t('me.secureTitle') : t('me.changePassword')" icon="lock" is-link @click="openCred" />
+        <van-cell :title="t('me.changeEmail')" :label="auth.user.email || undefined" icon="envelop-o" is-link @click="openMail" />
         <van-cell :title="t('me.deleteAccount')" icon="delete-o" is-link class="danger" @click="openDelete" />
       </van-cell-group>
     </section>
 
     <van-popup v-model:show="credShow" position="bottom" round closeable safe-area-inset-bottom teleport="body" class="buy-sheet">
       <form class="sheet" @submit.prevent="saveCred">
-        <h2>{{ auth.user?.is_instant ? t('me.secureTitle') : t('me.changeCredentials') }}</h2>
-        <van-field v-model="credEmail" type="email" inputmode="email" autocomplete="email" :label="t('auth.email')" :placeholder="t('auth.emailPlaceholder')" />
+        <h2>{{ auth.user?.is_instant ? t('me.secureTitle') : t('me.changePassword') }}</h2>
         <van-field v-if="!auth.user?.is_instant" v-model="credCurrent" type="password" autocomplete="current-password" :label="t('me.currentPassword')" />
         <van-field v-model="credNew" type="password" autocomplete="new-password" :label="t('me.newPassword')" :placeholder="t('auth.passwordHint')" />
         <van-button block round type="primary" size="large" native-type="submit" :loading="saving" :disabled="!credValid">{{ t('common.save') }}</van-button>
+      </form>
+    </van-popup>
+
+    <van-popup v-model:show="mailShow" position="bottom" round closeable safe-area-inset-bottom teleport="body" class="buy-sheet">
+      <form v-if="mailStep === 'email'" class="sheet" @submit.prevent="sendMailCode">
+        <h2>{{ t('me.changeEmail') }}</h2>
+        <van-field v-model="mailAddr" type="email" inputmode="email" autocomplete="email" :label="t('me.newEmail')" :placeholder="t('auth.emailPlaceholder')" />
+        <van-field v-if="!auth.user?.is_instant" v-model="mailCurrent" type="password" autocomplete="current-password" :label="t('me.currentPassword')" />
+        <van-button block round type="primary" size="large" native-type="submit" :loading="saving" :disabled="!mailAddrValid">{{ t('me.sendCode') }}</van-button>
+      </form>
+      <form v-else class="sheet" @submit.prevent="confirmMail">
+        <h2>{{ t('me.changeEmail') }}</h2>
+        <p class="del-text">{{ t('me.emailCodeSent', { email: mailAddr }) }}</p>
+        <van-field v-model="mailCode" inputmode="numeric" maxlength="6" autocomplete="one-time-code" :label="t('auth.code')" />
+        <van-button block round type="primary" size="large" native-type="submit" :loading="saving" :disabled="mailCode.length !== 6">{{ t('me.confirmEmail') }}</van-button>
       </form>
     </van-popup>
 

@@ -34,7 +34,7 @@ from app.models import User
 
 log = logging.getLogger("app.auth.codes")
 
-Purpose = Literal["register", "reset"]
+Purpose = Literal["register", "reset", "email_change"]
 CODE_TTL_S = 600
 MAX_ATTEMPTS = 5
 _pending: set[asyncio.Task[None]] = set()
@@ -174,6 +174,49 @@ async def request_code(
         },
     )
     _spawn(_send_bg(cfg, email, subject, body, html))
+
+
+def email_change_ident(user_id: uuid.UUID, email: str) -> str:
+    """Code scope for an email change: bound to the requesting user AND the new address, so a
+    code can't be replayed by another account or for another address."""
+    return f"{user_id}|{email}"
+
+
+async def request_email_change_code(
+    db: AsyncSession,
+    res: Resources,
+    user: User,
+    ts: dict,
+    new_email: str,
+    lang: str,
+) -> None:
+    """Mail a code to ``new_email``. Returns silently (nothing sent) when the address is already
+    registered or rate-limited, so the caller's response is identical in every case."""
+    cfg = await mailer.load_config(db, res.settings, user.tenant_id, ts, require_enabled=True)
+    if cfg is None:
+        raise FeatureDisabled("Email is not enabled")
+    if await db.scalar(select(User.id).where(User.email == new_email)) is not None:
+        return
+    code = await issue(
+        res.redis,
+        res.settings,
+        user.tenant_id,
+        email_change_ident(user.id, new_email),
+        "email_change",
+    )
+    if code is None:
+        return
+    subject, body, html = render_template(
+        ts,
+        "verify_code",
+        lang,
+        {
+            "site_name": site_name(ts, lang, res.settings.brand_name),
+            "code": code,
+            "minutes": str(CODE_TTL_S // 60),
+        },
+    )
+    _spawn(_send_bg(cfg, new_email, subject, body, html))
 
 
 async def reset_password(

@@ -128,8 +128,14 @@ export function createBuyerApi(c: ApiClient) {
     },
     me: {
       update: (b: { display_name?: string; locale?: Locale }) => c.patch<User>('/me', b),
-      credentials: (b: { current_password?: string; email?: string; new_password?: string }) =>
+      /** Password change only; the email changes through emailChange + confirmEmailChange (S6). */
+      credentials: (b: { current_password?: string; new_password: string }) =>
         c.post<User>('/me/credentials', b),
+      /** Mails a code to the NEW address; always `{sent: true}` (taken addresses get nothing). */
+      emailChange: (b: { email: string; current_password?: string }) =>
+        c.post<{ sent: boolean }>('/me/email-change', b),
+      confirmEmailChange: (b: { email: string; code: string }) =>
+        c.post<User>('/me/email-change/confirm', b),
       remove: (b: { password?: string; confirm: 'DELETE' }) => c.post<void>('/me/delete', b),
       /** v8b: server re-encodes to a 256 px square; input <= 2 MB. */
       setAvatar: (file: Blob) => {
