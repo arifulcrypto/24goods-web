@@ -257,6 +257,15 @@ def _paid_amount(params: dict[str, str]) -> Decimal | None:
         return None
 
 
+async def _gateway_paid(db: AsyncSession, res: Resources) -> None:
+    """A signed notify confirmed by the gateway's own query: that gateway demonstrably works."""
+    from app.modules.payments.gateways import mark_gateway_ok_by_instance
+
+    tid = db.info["tenant_id"]
+    await mark_gateway_ok_by_instance(db, tid, res.zpay.config.instance_id or "")
+    await db.commit()
+
+
 async def _settle(
     db: AsyncSession,
     res: Resources,
@@ -273,6 +282,7 @@ async def _settle(
     if bad is not None:
         return await to_manual_review(db, order_id, "requery_mismatch", ip, bad)
     recorded = epay.gateway_trade_key(res.zpay.config.instance_id, trade_no)
+    await _gateway_paid(db, res)
     return await apply_order_payment(db, res.settings, order_id, recorded, paid_amount, params, ip)
 
 
@@ -291,6 +301,7 @@ async def _settle_checkout(
     bad = await requery_mismatch(res, params, trade_no, paid_amount)
     if bad is not None:
         return await checkout_to_manual_review(db, checkout_id, "requery_mismatch", ip, bad)
+    await _gateway_paid(db, res)
     return await apply_checkout_payment(
         db,
         res.settings,
