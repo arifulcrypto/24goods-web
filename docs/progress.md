@@ -4,6 +4,21 @@ Update this file in every PR. Phases are defined in [review-v2.md §8](review-v2
 
 ## Current state — hand-off (read this first in a new session)
 
+**Production deployed 2026-11-10 16:24 UTC: `222b03b`** (v11 #82 + #83 + #84, migrations 0020–0022) from
+`5f709d3`. Pre-deploy backups (v1 script, sha256-verified off-host copies, `pg_restore --list` OK);
+rollback images `goods24-{api,web}:rollback-5f709d3`. Smoke all pass; order / payment / card / ledger
+counts identical to the pre-deploy baseline (ledger sum 0); FORCE RLS intact on the new and touched
+tables; the existing service record got ref `SV-3EUADH`.
+**Incident (same day, ~2–3 min downtime):** the first attempt (`cd90d33`) failed at 0022 — FORCE RLS
+also binds the migrate role, so the `ref` backfill saw no rows and `SET NOT NULL` failed; compose had
+already removed the running api/web, so the site returned 521 until api/delivery/web were rolled back
+to `5f709d3` (DB at 0021, additive; data unchanged). Fixed in #84: data steps run with FORCE lifted
+inside the transaction, a regression test migrates a DB with pre-existing rows, and `prod.sh deploy`
+now runs the migration as a one-off **before** recreating containers. Rule for future migrations:
+any data backfill on a FORCE-RLS table must lift FORCE (see 0022 `_owner_sees_all_rows`).
+Follow-ups (owner): Cloudflare rewrites `Cache-Control` to a 4 h browser TTL (`/sw.js` is `no-cache` at
+the origin; harmless for service-worker updates); old rollback images on c4 can be pruned (disk 87 %).
+
 **v11 features (2026-11-10, branch `feat/v11-features`, PR #82, spec `docs/review-v11-features.md`,
 ADR-037, migrations `0020_product_variants`, `0021_chat_v11`, `0022_v11_content_ops`):** product
 variants (own price / floor / stock / terms, disjoint stock pools, variant quotes, move pre-variant
