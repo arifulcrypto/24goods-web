@@ -9,7 +9,7 @@
 #   python -m app.devtools.keygen --out-dir /keys
 
 # ---- build stage: produce wheels only ----
-FROM python:3.12-slim AS build
+FROM python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b AS build
 ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
 WORKDIR /src
 COPY pyproject.toml ./
@@ -17,7 +17,7 @@ COPY app ./app
 RUN pip wheel --wheel-dir /wheels .
 
 # ---- runtime stage: no build tooling, no pip, non-root ----
-FROM python:3.12-slim AS runtime
+FROM python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
