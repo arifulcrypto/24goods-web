@@ -126,6 +126,9 @@ export default {
     goOrders: 'View orders',
   },
   variants: {
+    assign: 'Move unassigned cards here',
+    assignConfirm: 'Move every available card that has no variant yet (imported before variants existed) into “{name}”?',
+    assigned: '{n} card(s) moved',
     title: 'Variants',
     add: 'Add variant',
     edit: 'Edit variant',

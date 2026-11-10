@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.audit import audit
 from app.core.config import Settings
 from app.core.money import MAX_MINOR, percent_of
-from app.models import Checkout, Message, Order, Outbox, Payment, Product
+from app.models import Checkout, Message, Order, Outbox, Payment, Product, ProductVariant
 from app.modules.chat.messages import (
     ensure_open_conversation,
     insert_message,
@@ -72,12 +72,28 @@ def exact_minor(amount: Decimal) -> int | None:
 
 
 async def apply_sold(db: AsyncSession, sold: dict[uuid.UUID, int]) -> None:
-    """``sold += qty``, aggregated per product and applied in product_id order (stable lock
-    order, one UPDATE per product)."""
+    """``sold += qty``, aggregated per product and applied in id order (stable lock order, one
+    UPDATE per row). v11: the dict may also carry variant ids (``sold_key``); ids are UUIDs, so a
+    product UPDATE never matches a variant id and vice versa. Products first, then variants —
+    the same order every other path locks them in."""
     for pid in sorted(sold):
         await db.execute(
             update(Product).where(Product.id == pid).values(sold=Product.sold + sold[pid])
         )
+    for vid in sorted(sold):
+        await db.execute(
+            update(ProductVariant)
+            .where(ProductVariant.id == vid)
+            .values(sold=ProductVariant.sold + sold[vid])
+        )
+
+
+def sold_keys(order: Order) -> list[uuid.UUID]:
+    """Rows whose ``sold`` an order counts towards: its product and, if any, its variant."""
+    keys = [order.product_id] if order.product_id else []
+    if order.variant_id:
+        keys.append(order.variant_id)
+    return keys
 
 
 def payment_lines(order: Order, channel: str = CHANNEL) -> list[Line]:
@@ -319,7 +335,8 @@ async def settle_member(
             )
         )
         if order.product_id:  # applied by the caller via apply_sold, after the member loop
-            sold[order.product_id] = sold.get(order.product_id, 0) + order.qty
+            for key in sold_keys(order):
+                sold[key] = sold.get(key, 0) + order.qty
         if order.buyer_input and order.conversation_id is None:
             order.conversation_id = await ensure_open_conversation(
                 db, tenant_id=order.tenant_id, buyer_id=order.buyer_id

@@ -533,3 +533,57 @@ async def void_expired(db: AsyncSession, tenant_id: uuid.UUID) -> int:
         )
     await db.commit()
     return len(voided)
+
+
+async def assign_cards_to_variant(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    product: Product,
+    variant_id: uuid.UUID,
+    count: int | None,
+    actor_id: uuid.UUID,
+    actor_role: str,
+    ip: str | None,
+) -> int:
+    """v11: move AVAILABLE product-level cards (``variant_id IS NULL``, e.g. imported before the
+    product had variants) into one of its active variants. Oldest first; ``count`` None = all.
+    The sealed secret never moves or opens: only ``variant_id`` changes, which the database
+    guard (``card_stock_guard``) allows for exactly this transition."""
+    if product.delivery_mode != "auto_card":
+        raise Validation("Only instant-delivery products hold cards")
+    variant = await variants_svc.resolve(db, tenant_id, product, variant_id)
+    if variant is None or variant.status != "active":
+        raise Validation("Choose an active variant of this product")
+    pick = (
+        select(CardStock.id)
+        .where(
+            CardStock.tenant_id == tenant_id,
+            CardStock.product_id == product.id,
+            CardStock.variant_id.is_(None),
+            CardStock.status == "available",
+        )
+        .order_by(CardStock.created_at, CardStock.id)
+        .with_for_update(skip_locked=True)
+    )
+    if count is not None:
+        pick = pick.limit(count)
+    ids = list(await db.scalars(pick))
+    if ids:
+        await db.execute(
+            update(CardStock)
+            .where(CardStock.tenant_id == tenant_id, CardStock.id.in_(ids))
+            .values(variant_id=variant.id)
+        )
+    await audit(
+        db,
+        tenant_id=tenant_id,
+        action="cards.assigned_to_variant",
+        actor_id=actor_id,
+        actor_role=actor_role,
+        target=f"product:{product.id}",
+        ip=ip,
+        detail={"variant_id": str(variant.id), "moved": len(ids), "requested": count},
+    )
+    await db.commit()
+    return len(ids)

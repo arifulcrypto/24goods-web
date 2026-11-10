@@ -132,6 +132,16 @@ async function archive(v: AdminVariant) {
     toastError(e)
   }
 }
+async function assignCards(v: AdminVariant) {
+  if (!(await confirmBox(t('variants.assignConfirm', { name: nameOf(v) })))) return
+  try {
+    const r = await api.products.variants.assignCards(props.productId, v.id)
+    toastOk(t('variants.assigned', { n: r.moved }))
+    await load()
+  } catch (e) {
+    toastError(e)
+  }
+}
 async function restore(v: AdminVariant) {
   try {
     await api.products.variants.update(props.productId, v.id, { status: 'active' })
@@ -186,13 +196,14 @@ const termsText = (v: AdminVariant): string => {
       <el-table-column :label="t('variants.terms')" min-width="130" show-overflow-tooltip>
         <template #default="{ row }">{{ termsText(row as AdminVariant) }}</template>
       </el-table-column>
-      <el-table-column :label="t('common.actions')" width="230">
+      <el-table-column :label="t('common.actions')" width="300">
         <template #default="{ row, $index }">
           <el-button link :disabled="$index === 0" :aria-label="t('variants.up')" @click="move($index, -1)">↑</el-button>
           <el-button link :disabled="$index === items.length - 1" :aria-label="t('variants.down')" @click="move($index, 1)">↓</el-button>
           <el-button link type="primary" @click="openEdit(row as AdminVariant)">{{ t('common.edit') }}</el-button>
           <el-button v-if="(row as AdminVariant).status === 'archived'" link type="primary" @click="restore(row as AdminVariant)">{{ t('variants.restore') }}</el-button>
           <el-button v-else link type="danger" @click="archive(row as AdminVariant)">{{ t('variants.remove') }}</el-button>
+          <el-button v-if="!isManual && (row as AdminVariant).status === 'active'" link @click="assignCards(row as AdminVariant)">{{ t('variants.assign') }}</el-button>
         </template>
       </el-table-column>
     </el-table>

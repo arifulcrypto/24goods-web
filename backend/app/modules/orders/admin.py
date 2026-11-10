@@ -48,7 +48,7 @@ from app.modules.orders.service import (
     reserved_auto_stock,
 )
 from app.modules.payments.channels import split_amount
-from app.modules.payments.settle import apply_sold, lock_checkout, payment_for_order
+from app.modules.payments.settle import apply_sold, lock_checkout, payment_for_order, sold_keys
 from app.modules.promo import service as promo_svc
 
 
@@ -440,7 +440,7 @@ async def _accept_held(
     if order.kind == "goods" and order.delivery_mode == "auto_card":
         if count_sale:
             assert order.product_id is not None
-            await apply_sold(db, {order.product_id: order.qty})
+            await apply_sold(db, {k: order.qty for k in sold_keys(order)})
         return await requeue_delivery(db, order_id, agent, ip, reason=reason)
     held_reason, _held_by = await hold_reason(db, order)
     before = snapshot(order)
@@ -461,7 +461,7 @@ async def _accept_held(
             )
     if count_sale:
         assert order.product_id is not None
-        await apply_sold(db, {order.product_id: order.qty})
+        await apply_sold(db, {k: order.qty for k in sold_keys(order)})
     order.status = "paid"
     order.version += 1
     await add_event(

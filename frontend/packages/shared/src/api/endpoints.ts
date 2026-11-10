@@ -320,6 +320,9 @@ export function createAdminApi(c: ApiClient) {
           c.post<AdminVariant>(`/admin/products/${seg(id)}/variants`, b),
         update: (id: string, vid: string, b: Partial<AdminVariantInput>) =>
           c.patch<AdminVariant>(`/admin/products/${seg(id)}/variants/${seg(vid)}`, b),
+        /** v11: move available product-level cards (imported before variants) into a variant. */
+        assignCards: (id: string, vid: string, count?: number) =>
+          c.post<{ moved: number }>(`/admin/products/${seg(id)}/cards/assign-variant`, { variant_id: vid, count }),
         /** Archives when orders/cards reference it, else deletes. */
         remove: (id: string, vid: string) =>
           c.delete<{ outcome: 'archived' | 'deleted' }>(`/admin/products/${seg(id)}/variants/${seg(vid)}`),

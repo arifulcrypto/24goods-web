@@ -291,6 +291,13 @@ class ProductPatch(BaseModel):
         return None if v is None else _images(v)
 
 
+class CardsAssignVariantIn(BaseModel):
+    """v11: move available product-level cards into a variant; ``count`` None = all of them."""
+
+    variant_id: uuid.UUID
+    count: int | None = Field(None, ge=1, le=100_000)
+
+
 class CardsImportIn(BaseModel):
     lines: str = Field(max_length=2_000_000)
     variant_id: uuid.UUID | None = None  # required when the product has active variants

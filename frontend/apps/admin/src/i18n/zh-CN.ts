@@ -127,6 +127,9 @@ const zhCN: AdminMessages = {
     goOrders: '查看订单',
   },
   variants: {
+    assign: '移入未分配卡密',
+    assignConfirm: '将所有尚未分配规格的可用卡密（在添加规格之前导入的）移入“{name}”？',
+    assigned: '已移动 {n} 张卡密',
     title: '规格',
     add: '添加规格',
     edit: '编辑规格',

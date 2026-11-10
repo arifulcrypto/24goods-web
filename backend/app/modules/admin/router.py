@@ -30,6 +30,7 @@ from app.modules.admin import variants as variant_svc
 from app.modules.admin.schemas import (
     AgentStatusIn,
     BulkProductsIn,
+    CardsAssignVariantIn,
     CardsImportIn,
     ProductIn,
     ProductPatch,
@@ -284,6 +285,34 @@ async def import_cards(
         "rejected": result.rejected,
         "batch_id": str(result.batch_id) if result.batch_id else None,
     }
+
+
+@router.post(
+    "/products/{product_id}/cards/assign-variant",
+    dependencies=[Depends(require_scope("cards:import"))],
+)
+async def assign_cards_to_variant(
+    product_id: uuid.UUID,
+    body: CardsAssignVariantIn,
+    request: Request,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+    res: Resources = Depends(get_res),
+) -> dict:
+    """v11: move available product-level cards into a variant (cards imported before variants)."""
+    await enforce(res.redis, "cards:assign", str(admin.id), 30, 3600)
+    p = await product_svc.get(db, product_id)
+    moved = await inventory.assign_cards_to_variant(
+        db,
+        tenant_id=admin.tenant_id,
+        product=p,
+        variant_id=body.variant_id,
+        count=body.count,
+        actor_id=admin.id,
+        actor_role=admin.role,
+        ip=client_ip(request),
+    )
+    return {"moved": moved}
 
 
 @router.get("/products/{product_id}/cards")
