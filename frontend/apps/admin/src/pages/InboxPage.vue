@@ -9,8 +9,10 @@ import {
   type Conversation,
   type ConversationFilter,
   type Message,
+  type MessageMeta,
   type QuoteCardPayload,
 } from '@24goods/shared'
+import { useTyping } from '@24goods/shared/chat'
 import { ChatMessageList, useConversation } from '@24goods/shared/chat'
 import { api, apiV4 } from '../api'
 import InboxSidePanel from '../components/InboxSidePanel.vue'
@@ -46,14 +48,67 @@ const wideSide = computed(() => width.value >= 1280)
 const narrow = computed(() => width.value < 820)
 
 const composer = ref<InstanceType<typeof StaffComposer> | null>(null)
-async function messageAction(action: 'recall' | 'pin' | 'reply', id: number) {
-  const m = chat.messages.value.find(m => m.id === id)
-  if (!m) return
-  if (action === 'reply') { composer.value?.quote(m.text ?? ''); return }
+const replyTo = ref<Message | null>(null)
+const editing = ref<Message | null>(null)
+const pins = ref<Message[]>([])
+const replyBar = computed(() =>
+  replyTo.value
+    ? {
+        title: t('chatActions.replyingTo', { name: replyTo.value.sender.display_name }),
+        preview: replyTo.value.type === 'text' ? (replyTo.value.text ?? '').slice(0, 120) : t(`chat.preview.${replyTo.value.type}`),
+      }
+    : null,
+)
+async function refreshPins() {
+  const id = chat.conversationId.value
+  if (!id) return
   try {
-    const updated = action === 'recall' ? await api.chatActions.recall(id) : await api.chatActions.pin(id, !(m.payload as {pinned?: boolean} | null)?.pinned)
+    pins.value = await api.conversations.pins(id)
+  } catch {
+    /* convenience only */
+  }
+}
+async function messageAction(action: 'recall' | 'pin' | 'reply' | 'edit', id: number) {
+  const m = chat.messages.value.find((m) => m.id === id)
+  if (!m) return
+  if (action === 'reply') {
+    editing.value = null
+    replyTo.value = m
+    return
+  }
+  if (action === 'edit') {
+    replyTo.value = null
+    editing.value = m
+    return
+  }
+  try {
+    const updated = action === 'recall' ? await api.chatActions.recall(id) : await api.chatActions.pin(id, !(m.payload as MessageMeta | null)?.pinned)
     chat.apply([updated])
-  } catch (e) { ElMessage.error(t('errors.invalid_state')) }
+    void refreshPins()
+  } catch (e) {
+    toastError(e)
+  }
+}
+async function saveEdit(text: string) {
+  const m = editing.value
+  if (!m) return
+  editing.value = null
+  try {
+    chat.apply([await api.chatActions.edit(m.id, text)])
+  } catch (e) {
+    toastError(e)
+  }
+}
+const typing = useTyping({
+  send: () => api.conversations.typing(chat.conversationId.value!),
+  conversationId: () => chat.conversationId.value,
+  otherRole: 'buyer',
+})
+/** The reply target is consumed by the next send. */
+function takeReply(): number | undefined {
+  const id = replyTo.value?.id
+  replyTo.value = null
+  return id
 }
 const chat = useConversation({
   selfRole: 'agent',
@@ -121,6 +176,10 @@ async function select(c: Conversation) {
 watch(
   activeId,
   async (id) => {
+    replyTo.value = null
+    editing.value = null
+    pins.value = []
+    typing.clear()
     if (!id) {
       active.value = null
       chat.reset()
@@ -129,6 +188,7 @@ watch(
     active.value = list.value.find((c) => c.id === id) ?? active.value
     if (active.value && active.value.id === id && active.value.unread) upsert({ ...active.value, unread: 0 })
     await chat.open(id)
+    void refreshPins()
     await msgList.value?.scrollToBottom()
   },
   { immediate: true },
@@ -145,10 +205,14 @@ async function afterIncoming(force: boolean) {
 const countsAsUnread = (m: { sender: { role: string }; type: string }) => m.sender.role === 'buyer' || m.type === 'order_card'
 const offs = [
   rt.on('conversation', (c) => upsert(c)),
+  rt.on('typing', (e) => typing.onEvent(e)),
   rt.on('message', (e) => {
     const isActive = e.conversation_id === activeId.value
     if (isActive) {
       chat.apply([e.message])
+      typing.clearFor(e.message.sender.role, e.conversation_id)
+      const p = (e.message.payload ?? {}) as MessageMeta & { event?: string }
+      if (p.pinned !== undefined || p.event === 'message_pinned' || p.event === 'message_unpinned' || p.recalled || pins.value.some((x) => x.id === e.message.id)) void refreshPins()
       void afterIncoming(e.message.sender.role === 'agent' && e.message.sender.id === me.value)
     }
     const c = list.value.find((x) => x.id === e.conversation_id)
@@ -314,7 +378,8 @@ function openProduct(id: string) {
           <div class="chat-title">
             <div class="name">{{ active?.buyer.display_name ?? '…' }}</div>
             <div class="muted small">
-              {{ active?.assigned_agent ? t('inbox.assignedTo', { name: active.assigned_agent.display_name }) : t('inbox.unassigned') }}
+              <span v-if="typing.name.value !== null" class="typing" role="status">{{ typing.name.value ? t('chatActions.typing', { name: typing.name.value }) : t('chatActions.typingGeneric') }}</span>
+              <template v-else>{{ active?.assigned_agent ? t('inbox.assignedTo', { name: active.assigned_agent.display_name }) : t('inbox.unassigned') }}</template>
             </div>
           </div>
           <div class="chat-actions">
@@ -345,6 +410,8 @@ function openProduct(id: string) {
       :self-name="auth.user?.display_name"
       :self-avatar="auth.user?.avatar_url"
       @action="messageAction"
+          :pins="pins"
+          :older-loader="() => chat.loadOlder()"
           ref="msgList"
           :items="chat.items.value"
           mode="staff"
@@ -364,10 +431,16 @@ function openProduct(id: string) {
       ref="composer"
           v-else
           :disabled="!chat.conversationId.value"
-          @send-text="(v) => (chat.sendText(v), sent())"
-          @send-image="(b, m) => (chat.sendImage(b, m), sent())"
-          @send-voice="(b, d, f) => (chat.sendVoice(b, d, f), sent())"
+          :reply="replyBar"
+          :editing="editing ? { text: editing.text ?? '' } : null"
+          @send-text="(v) => (chat.sendText(v, takeReply()), sent())"
+          @send-image="(b, m) => (chat.sendImage(b, m, takeReply()), sent())"
+          @send-voice="(b, d, f) => (chat.sendVoice(b, d, f, takeReply()), sent())"
           @send-product="sendProduct"
+          @cancel-reply="replyTo = null"
+          @cancel-edit="editing = null"
+          @save-edit="saveEdit"
+          @typing="typing.ping()"
         />
       </template>
       <el-empty v-else :description="t('inbox.select')" class="placeholder" />
@@ -541,6 +614,9 @@ function openProduct(id: string) {
 }
 .small {
   font-size: 12px;
+}
+.typing {
+  color: var(--el-color-primary);
 }
 .closed {
   padding: 14px;

@@ -148,6 +148,12 @@ async def _public_v5(
     return {
         "security_challenges": policy(ts),
         "features": section(ts, "features"),
+        "notify_defaults": {
+            "buyer": {
+                "sound": section(ts, "notifications")["buyer_sound"],
+                "desktop": section(ts, "notifications")["buyer_desktop"],
+            }
+        },
         "general": {
             "site_name": pick(gen["site_name_i18n"], lang) if gen["site_name_i18n"] else "",
             "subtitle": pick(gen["subtitle_i18n"], lang) if gen["subtitle_i18n"] else "",

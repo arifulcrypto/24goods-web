@@ -16,6 +16,11 @@ class MessageIn(BaseModel):
     text: str | None = Field(None, max_length=2000)
     attachment_id: uuid.UUID | None = None
     product_id: uuid.UUID | None = None  # product_card (staff only): payload is built server-side
+    reply_to: int | None = Field(None, ge=1)
+
+
+class EditIn(BaseModel):
+    text: str = Field(min_length=1, max_length=2000)
 
 
 class ReadIn(BaseModel):
@@ -32,4 +37,5 @@ class QuoteIn(BaseModel):
     qty: int = Field(1, ge=1, le=100)
     note: str | None = Field(None, max_length=1000)
     product_id: uuid.UUID | None = None
+    variant_id: uuid.UUID | None = None
     expires_in_minutes: int = Field(ge=5, le=1440)

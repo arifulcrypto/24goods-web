@@ -184,8 +184,39 @@ export interface Message {
   type: MessageType
   text: string | null
   attachment: Attachment | null
-  payload: ProductCardPayload | QuoteCardPayload | OrderCardPayload | SystemPayload | FilePayload | RedactedPayload | null
+  payload:
+    | ProductCardPayload
+    | QuoteCardPayload
+    | OrderCardPayload
+    | SystemPayload
+    | FilePayload
+    | RedactedPayload
+    | MessageMeta
+    | null
   created_at: string
+}
+/** v11 W2: quoted message snapshot stored in `payload.reply_to`. */
+export interface ReplyRef {
+  id: number
+  sender_name: string
+  sender_role: SenderRole
+  /** ≤ 120 chars of text, or a `[image]`-style marker; empty after the original is recalled. */
+  preview: string
+  type: MessageType
+}
+/** v11 W2: optional flags carried by text/media payloads. */
+export interface MessageMeta {
+  reply_to?: ReplyRef
+  edited_at?: string
+  pinned?: boolean
+  recalled?: boolean
+}
+/** SSE `typing` event (never stored). */
+export interface TypingEvent {
+  conversation_id: string
+  role: SenderRole
+  name: string
+  until: string
 }
 /** v3: `type=file` message payload (text/plain attachment). */
 export interface RedactedPayload {
@@ -215,6 +246,9 @@ export interface QuoteCardPayload {
   status: QuoteStatus
   expires_at: string
   order_id: string | null
+  /** v11 W2: the variant the quote was negotiated for (products with variants). */
+  variant_id?: string | null
+  variant_name?: string | null
 }
 export interface OrderCardPayload {
   order_id: string
@@ -497,6 +531,8 @@ export interface SiteInfo {
   resellers?: { base_domain?: string; link_mode?: 'subdomain' | 'query'; signup_fee_minor?: number } | null
   /** Optional (security.email_verify_on_register); the 422 `email_code_required` is the fallback. */
   email_verify_on_register?: boolean
+  /** v11 W2: admin defaults for buyer chat alerts; the buyer's own choice (localStorage) wins. */
+  notify_defaults?: { buyer?: { sound?: boolean; desktop?: boolean } }
 }
 export interface SiteFeatures {
   registration: boolean
@@ -680,6 +716,8 @@ export interface SendMessageBody {
   attachment_id?: string
   /** v4 (staff only): type=product_card; the server builds the payload. */
   product_id?: string
+  /** v11 W2: reply to this message id (same conversation). */
+  reply_to?: number
 }
 
 export interface MessageQuery {
@@ -737,6 +775,8 @@ export interface QuoteInput {
   qty: number
   note?: string
   product_id?: string
+  /** Required by the server when the product has active variants. */
+  variant_id?: string
   expires_in_minutes: number
 }
 export interface AgentInfo {

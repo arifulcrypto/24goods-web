@@ -15,7 +15,7 @@ const { t } = useI18n()
 const { saving, run } = useSave()
 const errors = ref<Record<string, string>>({})
 const testing = ref(false)
-const f = reactive({ enabled: false, chats: '', events: {} as Record<string, boolean> })
+const f = reactive({ enabled: false, chats: '', events: {} as Record<string, boolean>, buyerSound: true, buyerDesktop: false })
 const token = ref<SecretField>(secretFromServer())
 watch(
   () => props.site,
@@ -23,6 +23,8 @@ watch(
     const n = s.notifications
     f.enabled = n?.telegram_enabled ?? false
     f.chats = (n?.telegram_chat_ids ?? []).join('\n')
+    f.buyerSound = n?.buyer_sound ?? true
+    f.buyerDesktop = n?.buyer_desktop ?? false
     for (const k of TG_EVENTS) f.events[k] = n?.[`event_${k}`] ?? true
     token.value = secretFromServer(s.secrets?.telegram_bot_token)
   },
@@ -51,6 +53,8 @@ async function save() {
         event_payment_review: f.events.payment_review,
         event_reseller_application: f.events.reseller_application,
         event_low_stock: f.events.low_stock,
+        buyer_sound: f.buyerSound,
+        buyer_desktop: f.buyerDesktop,
       },
     })
   })
@@ -91,6 +95,12 @@ async function sendTest() {
       <el-form-item v-for="k in TG_EVENTS" :key="k">
         <el-switch v-model="f.events[k]" :active-text="t(`v5.notify.ev.${k}`)" />
       </el-form-item>
+    </section>
+    <section class="panel block">
+      <h2 class="h2">{{ t('v5.notify.buyerTitle') }}</h2>
+      <p class="muted small">{{ t('v5.notify.buyerNote') }}</p>
+      <el-form-item><el-switch v-model="f.buyerSound" :active-text="t('v5.notify.buyerSound')" /></el-form-item>
+      <el-form-item><el-switch v-model="f.buyerDesktop" :active-text="t('v5.notify.buyerDesktop')" /></el-form-item>
     </section>
     <el-button type="primary" native-type="submit" :loading="saving">{{ t('common.save') }}</el-button>
     <el-button :loading="testing" @click="sendTest">{{ t('v5.notify.test') }}</el-button>

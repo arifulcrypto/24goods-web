@@ -105,6 +105,9 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         "event_payment_review": True,
         "event_reseller_application": True,
         "event_low_stock": True,
+        # buyer-side defaults for chat alerts (review-v11 W2); the buyer's own choice wins
+        "buyer_sound": True,
+        "buyer_desktop": False,
     },
     # Manual delivery promise shown on product/cart/checkout
     "delivery": {

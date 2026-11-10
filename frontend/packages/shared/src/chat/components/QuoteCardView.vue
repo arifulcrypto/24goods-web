@@ -35,6 +35,7 @@ const amount = computed(() => formatMoney(props.quote.amount, props.quote.curren
       <span class="gc-tag" :class="`tag-${status}`">{{ t(`quoteStatus.${status}`) }}</span>
     </div>
     <div class="gc-quote-title">{{ quote.title }}</div>
+    <div v-if="quote.variant_name" class="gc-muted">{{ quote.variant_name }}</div>
     <div class="gc-quote-row">
       <span class="gc-price">{{ amount }}</span>
       <span class="gc-muted">{{ t('chat.quote.qty', { n: quote.qty }) }}</span>

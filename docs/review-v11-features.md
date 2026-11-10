@@ -58,6 +58,8 @@ variant picker; a product without variants behaves exactly as today.
 
 ## W2 — Telegram-style chat, typing, buyer notifications
 
+_Implemented (wip/v11-chat). Notes: `notify_defaults` is stored as `notifications.buyer_sound` / `buyer_desktop` in tenant settings and exposed as `/site` → `notify_defaults.buyer`; quotes for products with variants carry `variant_id` (migration 0021, signature v2 when set); staff and buyer share `PATCH /chat/messages/{id}`, pins and typing exist under `/conversations/{id}/…` and `/admin/conversations/{id}/…`._
+
 - **Replies** replace "Quote in draft": `POST` message body gains `reply_to: int | None` (same
   conversation, not redacted); stored as `payload.reply_to = {id, sender_name, sender_role, preview ≤ 120
   chars, type}`; bubble shows a quoted block, tap scrolls to the original (load older if needed);

@@ -4,7 +4,12 @@
  */
 export default {
   mediaPrefs: {quality:'Image quality',auto:'Auto (network)',low:'Low data',high:'High quality',compress:'Compress images before upload'},
-  chatActions: {"menu": "Message actions", "copy": "Copy text", "reply": "Quote in draft", "pin": "Pin", "unpin": "Unpin", "recall": "Recall", "recalled": "Message recalled by sender", "media": "Pinned media"},
+  chatActions: {
+    menu: 'Message actions', copy: 'Copy', reply: 'Reply', pin: 'Pin', unpin: 'Unpin', edit: 'Edit', recall: 'Recall',
+    recalled: 'Message recalled by sender', media: 'Pinned media', edited: 'edited', unknownSender: 'Message',
+    pinnedTitle: 'Pinned message', pinnedBar: 'Jump to pinned message', replyingTo: 'Reply to {name}', editing: 'Editing message',
+    typing: '{name} is typing…', typingGeneric: 'typing…',
+  },
   paste: {
     tip: 'Tip: paste a screenshot with Ctrl+V',
   },
@@ -272,6 +277,8 @@ export default {
       loadFailed: 'Could not load the file',
     },
     system: {
+      message_pinned: '{name} pinned a message',
+      message_unpinned: '{name} unpinned a message',
       price_changed: 'Price changed to {amount}',
       delivery_expedite: 'The buyer asks the seller to ship this order as soon as possible',
       delivered: 'Order delivered',

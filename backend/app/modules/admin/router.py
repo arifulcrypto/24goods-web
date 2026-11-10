@@ -523,6 +523,7 @@ async def send_message(
         client_msg_id=body.client_msg_id,
         store=FileStore(res.settings.upload_dir),
         product_id=body.product_id,
+        reply_to=body.reply_to,
     )
     if created:
         await chat.broadcast(res, db, conv, [msg])
@@ -563,6 +564,29 @@ async def upload_content_image(
     )
     await db.commit()
     return {"id": str(att.id), "url": file_url(att.id)}
+
+
+@router.get("/conversations/{conv_id}/pins")
+async def list_pins(
+    conv_id: uuid.UUID,
+    _: User = Depends(require_staff),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    conv = await chat.staff_conversation(db, conv_id)
+    return await chat.pinned_messages(db, conv)
+
+
+@router.post("/conversations/{conv_id}/typing", status_code=204)
+async def typing(
+    conv_id: uuid.UUID,
+    staff: User = Depends(require_staff),
+    db: AsyncSession = Depends(get_db),
+    res: Resources = Depends(get_res),
+) -> Response:
+    conv = await chat.staff_conversation(db, conv_id)
+    await enforce(res.redis, "chat:typing", str(staff.id), 1, 3)
+    await chat.publish_typing(res, conv, staff, role="agent")
+    return Response(status_code=204)
 
 
 @router.post("/conversations/{conv_id}/read", status_code=204)
@@ -632,7 +656,7 @@ async def create_quote(
         db, res.settings, conv, staff, body, client_ip(request)
     )
     await chat.broadcast(res, db, conv, [msg])
-    return quote_svc.quote_payload(quote)
+    return quote_svc.quote_payload(quote, (msg.payload or {}).get("variant_name"))
 
 
 @router.post("/quotes/{quote_id}/withdraw")
@@ -649,7 +673,8 @@ async def withdraw_quote(
     msg = await quote_svc.quote_message(db, quote)  # same id, updated status
     conv = await chat.staff_conversation(db, quote.conversation_id)
     await chat.broadcast(res, db, conv, [m for m in (msg, sysmsg) if m is not None])
-    return quote_svc.quote_payload(quote)
+    vname = ((msg.payload if msg else None) or {}).get("variant_name")
+    return quote_svc.quote_payload(quote, vname)
 
 
 # ---------------------------------------------------------------- agents

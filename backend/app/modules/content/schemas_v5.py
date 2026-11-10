@@ -198,6 +198,8 @@ class NotificationsIn(BaseModel):
     event_payment_review: bool | None = None
     event_reseller_application: bool | None = None
     event_low_stock: bool | None = None
+    buyer_sound: bool | None = None
+    buyer_desktop: bool | None = None
 
     @field_validator("telegram_chat_ids")
     @classmethod

@@ -4,7 +4,7 @@ import { previewImageUrl } from '../../media/preferences'
 import { copyText } from '../../util'
 import { nowTick } from './tick'
 import { useI18n } from 'vue-i18n'
-import type { FilePayload, OrderCardPayload, ProductCardPayload, QuoteCardPayload, SystemPayload } from '../../types'
+import type { FilePayload, MessageMeta, OrderCardPayload, ProductCardPayload, QuoteCardPayload, ReplyRef, SystemPayload } from '../../types'
 import { formatBytes, formatChatTime, formatMoney, formatRelative } from '../../format'
 import { safeAssetUrl } from '../../api/endpoints'
 import type { ChatItem } from '../useConversation'
@@ -13,6 +13,7 @@ import QuoteCardView from './QuoteCardView.vue'
 import OrderCardView from './OrderCardView.vue'
 import ProductCardView from './ProductCardView.vue'
 import SmartText from './SmartText.vue'
+import MessageMenu, { type MenuItem } from './MessageMenu.vue'
 
 const props = defineProps<{ item: ChatItem; mode: 'buyer' | 'staff'; busyQuoteId?: string | null; viewOrder?: boolean; selfId?: string; selfName?: string; selfAvatar?: string | null }>()
 const emit = defineEmits<{
@@ -25,7 +26,8 @@ const emit = defineEmits<{
   acceptQuote: [q: QuoteCardPayload]
   withdrawQuote: [q: QuoteCardPayload]
   retry: [clientMsgId: string]
-  action: [action: 'recall' | 'pin' | 'reply', id: number]
+  action: [action: 'recall' | 'pin' | 'reply' | 'edit', id: number]
+  jump: [id: number]
   discard: [clientMsgId: string]
 }>()
 const { t, te, locale } = useI18n()
@@ -99,14 +101,38 @@ const imgBox = computed(() => {
 })
 
 const menu = ref(false)
+const menuAt = ref({ x: 0, y: 0 })
 let press: ReturnType<typeof setTimeout> | null = null
 function cancelPress() { if (press) clearTimeout(press); press = null }
-function openMenu() { cancelPress(); if (props.item.kind === 'server' && !redacted.value && ['text', 'image', 'voice', 'file'].includes(view.value.type)) menu.value = true }
-function startPress(e: PointerEvent) { if (e.button !== 0) return; cancelPress(); press = setTimeout(openMenu, 550) }
-function action(a: 'recall' | 'pin' | 'reply') { menu.value = false; if (props.item.kind === 'server') emit('action', a, props.item.message.id) }
-async function copy() { await copyText(view.value.text ?? ''); menu.value = false }
-const pinned = computed(() => !!(view.value.payload as {pinned?: boolean} | null)?.pinned)
-const canRecall = computed(() => props.item.kind === 'server' && props.item.message.sender.id === props.selfId && nowTick.value - Date.parse(view.value.createdAt) <= 180000)
+const menuable = computed(() => props.item.kind === 'server' && !redacted.value && ['text', 'image', 'voice', 'file'].includes(view.value.type))
+function openMenu(e?: MouseEvent | PointerEvent) {
+  cancelPress()
+  if (!menuable.value) return
+  if (e && 'clientX' in e) menuAt.value = { x: e.clientX, y: e.clientY }
+  menu.value = true
+}
+function startPress(e: PointerEvent) { if (e.button !== 0) return; cancelPress(); const at = { clientX: e.clientX, clientY: e.clientY } as PointerEvent; press = setTimeout(() => openMenu(at), 550) }
+const meta = computed(() => (view.value.payload as MessageMeta | null) ?? null)
+const pinned = computed(() => !!meta.value?.pinned)
+const reply = computed<ReplyRef | null>(() => meta.value?.reply_to ?? null)
+const edited = computed(() => !!meta.value?.edited_at)
+const own = computed(() => props.item.kind === 'server' && props.item.message.sender.id === props.selfId)
+const age = computed(() => nowTick.value - Date.parse(view.value.createdAt))
+const canRecall = computed(() => own.value && age.value <= 180000)
+const canEdit = computed(() => own.value && view.value.type === 'text' && age.value <= 48 * 3600 * 1000)
+const items = computed<MenuItem[]>(() => {
+  const l: MenuItem[] = [{ key: 'reply', icon: '↩', label: t('chatActions.reply') }]
+  if (view.value.type === 'text' && view.value.text) l.push({ key: 'copy', icon: '⧉', label: t('chatActions.copy') })
+  l.push({ key: 'pin', icon: '📌', label: t(pinned.value ? 'chatActions.unpin' : 'chatActions.pin') })
+  if (canEdit.value) l.push({ key: 'edit', icon: '✎', label: t('chatActions.edit') })
+  if (canRecall.value) l.push({ key: 'recall', icon: '🗑', label: t('chatActions.recall'), danger: true })
+  return l
+})
+async function pick(key: string) {
+  menu.value = false
+  if (key === 'copy') { await copyText(view.value.text ?? ''); return }
+  if (props.item.kind === 'server') emit('action', key as 'recall' | 'pin' | 'reply' | 'edit', props.item.message.id)
+}
 onBeforeUnmount(cancelPress)
 
 const systemText = computed(() => {
@@ -138,20 +164,18 @@ const systemText = computed(() => {
 </script>
 
 <template>
-  <div v-if="centered" class="gc-system" role="note">{{ systemText }}</div>
-  <div v-else class="gc-row" :class="{ self, 'is-card': isCard }" @contextmenu.prevent="openMenu" @pointerdown="startPress" @pointerup="cancelPress" @pointercancel="cancelPress" @pointermove="cancelPress" @pointerleave="cancelPress">
-    <button v-if="item.kind === 'server' && !redacted && !isCard" class="gc-action-toggle" type="button" :aria-label="t('chatActions.menu')" @click="openMenu">⋯</button>
-    <div v-if="menu" class="gc-actions" role="group" :aria-label="t('chatActions.menu')" @keydown.esc="menu = false">
-      <button v-if="view.text" type="button" @click="copy">{{ t('chatActions.copy') }}</button>
-      <button v-if="view.text" type="button" @click="action('reply')">{{ t('chatActions.reply') }}</button>
-      <button type="button" @click="action('pin')">{{ t(pinned ? 'chatActions.unpin' : 'chatActions.pin') }}</button>
-      <button v-if="canRecall" type="button" @click="action('recall')">{{ t('chatActions.recall') }}</button>
-      <button type="button" @click="menu = false">{{ t('common.cancel') }}</button>
-    </div>
+  <div v-if="centered" class="gc-system" role="note" :data-mid="item.kind === 'server' ? item.message.id : undefined">{{ systemText }}</div>
+  <div v-else class="gc-row" :class="{ self, 'is-card': isCard }" :data-mid="item.kind === 'server' ? item.message.id : undefined" @contextmenu.prevent="openMenu" @pointerdown="startPress" @pointerup="cancelPress" @pointercancel="cancelPress" @pointermove="cancelPress" @pointerleave="cancelPress">
+    <button v-if="menuable && !isCard" class="gc-action-toggle" type="button" :aria-label="t('chatActions.menu')" aria-haspopup="menu" @click="openMenu">⋯</button>
+    <MessageMenu :open="menu" :items="items" :x="menuAt.x" :y="menuAt.y" :label="t('chatActions.menu')" @select="pick" @close="menu = false" />
     <span class="gc-avatar" aria-hidden="true"><img v-if="avatarSrc" :src="avatarSrc" alt="" loading="lazy" decoding="async" />{{ avatarSrc ? '' : initial }}</span>
     <div class="gc-col">
       <span v-if="!self && mode === 'staff' && view.senderName" class="gc-name">{{ view.senderName }}</span>
       <span v-else-if="self && mode === 'staff' && view.senderName" class="gc-name gc-name-self">{{ view.senderName }}</span>
+      <button v-if="reply && !redacted" type="button" class="gc-reply" :class="{ self }" @click="emit('jump', reply.id)">
+        <span class="gc-reply-name">{{ reply.sender_name || t('chatActions.unknownSender') }}</span>
+        <span class="gc-reply-text">{{ reply.preview || t('chatActions.recalled') }}</span>
+      </button>
       <div class="gc-line">
         <span v-if="view.state === 'sending'" class="gc-state" :aria-label="t('chat.sending')"><span class="gc-spin" /></span>
         <span v-else-if="view.state === 'failed'" class="gc-state gc-failed">
@@ -222,6 +246,7 @@ const systemText = computed(() => {
         />
         <div v-else class="gc-bubble">{{ view.text || t('chat.system.unknown') }}</div>
       </div>
+      <span v-if="edited && !redacted" class="gc-edited">{{ t('chatActions.edited') }}</span>
     </div>
   </div>
 </template>
@@ -229,6 +254,10 @@ const systemText = computed(() => {
 <style scoped>
 .gc-row { position: relative }
 .gc-action-toggle { align-self: center; border: 0; background: transparent; cursor: pointer; min-width: 44px; min-height: 44px; color: inherit }
-.gc-actions { position: absolute; z-index: 5; top: 100%; inset-inline-start: 0; display: flex; flex-wrap: wrap; max-width: 100%; padding: 6px; background: var(--gc-panel, white); border: 1px solid #999; border-radius: 8px; box-shadow: 0 4px 12px #0002 }
-.gc-actions button { min-height: 44px; padding: 8px; background: transparent; border: 0; cursor: pointer; color: inherit }
+.gc-reply { display: flex; flex-direction: column; align-items: flex-start; max-width: 100%; min-height: 44px; padding: 4px 10px; margin: 0 0 2px; border: 0; border-inline-start: 3px solid var(--gc-accent, #3b82f6); border-radius: 6px; background: rgb(127 127 127 / 0.14); color: inherit; font: inherit; font-size: 12px; text-align: start; cursor: pointer; box-sizing: border-box }
+.gc-reply-name { font-weight: 700; color: var(--gc-accent, #3b82f6); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.gc-reply-text { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.85 }
+.gc-edited { font-size: 11px; opacity: 0.6; margin: 0 4px }
+:global(.gc-jump-flash) { animation: gc-flash 1.2s ease-out }
+@keyframes gc-flash { 0% { background: rgb(59 130 246 / 0.28) } 100% { background: transparent } }
 </style>

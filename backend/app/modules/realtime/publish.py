@@ -84,3 +84,16 @@ async def publish_agent_status(
     individual agent's status (``agent_id`` added)."""
     await publish(redis, public_channel(tenant_id), "agent_status", best)
     await publish(redis, staff_channel(tenant_id), "agent_status", agent)
+
+
+async def publish_typing(
+    redis: Redis,
+    tenant_id: uuid.UUID,
+    buyer_id: uuid.UUID,
+    *,
+    to_staff: bool,
+    data: dict[str, Any],
+) -> None:
+    """Ephemeral typing hint (never stored): buyer -> staff channel, staff -> the buyer."""
+    channel = staff_channel(tenant_id) if to_staff else user_channel(buyer_id)
+    await publish(redis, channel, "typing", data)
