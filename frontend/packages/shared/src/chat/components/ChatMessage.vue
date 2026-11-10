@@ -117,7 +117,26 @@ function openMenu(e?: MouseEvent | PointerEvent) {
   if (e && 'clientX' in e) menuAt.value = { x: e.clientX, y: e.clientY }
   menu.value = true
 }
-function startPress(e: PointerEvent) { if (e.button !== 0) return; cancelPress(); const at = { clientX: e.clientX, clientY: e.clientY } as PointerEvent; press = setTimeout(() => openMenu(at), 550) }
+let pressFrom: { x: number; y: number } | null = null
+function startPress(e: PointerEvent) {
+  if (e.button !== 0) return
+  cancelPress()
+  if ((e.target as Element | null)?.closest?.('a, button')) return
+  pressFrom = { x: e.clientX, y: e.clientY }
+  const at = { clientX: e.clientX, clientY: e.clientY } as PointerEvent
+  press = setTimeout(() => openMenu(at), 550)
+}
+function movePress(e: PointerEvent) {
+  if (!press || !pressFrom) return
+  if (Math.hypot(e.clientX - pressFrom.x, e.clientY - pressFrom.y) > 8) cancelPress()
+}
+function onContextMenu(e: MouseEvent) {
+  // Keep the native menu for links and for a text selection.
+  if ((e.target as Element | null)?.closest?.('a')) return
+  if ((window.getSelection?.()?.toString() ?? '') !== '') return
+  e.preventDefault()
+  openMenu(e)
+}
 const meta = computed(() => (view.value.payload as MessageMeta | null) ?? null)
 const pinned = computed(() => !!meta.value?.pinned)
 const reply = computed<ReplyRef | null>(() => meta.value?.reply_to ?? null)
@@ -171,7 +190,7 @@ const systemText = computed(() => {
 
 <template>
   <div v-if="centered" class="gc-system" role="note" :data-mid="item.kind === 'server' ? item.message.id : undefined">{{ systemText }}</div>
-  <div v-else class="gc-row" :class="{ self, 'is-card': isCard }" :data-mid="item.kind === 'server' ? item.message.id : undefined" @contextmenu.prevent="openMenu" @pointerdown="startPress" @pointerup="cancelPress" @pointercancel="cancelPress" @pointermove="cancelPress" @pointerleave="cancelPress">
+  <div v-else class="gc-row" :class="{ self, 'is-card': isCard }" :data-mid="item.kind === 'server' ? item.message.id : undefined" @contextmenu="onContextMenu" @pointerdown="startPress" @pointerup="cancelPress" @pointercancel="cancelPress" @pointermove="movePress" @pointerleave="cancelPress">
     <button v-if="menuable && !isCard" class="gc-action-toggle" type="button" :aria-label="t('chatActions.menu')" aria-haspopup="menu" @click="openMenu">⋯</button>
     <MessageMenu :open="menu" :items="items" :x="menuAt.x" :y="menuAt.y" :label="t('chatActions.menu')" @select="pick" @close="menu = false" />
     <span class="gc-avatar" aria-hidden="true"><img :src="avatarSrc" alt="" loading="lazy" decoding="async" /></span>
@@ -263,7 +282,9 @@ const systemText = computed(() => {
 .gc-reply { display: flex; flex-direction: column; align-items: flex-start; max-width: 100%; min-height: 44px; padding: 4px 10px; margin: 0 0 2px; border: 0; border-inline-start: 3px solid var(--gc-accent, #3b82f6); border-radius: 6px; background: rgb(127 127 127 / 0.14); color: inherit; font: inherit; font-size: 12px; text-align: start; cursor: pointer; box-sizing: border-box }
 .gc-reply-name { font-weight: 700; color: var(--gc-accent, #3b82f6); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
 .gc-reply-text { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.85 }
+@media (pointer: coarse) { .gc-bubble { -webkit-touch-callout: none; user-select: none } }
 .gc-edited { font-size: 11px; opacity: 0.6; margin: 0 4px }
 :global(.gc-jump-flash) { animation: gc-flash 1.2s ease-out }
+@media (prefers-reduced-motion: reduce) { :global(.gc-jump-flash) { animation: none } }
 @keyframes gc-flash { 0% { background: rgb(59 130 246 / 0.28) } 100% { background: transparent } }
 </style>

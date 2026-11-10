@@ -122,8 +122,9 @@ defineExpose({ jumpTo, scrollToBottom, isNearBottom, preserveScroll, el: scrolle
 </script>
 
 <template>
-  <div ref="scroller" class="gc-list" role="log" aria-live="polite" @scroll.passive="onScroll">
+  <div ref="scroller" class="gc-list" @scroll.passive="onScroll">
     <PinnedBar v-if="pins?.length" :pins="pins" @jump="jumpTo" />
+    <div class="gc-log" role="log" aria-live="polite">
     <div class="gc-list-top">
       <span v-if="loadingOlder" class="gc-muted"><span class="gc-spin" /> {{ t('chat.loadingOlder') }}</span>
       <span v-else-if="!hasMore && items.length && !loading" class="gc-muted">{{ t('chat.noOlder') }}</span>
@@ -161,6 +162,7 @@ defineExpose({ jumpTo, scrollToBottom, isNearBottom, preserveScroll, el: scrolle
       <slot name="item-extra" :item="it" />
     </template>
     <slot name="bottom" />
+    </div>
     <Teleport to="body">
       <div v-if="viewer" class="gc-viewer" role="dialog" aria-modal="true" :aria-label="viewer.name" @click.self="viewer = null">
         <div class="gc-viewer-box">

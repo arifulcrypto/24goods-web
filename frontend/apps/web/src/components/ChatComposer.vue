@@ -48,16 +48,23 @@ function autoGrow() {
   el.style.height = 'auto'
   el.style.height = `${Math.min(el.scrollHeight, 112)}px`
 }
+/** The unsent draft is stashed while an edit is open and restored when it ends (cancel or saved). */
+let stash: string | null = null
 watch(
-  () => props.editing,
-  (e) => {
-    if (e) {
-      text.value = e.text
+  () => (props.editing ? props.editing.text : null),
+  (e, prev) => {
+    if (e !== null) {
+      if (prev === null || prev === undefined) stash = text.value
+      text.value = e
       mode.value = 'text'
       void nextTick(() => {
         autoGrow()
         textarea.value?.focus()
       })
+    } else if (stash !== null) {
+      text.value = stash
+      stash = null
+      void nextTick(autoGrow)
     }
   },
 )
@@ -66,9 +73,8 @@ async function submitText() {
   const v = text.value.trim()
   if (!v) return
   if (props.editing) {
+    // Keep the text: the page ends the edit on success, which restores the draft.
     emit('saveEdit', v)
-    text.value = ''
-    void nextTick(autoGrow)
     return
   }
   const decision = longTextDecision(v)
@@ -104,7 +110,6 @@ function onKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape' && (props.reply || props.editing)) {
     e.preventDefault()
     if (props.editing) {
-      text.value = ''
       emit('cancelEdit')
     } else emit('cancelReply')
     return

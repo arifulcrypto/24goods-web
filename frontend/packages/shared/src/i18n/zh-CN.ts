@@ -2,10 +2,11 @@ import type { MessageSchema } from './index'
 
 const zhCN: MessageSchema = {
   mediaPrefs: {quality:'图片质量',auto:'自动（网络）',low:'节省流量',high:'高画质',compress:'上传前压缩图片'},
+  avatar: { preset: '头像 {n}' },
   chatActions: {
     menu: '消息操作', copy: '复制', reply: '回复', pin: '置顶', unpin: '取消置顶', edit: '编辑', recall: '撤回',
     recalled: '发送者已撤回消息', media: '置顶媒体', edited: '已编辑', unknownSender: '消息',
-    pinnedTitle: '置顶消息', pinnedBar: '跳转到置顶消息', replyingTo: '回复 {name}', editing: '编辑消息',
+    pinnedTitle: '置顶消息', pinnedBar: '跳转到置顶消息', pinnedCount: '#{i}/{n}', replyingTo: '回复 {name}', editing: '编辑消息',
     typing: '{name} 正在输入…', typingGeneric: '正在输入…',
   },
   paste: {

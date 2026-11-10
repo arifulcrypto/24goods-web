@@ -92,9 +92,9 @@ async function messageAction(action: 'recall' | 'pin' | 'reply' | 'edit', id: nu
 async function saveEdit(text: string) {
   const m = editing.value
   if (!m) return
-  editing.value = null
   try {
     chat.apply([await api.chatActions.edit(m.id, text)])
+    if (editing.value === m) editing.value = null
   } catch (e) {
     toastError(e)
   }
@@ -378,8 +378,8 @@ function openProduct(id: string) {
           <div class="chat-title">
             <div class="name">{{ active?.buyer.display_name ?? '…' }}</div>
             <div class="muted small">
-              <span v-if="typing.name.value !== null" class="typing" role="status">{{ typing.name.value ? t('chatActions.typing', { name: typing.name.value }) : t('chatActions.typingGeneric') }}</span>
-              <template v-else>{{ active?.assigned_agent ? t('inbox.assignedTo', { name: active.assigned_agent.display_name }) : t('inbox.unassigned') }}</template>
+              <span class="typing" role="status">{{ typing.name.value === null ? '' : typing.name.value ? t('chatActions.typing', { name: typing.name.value }) : t('chatActions.typingGeneric') }}</span>
+              <template v-if="typing.name.value === null">{{ active?.assigned_agent ? t('inbox.assignedTo', { name: active.assigned_agent.display_name }) : t('inbox.unassigned') }}</template>
             </div>
           </div>
           <div class="chat-actions">
