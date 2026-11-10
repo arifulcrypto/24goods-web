@@ -16,7 +16,7 @@ from app.core.deps import Page
 from app.core.errors import NotFound, Validation
 from app.core.storefront import Storefront
 from app.models import AgentStatus, CardStock, Product, User
-from app.modules.catalog import variants
+from app.modules.catalog import sorting, variants
 from app.modules.catalog.categories import disabled_slugs
 from app.modules.common.views import iso, product_summary, product_view
 from app.modules.content.site import tenant_settings
@@ -87,6 +87,7 @@ async def list_products(
     category: str | None,
     tenant_id: uuid.UUID,
     storefront: Storefront | None = None,
+    sort: str | None = None,
 ) -> dict:
     stmt = select(Product).where(Product.status == "active")
     ts = await tenant_settings(db, tenant_id)
@@ -101,7 +102,7 @@ async def list_products(
     stmt = apply_search(stmt, q)
     await prepare_search(db, q)
     total = await db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
-    order = [Product.group_sort, Product.sold.desc(), Product.created_at.desc(), Product.id]
+    order = sorting.order_by(sort if sort in sorting.SORTS else sorting.default_sort(ts))
     if q and q.strip():
         order.insert(0, func.word_similarity(q.strip().lower(), Product.search_text).desc())
     rows = (await db.scalars(stmt.order_by(*order).offset(page.offset).limit(page.page_size))).all()

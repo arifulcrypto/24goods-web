@@ -17,7 +17,13 @@ from app.core.security import STAFF_ROLES
 from app.models import Attachment, Conversation, Message, Order, Product, Quote, User
 from app.modules.catalog.service import get_active_product
 from app.modules.chat.messages import ensure_open_conversation, insert_message
-from app.modules.common.views import avatar_url, iso, message_view, product_card_payload
+from app.modules.common.views import (
+    avatar_preset,
+    avatar_url,
+    iso,
+    message_view,
+    product_card_payload,
+)
 from app.modules.realtime.publish import publish_conversation, publish_message
 from app.modules.realtime.publish import publish_typing as _pub_typing
 from app.modules.uploads.service import text_preview
@@ -135,6 +141,7 @@ async def message_views(db: AsyncSession, msgs: list[Message]) -> list[dict[str,
                 m,
                 sender_name=sender.display_name if sender else None,
                 sender_avatar=avatar_url(sender),
+                sender_preset=avatar_preset(sender),
                 attachment=atts.get(m.attachment_id) if m.attachment_id else None,
                 payload_overlay=overlay,
             )
@@ -195,6 +202,7 @@ async def conversation_views(
                     "id": str(c.buyer_id),
                     "display_name": buyer.display_name if buyer else "",
                     "avatar_url": avatar_url(buyer),
+                    "avatar_preset": avatar_preset(buyer),
                 },
                 "product": product_card_payload(product, lang) if product else None,
                 "status": c.status,
@@ -203,6 +211,7 @@ async def conversation_views(
                         "id": str(agent.id),
                         "display_name": agent.display_name,
                         "avatar_url": avatar_url(agent),
+                        "avatar_preset": avatar_preset(agent),
                     }
                     if agent
                     else None

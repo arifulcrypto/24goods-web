@@ -60,7 +60,7 @@ def schedule(row: ServiceEntitlement, now: datetime) -> list[tuple[str, datetime
     due = row.ends_at.astimezone(tz)
     dates = [
         (f"before_{days}", datetime.combine(due.date() - timedelta(days=days), time(9), tz))
-        for days in (7, 3, 1)
+        for days in ((row.reminder_lead_days,) if row.reminder_lead_days else (7, 3, 1))
     ]
     dates.append(("expiry", row.ends_at))
     local = now.astimezone(tz)
@@ -170,8 +170,12 @@ async def send_reminder(
     lines = [
         title,
         f"{words['id']} {reminder.id}",
-        f"{words['service']} {service.label}",
-        f"{words['buyer']} {str(service.buyer_id)[:8]}…",
+        f"{words['service']} {service.label} ({service.ref})",
+        f"{words['buyer']} "
+        + (
+            service.customer_label
+            or (f"{str(service.buyer_id)[:8]}…" if service.buyer_id else service.ref)
+        ),
         f"{words['due']} {service.ends_at.isoformat() if service.ends_at else 'unknown'}",
         link,
     ]

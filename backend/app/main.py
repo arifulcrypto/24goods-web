@@ -30,6 +30,7 @@ from app.modules import emails, jobs
 from app.modules.admin.blocking import router as admin_blocking_router
 from app.modules.admin.categories import router as admin_categories_router
 from app.modules.admin.importer import router as admin_import_router
+from app.modules.admin.ordering import router as admin_ordering_router
 from app.modules.admin.payment_gateways import router as payment_gateways_router
 from app.modules.admin.payment_ops import router as payment_ops_router
 from app.modules.admin.router import router as admin_router
@@ -44,6 +45,8 @@ from app.modules.challenges.middleware import SiteVisitMiddleware
 from app.modules.challenges.router import router as challenges_router
 from app.modules.chat.actions import router as chat_actions_router
 from app.modules.chat.router import router as chat_router
+from app.modules.content.announcements import admin as announcements_admin_router
+from app.modules.content.announcements import router as announcements_router
 from app.modules.content.router import router as content_router
 from app.modules.lookup.router import router as lookup_router
 from app.modules.me.router import avatar_router
@@ -173,6 +176,8 @@ def api_router() -> APIRouter:
         me_router,
         avatar_router,
         content_router,
+        announcements_router,
+        announcements_admin_router,
         lookup_router,
         aftersales_router,
         catalog_router,
@@ -191,6 +196,7 @@ def api_router() -> APIRouter:
         reseller_admin_router,
         admin_import_router,
         admin_categories_router,
+        admin_ordering_router,
         admin_settings_router,
         admin_blocking_router,
         admin_tokens_router,

@@ -200,6 +200,7 @@ async def anonymize(db: AsyncSession, user: User) -> tuple[dict[str, Any], list[
     if user.avatar_key:
         keys.append(user.avatar_key)
         user.avatar_key = None
+    user.avatar_preset = None
     await db.execute(
         update(Attachment)
         .where(Attachment.owner_id == user.id, Attachment.deleted_at.is_(None))
@@ -263,6 +264,7 @@ async def set_avatar(
     key = await store.write(processed.data)
     old = user.avatar_key
     user.avatar_key = key
+    user.avatar_preset = None  # an upload replaces a generic preset
     try:
         await _avatar_set_audit(db, user, processed, ip)
         await db.commit()
@@ -289,9 +291,40 @@ async def _avatar_set_audit(
     )
 
 
+async def set_avatar_preset(
+    db: AsyncSession, store: FileStore, user: User, preset: str, ip: str | None
+) -> User:
+    """Pick a generic avatar; an uploaded picture is dropped (one avatar at a time)."""
+    await db.execute(
+        select(User.id)
+        .where(User.id == user.id, User.tenant_id == user.tenant_id)
+        .with_for_update()
+    )
+    await db.refresh(user, ["avatar_key", "avatar_preset"])
+    old = user.avatar_key
+    before = user.avatar_preset
+    user.avatar_key = None
+    user.avatar_preset = preset
+    await audit(
+        db,
+        tenant_id=user.tenant_id,
+        action="me.avatar_preset",
+        actor_id=user.id,
+        actor_role=user.role,
+        target=f"user:{user.id}",
+        ip=ip,
+        detail={"before": before, "after": preset, "cleared_upload": bool(old)},
+    )
+    await db.commit()
+    if old:
+        await remove_files(store, [old])
+    return user
+
+
 async def clear_avatar(db: AsyncSession, store: FileStore, user: User, ip: str | None) -> User:
     old = user.avatar_key
     user.avatar_key = None
+    user.avatar_preset = None
     await audit(
         db,
         tenant_id=user.tenant_id,

@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import ForeignKey, Integer, String, Text
+from sqlalchemy import ForeignKey, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -19,7 +19,7 @@ class Article(Base):
     id: Mapped[uuid.UUID] = uuid_pk()
     tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id"))
     slug: Mapped[str] = mapped_column(String(64))
-    kind: Mapped[str] = mapped_column(String(8), default="article")  # article | page
+    kind: Mapped[str] = mapped_column(String(8), default="article")  # article | page | notice
     category: Mapped[str] = mapped_column(String(32), default="general")
     title_i18n: Mapped[dict[str, Any]]
     body_i18n: Mapped[dict[str, Any]] = mapped_column(default=dict)
@@ -31,6 +31,19 @@ class Article(Base):
     created_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = created_at()
     updated_at: Mapped[datetime] = updated_at()
+
+
+class AnnouncementRead(Base):
+    """v11: a user has read an announcement (``articles.kind = 'notice'``)."""
+
+    __tablename__ = "announcement_reads"
+
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id"))
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    article_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("articles.id", ondelete="CASCADE"), primary_key=True
+    )
+    read_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
 
 class AfterSales(Base):

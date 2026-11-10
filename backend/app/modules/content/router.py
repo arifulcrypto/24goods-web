@@ -8,17 +8,30 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import pow as powmod
-from app.core.deps import Page, client_ip, get_db, get_lang, get_page, get_res, get_tenant_id
+from app.core.deps import (
+    Page,
+    client_ip,
+    get_db,
+    get_lang,
+    get_page,
+    get_res,
+    get_session,
+    get_tenant_id,
+)
 from app.core.features import feature_on
 from app.core.ratelimit import count, enforce
 from app.core.resources import Resources
+from app.core.security import SessionData
 from app.core.settings_v5 import section
 from app.core.storefront import Storefront, get_storefront
+from app.models import User
 from app.modules.auth.service import net_of
-from app.modules.content import service
+from app.modules.catalog import sorting as catalog_sort
+from app.modules.content import announcements, service
 from app.modules.content.site import tenant_settings
 from app.modules.payments.channels import public_channels
 
@@ -32,10 +45,19 @@ async def site(
     db: AsyncSession = Depends(get_db),
     res: Resources = Depends(get_res),
     sf: Storefront | None = Depends(get_storefront),
+    sess: SessionData | None = Depends(get_session),
 ) -> dict:
     out = await service.public_site(db, tenant_id, lang, res.settings.brand_name)
     out["storefront"] = sf.public(lang) if sf is not None else None  # review-v5 s7
     ts = await tenant_settings(db, tenant_id)
+    # soft identification only (no suspension check): /site must load for everyone
+    user = (
+        await db.scalar(select(User).where(User.id == sess.user_id, User.status == "active"))
+        if sess is not None
+        else None
+    )
+    out["announcements"] = await announcements.site_block(db, tenant_id, ts, lang, user)
+    out["catalog"] = {"default_sort": catalog_sort.default_sort(ts)}
     if feature_on(ts, "resellers"):
         rcfg = section(ts, "resellers")
         out["resellers"] = {  # slug preview + sign-up fee in the apply form

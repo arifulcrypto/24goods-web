@@ -38,6 +38,7 @@ class CategoryRow:
     icon: str | None
     sort: int
     enabled: bool
+    pinned: bool = False
 
 
 _cache: dict[uuid.UUID, tuple[float, tuple[CategoryRow, ...]]] = {}
@@ -51,17 +52,25 @@ def invalidate(tenant_id: uuid.UUID | None = None) -> None:
 
 
 async def all_categories(db: AsyncSession, tenant_id: uuid.UUID) -> tuple[CategoryRow, ...]:
-    """Every category of the tenant (enabled or not), ordered by (sort, slug)."""
+    """Every category of the tenant (enabled or not), pinned first, then (sort, slug)."""
     hit = _cache.get(tenant_id)
     now = time.monotonic()
     if hit is not None and hit[0] > now:
         return hit[1]
     rows = tuple(
-        CategoryRow(c.id, c.slug, dict(c.name_i18n or {}), c.icon, c.sort, c.enabled)
+        CategoryRow(
+            c.id,
+            c.slug,
+            dict(c.name_i18n or {}),
+            c.icon,
+            c.sort,
+            c.enabled,
+            c.pinned_at is not None,
+        )
         for c in await db.scalars(
             select(Category)
             .where(Category.tenant_id == tenant_id)
-            .order_by(Category.sort, Category.slug)
+            .order_by(Category.pinned_at.desc().nullslast(), Category.sort, Category.slug)
         )
     )
     _cache[tenant_id] = (now + CACHE_TTL_S, rows)

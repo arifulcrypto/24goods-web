@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,6 +30,7 @@ async def products(
     q: str | None = Query(None, max_length=100),
     category: str | None = Query(None, max_length=32),
     ids: str | None = Query(None, max_length=1000),
+    sort: Literal["manual", "sales", "price_asc", "price_desc", "newest"] | None = None,
     page: Page = Depends(get_page),
     lang: str = Depends(get_lang),
     tenant_id: uuid.UUID = Depends(get_tenant_id),
@@ -39,7 +41,7 @@ async def products(
         return {
             "items": await service.products_by_ids(db, lang, service.parse_ids(ids), tenant_id, sf)
         }
-    return await service.list_products(db, lang, page, q, category, tenant_id, sf)
+    return await service.list_products(db, lang, page, q, category, tenant_id, sf, sort)
 
 
 @router.get("/products/recommended")
