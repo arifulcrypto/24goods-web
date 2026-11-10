@@ -396,3 +396,11 @@ Decision:
 
 Consequences: no held order or attempt is stranded; every exit is audited and fails closed on missing evidence. Closing attempts reduces gateway query volume. A USDT attempt without a `trade_id` cannot be re-queried and therefore is never auto-closed (staff resolve it). Running the job loop in its own process was not done (one API replica in production); the lock makes a second replica safe.
 
+
+### ADR-036: Email change needs proof of ownership (issue #72 S6)
+
+Context: `POST /me/credentials` stored a new email immediately (marked unverified). Anyone signed in could squat an address on their account, blocking its real owner from registering, and the distinct conflict reply told them whether an address was registered.
+
+Decision: `POST /me/email-change` (current password unless the account is instant) sends a one-time code (`auth/codes.py`, purpose `email_change`, bound to the user id and the new address; registration TTL, attempt and send limits plus per-user/per-IP request limits) and always answers `{"sent": true}`; a taken address gets no mail, and sending runs in the background so timing does not differ. `POST /me/email-change/confirm` verifies the code, re-checks uniqueness, sets the email as verified, clears `is_instant` and audits `me.email_changed`. `/me/credentials` is password-only. Unlike registration (which may accept unverified addresses when `email_verify_on_register` is off), an email change always needs a code: with no mailer configured it answers 403 `feature_disabled`.
+
+Consequences: an unconfirmed address is never stored as a login email. Deployments without SMTP cannot change emails (instant accounts can still set a password). Sessions are not revoked on an email change (only on a password change), matching the existing convention.

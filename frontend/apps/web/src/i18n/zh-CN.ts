@@ -222,7 +222,6 @@ const zhCN: WebMessages = {
     secureTitle: '保护您的账号',
     secureText: '您正在使用一键账号。添加邮箱和自己的密码，避免丢失访问权限。',
     secureCta: '立即设置',
-    changeCredentials: '修改邮箱和密码',
     changePassword: '修改密码',
     changeEmail: '修改邮箱',
     newEmail: '新邮箱地址',

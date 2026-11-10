@@ -222,7 +222,6 @@ export default {
     secureTitle: 'Secure your account',
     secureText: 'You are using a one-tap account. Add an email and your own password so you never lose access.',
     secureCta: 'Secure now',
-    changeCredentials: 'Change email & password',
     changePassword: 'Change password',
     changeEmail: 'Change email',
     newEmail: 'New email address',
