@@ -371,7 +371,7 @@ function openSupport() {
   border: 0;
   border-radius: 999px;
   padding: 0 12px;
-  background: #ececec;
+  background: var(--c-line);
   color: var(--c-text);
   font: inherit;
   font-size: 13px;

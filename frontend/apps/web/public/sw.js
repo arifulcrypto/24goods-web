@@ -6,8 +6,16 @@ self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim(
 self.addEventListener('notificationclick', (event) => {
   event.notification.close()
   const data = event.notification.data || {}
-  // same-origin absolute paths only (never `//host` or a scheme)
-  const url = typeof data.url === 'string' && /^\/(?!\/)/.test(data.url) ? data.url : '/'
+  // same-origin absolute paths only (never `//host`, `/\host` or a scheme)
+  const safe = (u) => {
+    if (typeof u !== 'string' || !/^\/(?![/\\])/.test(u)) return false
+    try {
+      return new URL(u, self.location.origin).origin === self.location.origin
+    } catch {
+      return false
+    }
+  }
+  const url = safe(data.url) ? data.url : '/'
   event.waitUntil(
     (async () => {
       const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true })

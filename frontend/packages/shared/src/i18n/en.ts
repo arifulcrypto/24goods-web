@@ -4,10 +4,11 @@
  */
 export default {
   mediaPrefs: {quality:'Image quality',auto:'Auto (network)',low:'Low data',high:'High quality',compress:'Compress images before upload'},
+  avatar: { preset: 'Avatar {n}' },
   chatActions: {
     menu: 'Message actions', copy: 'Copy', reply: 'Reply', pin: 'Pin', unpin: 'Unpin', edit: 'Edit', recall: 'Recall',
     recalled: 'Message recalled by sender', media: 'Pinned media', edited: 'edited', unknownSender: 'Message',
-    pinnedTitle: 'Pinned message', pinnedBar: 'Jump to pinned message', replyingTo: 'Reply to {name}', editing: 'Editing message',
+    pinnedTitle: 'Pinned message', pinnedBar: 'Jump to pinned message', pinnedCount: '#{i}/{n}', replyingTo: 'Reply to {name}', editing: 'Editing message',
     typing: '{name} is typing…', typingGeneric: 'typing…',
   },
   paste: {

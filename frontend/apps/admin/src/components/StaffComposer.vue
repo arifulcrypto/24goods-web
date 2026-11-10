@@ -43,12 +43,18 @@ const elapsedLabel = computed(() => {
 })
 
 const input = ref<{ focus: () => void } | null>(null)
+/** The unsent draft is stashed while an edit is open and restored when it ends (cancel or saved). */
+let stash: string | null = null
 watch(
-  () => props.editing,
-  (e) => {
-    if (e) {
-      text.value = e.text
+  () => (props.editing ? props.editing.text : null),
+  (e, prev) => {
+    if (e !== null) {
+      if (prev === null || prev === undefined) stash = text.value
+      text.value = e
       void nextTick(() => input.value?.focus())
+    } else if (stash !== null) {
+      text.value = stash
+      stash = null
     }
   },
 )
@@ -58,7 +64,6 @@ watch(text, (v) => {
 })
 function cancelBar() {
   if (props.editing) {
-    text.value = ''
     emit('cancelEdit')
   } else emit('cancelReply')
 }
@@ -70,8 +75,8 @@ function send() {
     return
   }
   if (props.editing) {
+    // Keep the text: the page ends the edit on success, which restores the draft.
     emit('saveEdit', v)
-    text.value = ''
     return
   }
   emit('sendText', v)

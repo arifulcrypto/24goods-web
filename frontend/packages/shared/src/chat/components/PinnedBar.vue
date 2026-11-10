@@ -30,10 +30,10 @@ function tap() {
 </script>
 
 <template>
-  <button v-if="cur" type="button" class="gc-pinbar" :aria-label="t('chatActions.pinnedBar')" @click="tap">
+  <button v-if="cur" type="button" class="gc-pinbar" @click="tap">
     <span class="gc-pinbar-line" aria-hidden="true" />
     <span class="gc-pinbar-main">
-      <strong class="gc-pinbar-title">{{ t('chatActions.pinnedTitle') }}<template v-if="pins.length > 1"> #{{ (idx % pins.length) + 1 }}/{{ pins.length }}</template></strong>
+      <strong class="gc-pinbar-title">{{ t('chatActions.pinnedTitle') }}<template v-if="pins.length > 1"> {{ t('chatActions.pinnedCount', { i: (idx % pins.length) + 1, n: pins.length }) }}</template></strong>
       <span class="gc-pinbar-text">{{ label }}</span>
     </span>
     <span aria-hidden="true">📌</span>

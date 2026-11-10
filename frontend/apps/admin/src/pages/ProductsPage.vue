@@ -183,7 +183,7 @@ async function bulk(action: BulkAction, category?: string) {
       </div>
       <div v-if="auth.isAdmin" class="toolbar">
         <el-select :model-value="defaultSort" style="width: 190px" :aria-label="t('catalogOrder.defaultSort')" @change="setDefaultSort">
-          <el-option v-for="o in CATALOG_SORTS" :key="o" :value="o" :label="`${t('catalogOrder.defaultSort')}: ${t(`catalogOrder.sort.${o}`)}`" />
+          <el-option v-for="o in CATALOG_SORTS" :key="o" :value="o" :label="t('catalogOrder.defaultSortValue', { sort: t(`catalogOrder.sort.${o}`) })" />
         </el-select>
         <el-button :icon="Upload" @click="importOpen = true">{{ t('v5.products.import') }}</el-button>
         <el-button type="primary" :icon="Plus" @click="openNew">{{ t('products.new') }}</el-button>
@@ -212,10 +212,10 @@ async function bulk(action: BulkAction, category?: string) {
       >
         <el-table-column v-if="auth.isAdmin" type="selection" width="44" reserve-selection />
         <el-table-column v-if="canReorder" :label="t('catalogOrder.order')" width="110">
-          <template #default="{ $index }">
+          <template #default="{ $index, row }">
             <span class="grip" draggable="true" role="img" :aria-label="t('catalogOrder.drag')" @dragstart="reorder.start($index, $event)"><el-icon><Rank /></el-icon></span>
-            <el-button link :icon="Top" :disabled="$index === 0" :aria-label="t('catalogOrder.up')" @click="reorder.move($index, -1)" />
-            <el-button link :icon="Bottom" :disabled="$index === table.items.value.length - 1" :aria-label="t('catalogOrder.down')" @click="reorder.move($index, 1)" />
+            <el-button link :icon="Top" :disabled="$index === 0 || table.items.value[$index - 1]?.pinned !== row.pinned" :aria-label="t('catalogOrder.up')" @click="reorder.move($index, -1)" />
+            <el-button link :icon="Bottom" :disabled="$index === table.items.value.length - 1 || table.items.value[$index + 1]?.pinned !== row.pinned" :aria-label="t('catalogOrder.down')" @click="reorder.move($index, 1)" />
           </template>
         </el-table-column>
         <el-table-column :label="t('products.col.title')" min-width="260">

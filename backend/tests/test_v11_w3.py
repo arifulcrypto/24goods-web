@@ -423,3 +423,28 @@ async def test_avatar_preset(env):
     assert row["buyer"]["avatar_preset"] == "p03"
     # removing the avatar clears the preset too
     assert (await buyer.delete(f"{API}/me/avatar")).json()["avatar_preset"] is None
+
+
+async def test_record_with_order_no_requires_paid_order_and_keeps_its_buyer(env):
+    from tests.helpers import buy, delivered_order
+
+    agent, _ = await env.login("agent")
+    buyer, bu = await env.login("buyer", email="own@example.com")
+    await env.login("buyer", email="someone@example.com")
+    p = await env.product(mode="manual")
+    unpaid = await buy(buyer, p)
+    r = await agent.post(f"{API}/admin/services", json=record(order_no=unpaid["order_no"]))
+    assert r.status_code == 409, r.text  # same payment check as the order path
+    paid = await delivered_order(env, buyer, p, staff=agent)
+    # a buyer_email that belongs to a different account is rejected
+    r = await agent.post(
+        f"{API}/admin/services",
+        json=record(order_no=paid["order_no"], buyer_email="someone@example.com"),
+    )
+    assert r.status_code == 422, r.text
+    r = await agent.post(
+        f"{API}/admin/services",
+        json=record(order_no=paid["order_no"], buyer_email="own@example.com"),
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["buyer_id"] == str(bu.id) and r.json()["order_id"] == paid["id"]

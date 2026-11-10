@@ -40,3 +40,4 @@ deploy/env/
 .dev/
 deploy/certs/*.pem
 deploy/certs/*.key
+.vitest/

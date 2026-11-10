@@ -57,6 +57,7 @@ try {
 }
 async function enableNotifications() {
   prefs.notify = await ensureNotificationPermission()
+  if (!prefs.notify && notificationPermission() === 'denied') ElMessage.warning({ message: t('notify.denied'), grouping: true })
   notifyBanner.value = false
 }
 function dismissNotifyBanner() {
