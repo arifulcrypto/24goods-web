@@ -228,6 +228,9 @@ async def accept_quote(
         variant = await get_scoped(db, ProductVariant, q.variant_id, q.tenant_id)
         if variant is None or variant.product_id != product.id or variant.status != "active":
             raise InvalidState("This variant is no longer available")
+    elif product is not None and await variants_svc.has_active(db, q.tenant_id, product.id):
+        # a quote sent before the product had variants would sell outside every variant's stock
+        raise InvalidState("This product now has options; ask for a new quote")
     if delivery_mode == "auto_card" and q.qty > MAX_AUTO_CARD_QTY:
         raise InvalidState("Quote quantity exceeds the auto-delivery limit")
     if (
@@ -236,6 +239,8 @@ async def accept_quote(
         and await orders.available_stock(db, product.id, variant.id if variant else None) < q.qty
     ):
         raise OutOfStock("Not enough stock")
+    # global lock order: buyer row (cap) -> products -> variants (v11 audit M2)
+    await orders.enforce_payables_cap(db, settings, buyer)
     if variant is not None and delivery_mode in ("manual", "auto_card"):
         await orders.lock_manual_products(db, q.tenant_id, [product.id])  # type: ignore[union-attr]
         await variants_svc.lock_variants(db, q.tenant_id, [variant.id])
@@ -256,6 +261,7 @@ async def accept_quote(
         reseller_id=conv.reseller_id,
         reseller_markup_minor=0,
         variant=variant,
+        enforce_cap=False,  # done above, before the product/variant locks
     )
     q.status = "accepted"
     q.order_id = order.id

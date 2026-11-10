@@ -214,7 +214,8 @@ async def _in_use(db: AsyncSession, variant_id: uuid.UUID) -> bool:
         await db.scalar(
             text(
                 """SELECT EXISTS (SELECT 1 FROM orders WHERE variant_id = :v)
-                      OR EXISTS (SELECT 1 FROM card_stock WHERE variant_id = :v)"""
+                      OR EXISTS (SELECT 1 FROM card_stock WHERE variant_id = :v)
+                      OR EXISTS (SELECT 1 FROM quotes WHERE variant_id = :v)"""
             ),
             {"v": variant_id},
         )

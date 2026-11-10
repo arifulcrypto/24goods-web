@@ -555,6 +555,22 @@ async def assign_cards_to_variant(
     variant = await variants_svc.resolve(db, tenant_id, product, variant_id)
     if variant is None or variant.status != "active":
         raise Validation("Choose an active variant of this product")
+    from app.modules.orders.service import (
+        available_stock,
+        lock_manual_products,
+        reserved_auto_stock,
+    )
+
+    # Same product lock as order creation, and never move cards still promised to open
+    # variant-less orders (they claim only product-level cards; v11 audit M1).
+    await lock_manual_products(db, tenant_id, [product.id])
+    free = await available_stock(db, product.id, None) - await reserved_auto_stock(
+        db, tenant_id, product.id, None
+    )
+    if free <= 0:
+        await db.rollback()
+        return 0
+    count = free if count is None else min(count, free)
     pick = (
         select(CardStock.id)
         .where(
@@ -565,9 +581,8 @@ async def assign_cards_to_variant(
         )
         .order_by(CardStock.created_at, CardStock.id)
         .with_for_update(skip_locked=True)
+        .limit(count)
     )
-    if count is not None:
-        pick = pick.limit(count)
     ids = list(await db.scalars(pick))
     if ids:
         await db.execute(

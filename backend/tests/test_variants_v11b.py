@@ -101,3 +101,37 @@ async def test_assign_refuses_archived_or_foreign_variant(env):
         204,
     )
     assert (await admin.post(url, json={"variant_id": a["id"]})).status_code in (404, 422)
+
+
+async def test_variantless_order_never_takes_a_variants_cards(env):
+    """Audit M1: a pending variant-less order keeps its product-level cards; assign-variant
+    does not move them, and a variant order cannot be promised them."""
+    admin, _ = await env.login("admin")
+    p = await env.product(mode="auto_card", price=1990, floor=100)
+    await admin.post(
+        f"{API}/admin/products/{p.id}/cards/import", json={"lines": "\n".join(CODES[:3])}
+    )
+    buyer, _ = await env.login("buyer")
+    legacy = (await order_req(buyer, p, qty=2)).json()  # before variants existed
+    a = await add_variant(admin, p, "A", "5.00")
+    r = await admin.post(
+        f"{API}/admin/products/{p.id}/cards/assign-variant", json={"variant_id": a["id"]}
+    )
+    assert r.json() == {"moved": 1}  # 3 product-level cards, 2 promised to the legacy order
+    other, _ = await env.login("buyer")
+    assert (await order_req(other, p, a, qty=2)).status_code == 409  # only 1 card in A
+    va = (await order_req(other, p, a)).json()
+    await pay_order(env, buyer, legacy)
+    await pay_order(env, other, va)
+    assert await env.drain() >= 2
+    assert (await buyer.get(f"{API}/orders/{legacy['id']}")).json()["status"] == "delivered"
+    assert (await other.get(f"{API}/orders/{va['id']}")).json()["status"] == "delivered"
+    # each order got cards from its own pool
+    assert await env.scalar(
+        "SELECT count(*) FROM card_stock WHERE order_id=:o AND variant_id IS NULL", o=legacy["id"]
+    ) == 2  # fmt: skip
+    assert await env.scalar(
+        "SELECT count(*) FROM card_stock WHERE order_id=:o AND variant_id=:v",
+        o=va["id"],
+        v=a["id"],
+    ) == 1  # fmt: skip

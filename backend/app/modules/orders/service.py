@@ -84,10 +84,16 @@ def new_order_no() -> str:
 async def available_stock(
     db: AsyncSession, product_id: uuid.UUID, variant_id: uuid.UUID | None = None
 ) -> int:
-    """Claimable cards of the product; with ``variant_id`` only that variant's cards."""
-    stmt = select(func.count(CardStock.id)).where(CardStock.product_id == product_id, *claimable())
-    if variant_id is not None:
-        stmt = stmt.where(CardStock.variant_id == variant_id)
+    """Claimable cards of one stock pool: the variant's cards, or (``variant_id`` None) the
+    product-level cards only. Pools are disjoint (#v11 audit M1): a variant-less order can never
+    take or count a variant's cards; for a product without variants the two are the same."""
+    stmt = select(func.count(CardStock.id)).where(
+        CardStock.product_id == product_id,
+        CardStock.variant_id == variant_id
+        if variant_id is not None
+        else CardStock.variant_id.is_(None),
+        *claimable(),
+    )
     return int(await db.scalar(stmt) or 0)
 
 
@@ -148,9 +154,9 @@ async def reserved_auto_stock(
         Order.kind == "goods",
         Order.delivery_mode == "auto_card",
         Order.status.in_(("pending_payment", "paid")),
+        # same disjoint pools as ``available_stock``
+        Order.variant_id == variant_id if variant_id is not None else Order.variant_id.is_(None),
     )
-    if variant_id is not None:
-        stmt = stmt.where(Order.variant_id == variant_id)
     return int(await db.scalar(stmt) or 0)
 
 
@@ -183,6 +189,15 @@ async def release_manual_stock(db: AsyncSession, tenant_id: uuid.UUID, orders: l
             else:
                 back[o.product_id] = back.get(o.product_id, 0) + o.stock_reserved
             o.stock_reserved = 0  # idempotent: a second release gives back nothing
+    # products first, then variants: the lock order every other path uses (#v11 audit M3)
+    for pid in sorted(k for k in back if back[k] > 0):
+        await db.execute(
+            update(Product)
+            .where(
+                Product.id == pid, Product.tenant_id == tenant_id, Product.manual_stock.is_not(None)
+            )
+            .values(manual_stock=Product.manual_stock + back[pid])
+        )
     for vid in sorted(k for k in back_v if back_v[k] > 0):
         await db.execute(
             update(ProductVariant)
@@ -192,14 +207,6 @@ async def release_manual_stock(db: AsyncSession, tenant_id: uuid.UUID, orders: l
                 ProductVariant.manual_stock.is_not(None),
             )
             .values(manual_stock=ProductVariant.manual_stock + back_v[vid])
-        )
-    for pid in sorted(k for k in back if back[k] > 0):
-        await db.execute(
-            update(Product)
-            .where(
-                Product.id == pid, Product.tenant_id == tenant_id, Product.manual_stock.is_not(None)
-            )
-            .values(manual_stock=Product.manual_stock + back[pid])
         )
 
 

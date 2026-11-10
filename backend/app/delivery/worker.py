@@ -56,8 +56,11 @@ class JobResult:
 
 
 def _variant(order: Order) -> tuple:  # type: ignore[type-arg]
-    """A variant order only claims that variant's cards (v11 W1); others as before."""
-    return (CardStock.variant_id == order.variant_id,) if order.variant_id is not None else ()
+    """A variant order claims only that variant's cards; a variant-less order only product-level
+    cards (disjoint pools, v11 audit M1 — the same rule as the stock checks at order time)."""
+    if order.variant_id is not None:
+        return (CardStock.variant_id == order.variant_id,)
+    return (CardStock.variant_id.is_(None),)
 
 
 def _claimable():  # type: ignore[no-untyped-def]

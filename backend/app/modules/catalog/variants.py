@@ -51,6 +51,20 @@ async def variants_for(
     return out
 
 
+async def has_active(db: AsyncSession, tenant_id: uuid.UUID, product_id: uuid.UUID) -> bool:
+    """True when the product has at least one active variant (then every sale needs one)."""
+    found = await db.scalar(
+        select(ProductVariant.id)
+        .where(
+            ProductVariant.tenant_id == tenant_id,
+            ProductVariant.product_id == product_id,
+            ProductVariant.status == "active",
+        )
+        .limit(1)
+    )
+    return found is not None
+
+
 def pick_variant(rows: list[ProductVariant], variant_id: uuid.UUID | None) -> ProductVariant | None:
     """``rows`` = ALL variants (any status) of one product. Enforces the buy rules:
     a product with an active variant requires one (422 ``variant_required``); an unknown /
