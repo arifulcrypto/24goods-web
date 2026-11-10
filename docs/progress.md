@@ -4,6 +4,15 @@ Update this file in every PR. Phases are defined in [review-v2.md §8](review-v2
 
 ## Current state — hand-off (read this first in a new session)
 
+**Production deployed 2026-11-10 UTC: `5f709d3`** (owner-approved) from `5fb2575`: Dependabot #75
+(vue-i18n 11.4.17), #76 (vitest 5.1.0, dev) and #77 (@types/node 26, dev). Frontend dependencies only: no
+backend change, no migration. `scripts/prod.sh smoke` all pass; api/delivery/web report revision
+`5f709d3`. **No pre-deploy backup was taken for this deploy** (the remote backup command was not
+permitted in that session; latest sets: `predeploy-20261110T045019Z` and the nightly). Rollback: pin
+`API_IMAGE`/`WEB_IMAGE` to the `:5fb2575e53a16c246431641e0425ea0927030d2f` tags (docs/production.md
+"Rollback"). Not merged: #74 (node 25 image has no corepack, web image build fails; 25 is not an LTS
+line) and #78 (TypeScript 7 breaks vue-tsc: `./lib/tsc` is no longer exported). c4 root disk is at 86 %.
+
 **Production deployed 2026-11-10 04:52 UTC: `5fb2575`** (#73, issue #72 remediation, migration
 `0019_attempt_closed`, owner-approved) from `1528264`. Pre-deploy backup with the installed v1 script,
 sha256-verified off-host copy, `pg_restore --list` OK (41 tables). Rollback: retag
