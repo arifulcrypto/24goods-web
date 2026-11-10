@@ -130,7 +130,7 @@ export default {
   variants: {
     assign: 'Move unassigned cards here',
     assignConfirm: 'Move every available card that has no variant yet (imported before variants existed) into “{name}”?',
-    assigned: '{n} card(s) moved',
+    assigned: '{n} card moved | {n} cards moved',
     title: 'Variants',
     add: 'Add variant',
     edit: 'Edit variant',
@@ -737,6 +737,7 @@ export default {
     saved: 'Order saved',
     sortSaved: 'Default sort saved',
     defaultSort: 'Default sort',
+    defaultSortValue: 'Default sort: {sort}',
     sort: { manual: 'Featured (manual)', sales: 'Best selling', price_asc: 'Price: low to high', price_desc: 'Price: high to low', newest: 'Newest' },
     hint: 'Drag the handle or use the arrows to set the storefront order. Pinned items always stay on top.',
     hintOff: 'Clear the search and status filter (and keep to one page) to change the manual order.',

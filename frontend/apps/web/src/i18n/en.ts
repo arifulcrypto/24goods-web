@@ -222,7 +222,7 @@ export default {
     title: 'Notifications',
     sound: 'Message sound',
     desktop: 'Desktop notifications',
-    desktopHint: 'When a seller replies and this tab is in the background',
+    desktopHint: 'When support replies and this tab is in the background',
     denied: 'Notifications are blocked in your browser settings',
   },
   me: {

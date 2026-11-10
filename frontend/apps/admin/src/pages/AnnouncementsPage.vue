@@ -185,7 +185,7 @@ const hasUnread = computed(() => unread.value > 0)
           <el-table-column :label="t('common.status')" width="110">
             <template #default="{ row }"><el-tag size="small" :type="row.status === 'published' ? 'success' : 'info'">{{ t(`news.status.${row.status}`) }}</el-tag></template>
           </el-table-column>
-          <el-table-column :label="t('news.pinned')" width="90"><template #default="{ row }">{{ row.pinned ? '📌' : '' }}</template></el-table-column>
+          <el-table-column :label="t('news.pinned')" width="90"><template #default="{ row }"><el-tag v-if="row.pinned" size="small" type="warning">{{ t('news.pinned') }}</el-tag></template></el-table-column>
           <el-table-column :label="t('news.reads')" prop="read_count" width="90" />
           <el-table-column :label="t('news.publishedAt')" width="170"><template #default="{ row }">{{ formatDateTime(row.published_at, locale) }}</template></el-table-column>
           <el-table-column :label="t('common.actions')" width="330" fixed="right">

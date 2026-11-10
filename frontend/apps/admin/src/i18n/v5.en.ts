@@ -177,7 +177,7 @@ export default {
     chatsInvalid: "Chat IDs must be integers (max 10).",
     tokenRequired: "A bot token is required to enable notifications.",
     buyerTitle: "Buyer chat alerts",
-    buyerNote: "Defaults for buyers when a seller replies and the chat is not open. Each buyer can change them in Settings.",
+    buyerNote: "Defaults for buyers when support replies and the chat is not open. Each buyer can change them in Settings.",
     buyerSound: "Message sound (default on)",
     buyerDesktop: "Desktop notification (default off; the browser still asks the buyer for permission)",
     events: "Events",

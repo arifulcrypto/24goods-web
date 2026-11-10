@@ -136,7 +136,7 @@ async function assignCards(v: AdminVariant) {
   if (!(await confirmBox(t('variants.assignConfirm', { name: nameOf(v) })))) return
   try {
     const r = await api.products.variants.assignCards(props.productId, v.id)
-    toastOk(t('variants.assigned', { n: r.moved }))
+    toastOk(t('variants.assigned', { n: r.moved }, r.moved))
     await load()
   } catch (e) {
     toastError(e)

@@ -38,12 +38,17 @@ onMounted(async () => {
   await store.refresh()
   void loadDetail()
 })
+/** Detail back: the real previous page when there is one, else the list. */
+function backFromDetail() {
+  if (typeof window !== 'undefined' && window.history.state?.back) router.back()
+  else void router.push({ name: 'announcements' })
+}
 watch(id, () => void loadDetail())
 </script>
 
 <template>
   <div class="page">
-    <van-nav-bar :title="t('news.title')" left-arrow :border="false" @click-left="id ? router.push({ name: 'announcements' }) : goBack(router, '/')">
+    <van-nav-bar :title="t('news.title')" left-arrow :border="false" @click-left="id ? backFromDetail() : goBack(router, '/')">
       <template v-if="!id && store.unread > 0" #right>
         <button type="button" class="all" @click="store.markAll()">{{ t('news.markAll') }}</button>
       </template>
@@ -88,9 +93,9 @@ watch(id, () => void loadDetail())
   padding: 0 4px;
   border: 0;
   background: none;
-  color: var(--van-nav-bar-icon-color, #1989fa);
+  color: var(--c-accent-ink);
   font: inherit;
-  font-size: 13px;
+  font-size: 14px;
 }
 .pad {
   padding: 16px;
@@ -157,6 +162,16 @@ watch(id, () => void loadDetail())
 .rich {
   line-height: 1.7;
   overflow-wrap: anywhere;
+}
+.rich :deep(img) {
+  max-width: 100%;
+  height: auto;
+}
+.rich :deep(table),
+.rich :deep(pre) {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
 }
 .rich :deep(p),
 .rich :deep(ul),

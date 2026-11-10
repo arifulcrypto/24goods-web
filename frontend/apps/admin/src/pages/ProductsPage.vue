@@ -183,7 +183,7 @@ async function bulk(action: BulkAction, category?: string) {
       </div>
       <div v-if="auth.isAdmin" class="toolbar">
         <el-select :model-value="defaultSort" style="width: 190px" :aria-label="t('catalogOrder.defaultSort')" @change="setDefaultSort">
-          <el-option v-for="o in CATALOG_SORTS" :key="o" :value="o" :label="`${t('catalogOrder.defaultSort')}: ${t(`catalogOrder.sort.${o}`)}`" />
+          <el-option v-for="o in CATALOG_SORTS" :key="o" :value="o" :label="t('catalogOrder.defaultSortValue', { sort: t(`catalogOrder.sort.${o}`) })" />
         </el-select>
         <el-button :icon="Upload" @click="importOpen = true">{{ t('v5.products.import') }}</el-button>
         <el-button type="primary" :icon="Plus" @click="openNew">{{ t('products.new') }}</el-button>
