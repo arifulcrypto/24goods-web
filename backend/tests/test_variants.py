@@ -450,3 +450,24 @@ async def test_variant_validation(env):
     assert r.status_code in (401, 403)
     r = await admin.post(url, json={"name_i18n": {"en": "A"}, "price": "0"})
     assert r.status_code == 422
+
+
+async def test_promo_applies_to_variant_price(env):
+    await set_settings(env, {"features": {"promo_codes": True}})
+    admin, _ = await env.login("admin")
+    p = await env.product(mode="manual", price=1990, floor=100)
+    a = await add_variant(admin, p, "A", "5.00")
+    r = await admin.post(
+        f"{API}/admin/promo-codes", json={"code": "SAVE10", "kind": "percent", "value": 100}
+    )
+    assert r.status_code == 200, r.text
+    buyer, _ = await env.login("buyer")
+    v = (
+        await buyer.post(
+            f"{API}/promo/validate",
+            json={"code": "save10", "items": [{"product_id": str(p.id), "variant_id": a["id"]}]},
+        )
+    ).json()
+    assert v["eligible_subtotal_minor"] == 500 and v["discount_minor"] == 50  # variant, not 19.90
+    o = (await order_req(buyer, p, a, promo_code="save10")).json()
+    assert o["subtotal"] == "5.00" and o["discount"] == "0.50"
