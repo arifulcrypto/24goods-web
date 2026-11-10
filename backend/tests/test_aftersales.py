@@ -452,13 +452,14 @@ async def test_duplicate_notify_after_refund_is_benign(env, gw):
     )
     assert before == after
     assert await env.scalar("SELECT status FROM orders") == "refunded"
-    # a DIFFERENT trade_no on a refunded order stays a critical audit
+    # a DIFFERENT trade_no on a refunded order takes the duplicate-payment path (#72 S12):
+    # critical audit + staff refund alert, never fulfilled
     other = notify(o["order_no"], "19.90", trade_no="T999")
     gw.trade_no = "T999"
     assert (await env.client(csrf=False).get(NOTIFY_URL, params=other)).text == "success"
     assert (
         await env.scalar(
-            "SELECT count(*) FROM audit_log WHERE action='payment.unexpected_state' "
+            "SELECT count(*) FROM audit_log WHERE action='payment.duplicate' "
             "AND severity='critical'"
         )
         == 1
