@@ -4,6 +4,15 @@ Update this file in every PR. Phases are defined in [review-v2.md §8](review-v2
 
 ## Current state — hand-off (read this first in a new session)
 
+**Production deployed 2026-11-10 04:52 UTC: `5fb2575`** (#73, issue #72 remediation, migration
+`0019_attempt_closed`, owner-approved) from `1528264`. Pre-deploy backup with the installed v1 script,
+sha256-verified off-host copy, `pg_restore --list` OK (41 tables). Rollback: retag
+`goods24-{api,web}:rollback-1528264` to `:main` and `up -d` (0019 is an index only; no DB restore
+needed). postgres/redis were recreated once for the digest pins (same images). Smoke all pass; order,
+payment, attempt and ledger counts identical before/after (ledger sum 0); job passes succeed under the
+new lock; API -> BEpusdt 200. Follow-up: the origin sends a strong ETag for the SEO HTML but
+Cloudflare strips it unless the zone's "Respect Strong ETags" is enabled (owner decision).
+
 **Issue #72 remediation (2026-11-10, branch `fix/issue-72`, one PR):** every held order and payment
 attempt now has an exit (ADR-035): USDT refusal no longer locks the order (B1); admin "release hold"
 accepts a verified payment or closes an unpaid held order after a fresh re-query (B2); attempts reach
