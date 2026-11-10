@@ -387,8 +387,8 @@ async def test_avatar_preset(env):
         from sqlalchemy import text
 
         await db.execute(
-            text("UPDATE users SET avatar_key='abcdef0123456789abcdef0123456789' WHERE id=:i"),
-            {"i": u.id},
+            text("UPDATE users SET avatar_key=:k WHERE id=:i"),
+            {"i": u.id, "k": "0" * 32},  # any uploaded-avatar key; not a secret
         )
         await db.commit()
     me = (await buyer.get(f"{API}/auth/me")).json()
