@@ -1,0 +1,22 @@
+name: Edge drift
+
+# #72 S13: the origin trusts a static list of Cloudflare ranges (deploy/Caddyfile.prod). A weekly
+# failure here is the alert that the list needs refreshing (client IPs for rate limits, blocks and
+# audit would otherwise degrade silently).
+on:
+  schedule:
+    - cron: "41 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cloudflare-ranges:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: scripts/check-cf-ips.sh
