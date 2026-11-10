@@ -246,6 +246,8 @@ def order_view(
         "order_no": o.order_no,
         "title": o.title,
         "product_id": str(o.product_id) if o.product_id else None,
+        "variant_id": str(o.variant_id) if o.variant_id else None,
+        "variant_name": o.variant_name,
         "quote_id": str(o.quote_id) if o.quote_id else None,
         "qty": o.qty,
         "amount": fmt(o.amount_minor),

@@ -32,6 +32,7 @@ from app.core.money import fmt, to_decimal
 from app.core.resources import Resources
 from app.core.storefront import Storefront
 from app.models import Checkout, Order, Payment, Product, User
+from app.modules.catalog import variants as variants_svc
 from app.modules.catalog.service import stock_counts
 from app.modules.chat import service as chat
 from app.modules.chat.messages import post_system
@@ -101,6 +102,17 @@ async def quote_cart(
     stock = await stock_counts(
         db, [p.id for p in products.values() if p.delivery_mode == "auto_card"]
     )
+    vrows = await variants_svc.variants_for(db, tenant_id, products.keys(), include_archived=True)
+    vcards = await variants_svc.card_counts(
+        db,
+        tenant_id,
+        [
+            v.id
+            for p in products.values()
+            if p.delivery_mode == "auto_card"
+            for v in vrows.get(p.id, [])
+        ],
+    )
     lines: list[dict[str, Any]] = []
     avail: list[tuple[int, Product, int]] = []  # (line index, product, line subtotal)
     currency = "CNY"
@@ -110,6 +122,8 @@ async def quote_cart(
             lines.append(
                 {
                     "product_id": str(it.product_id),
+                    "variant_id": str(it.variant_id) if it.variant_id else None,
+                    "variant_name": None,
                     "title": "",
                     "cover": None,
                     "unit_price": "0.00",
@@ -126,26 +140,40 @@ async def quote_cart(
                 }
             )
             continue
-        s = (
-            p.manual_stock
-            if p.delivery_mode == "manual"
-            else (stock.get(p.id) if p.delivery_mode == "auto_card" else None)
-        )
+        variant = None
+        variant_reason = None
+        try:
+            variant = variants_svc.pick_variant(vrows.get(p.id, []), it.variant_id)
+        except ApiError as exc:  # flagged, never dropped: the cart shows why it cannot be bought
+            variant_reason = (
+                "variant_required" if exc.code == "variant_required" else ("variant_unavailable")
+            )
+        if variant is not None:
+            s = variants_svc.variant_stock(p, variant, vcards)
+        else:
+            s = (
+                p.manual_stock
+                if p.delivery_mode == "manual"
+                else (stock.get(p.id) if p.delivery_mode == "auto_card" else None)
+            )
         max_qty = MAX_QTY if s is None else min(MAX_QTY, s)
-        if p.status != "active":
+        if p.status != "active" or variant_reason:
             max_qty = 0
         reason = (
             "archived"
             if p.status == "archived"
             else "unpublished"
             if p.status != "active"
+            else variant_reason
+            if variant_reason
             else "out_of_stock"
             if it.qty > max_qty
             else None
         )
         available = reason is None
         needs = is_enabled(p.buyer_input) and bool(p.buyer_input.get("required", True))
-        unit = pricer.unit(p) if pricer else p.price_minor
+        base = variant.price_minor if variant else p.price_minor
+        unit = pricer.unit(p, base) if pricer else base
         line_sub = unit * it.qty
         if available:
             avail.append((len(lines), p, line_sub))
@@ -153,6 +181,8 @@ async def quote_cart(
         lines.append(
             {
                 "product_id": str(p.id),
+                "variant_id": str(variant.id) if variant else None,
+                "variant_name": pick(variant.name_i18n, lang) if variant else None,
                 "title": pick(p.title_i18n, lang),
                 "cover": p.images[0] if p.images else None,
                 "unit_price": fmt(unit),
@@ -325,17 +355,32 @@ async def create_checkout(
         raise NotFound("Product not found")
     if len({p.currency for p in products.values()}) > 1:
         raise Validation("All items must use the same currency")
-    # stock: summed per product so duplicate lines cannot oversell
+    # variants: a product with an active variant needs one per line (422), foreign ids are 404
+    vrows = await variants_svc.variants_for(
+        db, buyer.tenant_id, products.keys(), include_archived=True
+    )
+    chosen = [variants_svc.pick_variant(vrows.get(i.product_id, []), i.variant_id) for i in items]
+    # stock: summed per product (variant-less lines) / per variant (no oversell via duplicates)
     want: dict[uuid.UUID, int] = {}
-    for it in items:
-        want[it.product_id] = want.get(it.product_id, 0) + it.qty
+    want_v: dict[uuid.UUID, int] = {}
+    for it, v in zip(items, chosen, strict=True):
+        if v is None:
+            want[it.product_id] = want.get(it.product_id, 0) + it.qty
+        else:
+            want_v[v.id] = want_v.get(v.id, 0) + it.qty
     # lock ALL goods product rows in id order BEFORE the promo row (global order: buyer ->
     # products sorted -> promo): carts, buy-nows and quotes never deadlock each other
     goods_ids = sorted(
-        pid for pid in want if products[pid].delivery_mode in ("manual", "auto_card")
+        pid
+        for pid in {i.product_id for i in items}
+        if products[pid].delivery_mode in ("manual", "auto_card")
     )
     await lock_manual_products(db, buyer.tenant_id, goods_ids)
-    for pid in goods_ids:
+    await variants_svc.lock_variants(db, buyer.tenant_id, want_v.keys())
+    for v in {v.id: v for v in chosen if v is not None}.values():
+        if products[v.product_id].delivery_mode == "auto_card":
+            await require_auto_stock(db, buyer.tenant_id, v.product_id, want_v[v.id], v.id)
+    for pid in (pid for pid in goods_ids if pid in want):
         p = products[pid]
         if p.delivery_mode == "auto_card":  # free cards minus reservations (row lock held)
             await require_auto_stock(db, buyer.tenant_id, pid, want[pid])
@@ -349,12 +394,19 @@ async def create_checkout(
     if not cfg.enabled:
         raise Unavailable("Payment channel is not available")
     inputs = [normalize_value(products[i.product_id].buyer_input, i.buyer_input) for i in items]
-    # MONEY: unit price = base + storefront markup (server side); one order per cart line.
-    units = [
-        pricer.unit(products[i.product_id]) if pricer else products[i.product_id].price_minor
-        for i in items
+    # MONEY: unit price = variant/base + storefront markup (server side); one order per line.
+    bases = [
+        v.price_minor if v is not None else products[i.product_id].price_minor
+        for i, v in zip(items, chosen, strict=True)
     ]
-    markups = [pricer.markup(products[i.product_id]) * i.qty if pricer else 0 for i in items]
+    units = [
+        pricer.unit(products[i.product_id], b) if pricer else b
+        for i, b in zip(items, bases, strict=True)
+    ]
+    markups = [
+        pricer.markup(products[i.product_id], b) * i.qty if pricer else 0
+        for i, b in zip(items, bases, strict=True)
+    ]
     subs = [u * i.qty for u, i in zip(units, items, strict=True)]
     currency = next(iter(products.values())).currency
     ev = None
@@ -398,7 +450,9 @@ async def create_checkout(
     conv_id = await chat.conversation_id_for_order(db, buyer)
     orders: list[Order] = []
     codes: dict[str, str] = {}
-    for it, value, sub, disc, mk in zip(items, inputs, subs, discounts, markups, strict=True):
+    for it, value, sub, disc, mk, variant in zip(
+        items, inputs, subs, discounts, markups, chosen, strict=True
+    ):
         p = products[it.product_id]
         order, _msg = await create_order(
             db,
@@ -423,6 +477,7 @@ async def create_checkout(
             checkout_id=co.id,
             expires_at=expires_at,
             enforce_cap=False,
+            variant=variant,
         )
         orders.append(order)
         codes[order.order_no] = order.access_code_plain  # type: ignore[attr-defined]

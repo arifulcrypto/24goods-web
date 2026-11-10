@@ -43,6 +43,7 @@ async def buy_now(
         body.buyer_input,
         promo_code=body.promo_code,
         storefront=sf,
+        variant_id=body.variant_id,
     )
     code = getattr(order, "access_code_plain", None)  # shown exactly once
     await service.broadcast_order(res, db, order, [msg])

@@ -26,6 +26,7 @@ from app.core.resources import Resources
 from app.models import User
 from app.modules.admin import products as product_svc
 from app.modules.admin import service
+from app.modules.admin import variants as variant_svc
 from app.modules.admin.schemas import (
     AgentStatusIn,
     BulkProductsIn,
@@ -33,6 +34,8 @@ from app.modules.admin.schemas import (
     ProductIn,
     ProductPatch,
     ReplyTemplateIn,
+    VariantIn,
+    VariantPatch,
 )
 from app.modules.aftersales.schemas import RefundIn
 from app.modules.catalog.service import support_status
@@ -114,6 +117,60 @@ async def patch_product(
 ) -> dict:
     p = await product_svc.patch(db, product_id, body, admin, client_ip(request))
     return await product_svc.view(db, p)
+
+
+@router.get(
+    "/products/{product_id}/variants", dependencies=[Depends(require_scope("products:read"))]
+)
+async def list_variants(
+    product_id: uuid.UUID, staff: User = Depends(require_staff), db: AsyncSession = Depends(get_db)
+) -> dict:
+    return {"items": await variant_svc.list_variants(db, staff.tenant_id, product_id)}
+
+
+@router.post(
+    "/products/{product_id}/variants", dependencies=[Depends(require_scope("products:write"))]
+)
+async def create_variant(
+    product_id: uuid.UUID,
+    body: VariantIn,
+    request: Request,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    return await variant_svc.create(db, product_id, body, admin, client_ip(request))
+
+
+@router.patch(
+    "/products/{product_id}/variants/{variant_id}",
+    dependencies=[Depends(require_scope("products:write"))],
+)
+async def patch_variant(
+    product_id: uuid.UUID,
+    variant_id: uuid.UUID,
+    body: VariantPatch,
+    request: Request,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    return await variant_svc.patch(db, product_id, variant_id, body, admin, client_ip(request))
+
+
+@router.delete(
+    "/products/{product_id}/variants/{variant_id}",
+    dependencies=[Depends(require_scope("products:write"))],
+)
+async def delete_variant(
+    product_id: uuid.UUID,
+    variant_id: uuid.UUID,
+    request: Request,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Archived when orders/cards reference it, else deleted."""
+    return {
+        "outcome": await variant_svc.delete(db, product_id, variant_id, admin, client_ip(request))
+    }
 
 
 @router.post("/products/bulk", dependencies=[Depends(require_scope("products:write"))])
@@ -219,6 +276,7 @@ async def import_cards(
         ip=client_ip(request),
         note=body.note,
         expires_at=body.expires_at,
+        variant_id=body.variant_id,
     )
     return {
         "imported": result.imported,
@@ -235,6 +293,7 @@ async def list_cards(
     batch_id: uuid.UUID | None = None,
     expiring_days: int | None = Query(None, ge=0, le=3650),
     order_no: str | None = Query(None, max_length=16),
+    variant_id: uuid.UUID | None = None,
     page: Page = Depends(get_page),
     _: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
@@ -247,6 +306,7 @@ async def list_cards(
         batch_id=batch_id,
         expiring_days=expiring_days,
         order_no=order_no,
+        variant_id=variant_id,
     )
 
 

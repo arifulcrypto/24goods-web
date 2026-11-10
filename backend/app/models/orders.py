@@ -57,6 +57,9 @@ class Order(Base):
     # v8: manual stock actually reserved at creation (G); terms snapshot at purchase (F)
     stock_reserved: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     terms: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True))
+    # v11 W1: the variant bought (NULL = product without variants) and its name at purchase
+    variant_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("product_variants.id"))
+    variant_name: Mapped[str | None] = mapped_column(String(120))
     created_at: Mapped[datetime] = created_at()
     updated_at: Mapped[datetime] = updated_at()
 
