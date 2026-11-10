@@ -20,6 +20,8 @@ import type {
   AdminOrder,
   AdminOrderDetail,
   AdminProduct,
+  AdminVariant,
+  AdminVariantInput,
   AdminProductInput,
   AdminStats,
   AgentInfo,
@@ -199,10 +201,12 @@ export function createBuyerApi(c: ApiClient) {
         src?: string | null,
         buyer_input?: string | null,
         promo_code?: string | null,
+        variant_id?: string | null,
       ) =>
         c.post<Order>('/orders', {
           product_id,
           qty,
+          ...(variant_id ? { variant_id } : {}),
           ...(promo_code ? { promo_code } : {}),
           ...(src ? { src } : {}),
           ...(buyer_input !== undefined ? { buyer_input } : {}),
@@ -233,7 +237,7 @@ export function createBuyerApi(c: ApiClient) {
       c.post<CartQuote>('/cart/quote', promo_code ? { items, promo_code } : { items }),
     /** v5 §6: preview only; the server recomputes at order creation. */
     promoValidate: (
-      b: { code: string; items: { product_id: string; qty: number }[] },
+      b: { code: string; items: { product_id: string; qty: number; variant_id?: string }[] },
       turnstileToken?: string,
     ) =>
       c.post<PromoPreview>('/promo/validate', b, {
@@ -309,6 +313,17 @@ export function createAdminApi(c: ApiClient) {
         c.post<CardImportResult>(`/admin/products/${seg(id)}/cards/import`, { lines }),
       cards: (id: string, q: { status?: CardStatus | ''; page?: number; page_size?: number }) =>
         c.get<Paginated<CardRow>>(`/admin/products/${seg(id)}/cards`, q),
+      /** v11 W1: product variants (SKUs). */
+      variants: {
+        list: (id: string) => c.get<{ items: AdminVariant[] }>(`/admin/products/${seg(id)}/variants`),
+        create: (id: string, b: AdminVariantInput) =>
+          c.post<AdminVariant>(`/admin/products/${seg(id)}/variants`, b),
+        update: (id: string, vid: string, b: Partial<AdminVariantInput>) =>
+          c.patch<AdminVariant>(`/admin/products/${seg(id)}/variants/${seg(vid)}`, b),
+        /** Archives when orders/cards reference it, else deletes. */
+        remove: (id: string, vid: string) =>
+          c.delete<{ outcome: 'archived' | 'deleted' }>(`/admin/products/${seg(id)}/variants/${seg(vid)}`),
+      },
     },
     orders: {
       list: (q: {

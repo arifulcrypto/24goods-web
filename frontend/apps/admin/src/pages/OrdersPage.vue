@@ -114,7 +114,9 @@ function open(row: AdminOrder) {
         <el-table-column :label="t('orders.col.orderNo')" width="190">
           <template #default="{ row }"><span class="mono">{{ row.order_no }}</span></template>
         </el-table-column>
-        <el-table-column :label="t('orders.col.title')" prop="title" min-width="220" show-overflow-tooltip />
+        <el-table-column :label="t('orders.col.title')" min-width="220" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.title }}<span v-if="row.variant_name" class="muted"> · {{ row.variant_name }}</span></template>
+        </el-table-column>
         <el-table-column :label="t('orders.col.buyer')" min-width="180">
           <template #default="{ row }">
             <div>{{ row.buyer.display_name }}</div>

@@ -3,7 +3,8 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Lock, Upload } from '@element-plus/icons-vue'
 import { formatDateTime } from '@24goods/shared'
-import { apiV3 } from '../api'
+import type { AdminVariant } from '@24goods/shared'
+import { api, apiV3 } from '../api'
 import type { AdminProductV3, CardBatch, CardRowV3 } from '../api-v3'
 import CardFindPanel from '../components/cards/CardFindPanel.vue'
 import CardImportDialog from '../components/cards/CardImportDialog.vue'
@@ -58,9 +59,26 @@ function refresh() {
   void cards.reload()
   void loadBatches()
 }
+/** v11 W1: variants of the selected product (filter + column). */
+const variants = ref<AdminVariant[]>([])
+const variantName = (v: AdminVariant) => (locale.value === 'zh-CN' && v.name_i18n['zh-CN']) || v.name_i18n.en
+const variantLabel = (id: string | null | undefined) => {
+  const v = id ? variants.value.find((x) => x.id === id) : null
+  return v ? variantName(v) : '—'
+}
+async function loadVariants() {
+  variants.value = []
+  if (!productId.value) return
+  try {
+    variants.value = (await api.products.variants.list(productId.value)).items
+  } catch (e) {
+    toastError(e)
+  }
+}
 watch(productId, () => {
   Object.assign(filters, emptyCardFilters())
   batches.value = []
+  void loadVariants()
   if (productId.value) refresh()
 })
 let deb: ReturnType<typeof setTimeout> | null = null
@@ -187,6 +205,9 @@ function orderLink(r: CardRowV3) {
               <el-option value="" :label="t('inventory.allStatus')" />
               <el-option v-for="s in CARD_STATUSES" :key="s" :value="s" :label="t(`inventory.cardStatus.${s}`)" />
             </el-select>
+            <el-select v-if="variants.length" v-model="filters.variant_id" clearable style="width: 180px" :placeholder="t('variants.allVariants')" :aria-label="t('variants.title')">
+              <el-option v-for="v in variants" :key="v.id" :value="v.id" :label="variantName(v)" />
+            </el-select>
             <el-select v-model="filters.batch_id" clearable style="width: 200px" :placeholder="t('cards.allBatches')" :aria-label="t('cards.col.batch')">
               <el-option v-for="b in batches" :key="b.id" :value="b.id" :label="batchLabel(b)" />
             </el-select>
@@ -207,6 +228,9 @@ function orderLink(r: CardRowV3) {
               <el-tag size="small" :type="row.status === 'available' ? 'success' : row.status === 'void' ? 'danger' : 'info'">{{ t(`inventory.cardStatus.${row.status}`) }}</el-tag>
               <div v-if="row.void_reason" class="muted small">{{ row.void_reason }}</div>
             </template>
+          </el-table-column>
+          <el-table-column v-if="variants.length" :label="t('variants.title')" min-width="120" show-overflow-tooltip>
+            <template #default="{ row }">{{ variantLabel((row as CardRowV3).variant_id) }}</template>
           </el-table-column>
           <el-table-column :label="t('cards.col.batch')" width="100">
             <template #default="{ row }"><span class="mono small">{{ row.batch_id ? row.batch_id.slice(0, 6) : '—' }}</span></template>
