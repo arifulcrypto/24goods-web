@@ -43,7 +43,7 @@ from app.modules.chat.schemas import AssignIn, MessageIn, QuoteIn, ReadIn
 from app.modules.common.views import file_url
 from app.modules.inventory import service as inventory
 from app.modules.orders import admin as order_admin
-from app.modules.orders.schemas import CancelIn, DeliverIn, PriceIn
+from app.modules.orders.schemas import CancelIn, DeliverIn, PriceIn, ReleaseHoldIn
 from app.modules.orders.service import broadcast_order
 from app.modules.payments.channels import LABELS as CHANNEL_LABELS
 from app.modules.realtime.publish import publish_agent_status
@@ -336,6 +336,25 @@ async def requeue_delivery(
     res: Resources = Depends(get_res),
 ) -> dict:
     order, msg = await order_admin.requeue_delivery(db, order_id, admin, client_ip(request))
+    return await _order_reply(res, db, order, msg)
+
+
+@router.post("/orders/{order_id}/release-hold")
+async def release_hold(
+    order_id: uuid.UUID,
+    body: ReleaseHoldIn,
+    request: Request,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+    res: Resources = Depends(get_res),
+) -> dict:
+    """#72 B2: accept the recorded payment of a held order, or close it when nothing was paid."""
+    order, msg = await order_admin.release_hold(
+        db, res, order_id, body.outcome, body.reason, admin, client_ip(request)
+    )
+    if body.outcome == "close":  # already broadcast inside, like cancel
+        (view,) = await order_admin.admin_views(db, [order])
+        return view
     return await _order_reply(res, db, order, msg)
 
 

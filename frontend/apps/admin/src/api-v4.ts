@@ -95,6 +95,9 @@ export function createAdminV4Api(c: ApiClient) {
       close: (id: string, reason: string) => c.post<Order>(`/admin/orders/${seg(id)}/cancel`, { reason }),
       /** v8: put a held auto-card order back on the delivery queue (admin). */
       requeueDelivery: (id: string) => c.post<Order>(`/admin/orders/${seg(id)}/requeue-delivery`),
+      /** #72 B2: exit from manual_review — accept the recorded payment, or close when nothing was paid (admin). */
+      releaseHold: (id: string, b: { outcome: 'accept' | 'close'; reason: string }) =>
+        c.post<Order>(`/admin/orders/${seg(id)}/release-hold`, b),
       /** v8: refund a paid, undelivered order after the money was sent back (admin). */
       refund: (id: string, b: { reference: string; note?: string }) => c.post<Order>(`/admin/orders/${seg(id)}/refund`, b),
     },

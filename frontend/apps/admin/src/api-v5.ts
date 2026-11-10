@@ -352,6 +352,8 @@ export interface OrderV5Fields {
   delivery_deadline?: string | null
   /** v9 §1.3: payment attempts whose outcome is unknown; staff can resolve them. */
   unresolved_attempts?: { id: string; status: string; created_at: string }[]
+  /** #72 B2: why a manual_review order is held, and whether a payment is recorded. */
+  hold?: { reason: string | null; by: string | null; has_payment: boolean }
 }
 export type AdminOrderV5 = AdminOrder & Partial<OrderV5Fields>
 export type OrderDetailV5 = Order & Partial<OrderV5Fields>
