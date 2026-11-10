@@ -25,3 +25,4 @@ export * from './turnstile'
 
 export * from './media/preferences'
 export * from './notice'
+export * from './avatars'
