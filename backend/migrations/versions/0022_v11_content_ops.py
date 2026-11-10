@@ -19,6 +19,8 @@ Revises: 0021_chat_v11
 from __future__ import annotations
 
 import secrets
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 from alembic import op
 from sqlalchemy import text
@@ -30,6 +32,22 @@ depends_on = None
 
 TENANT_PREDICATE = "tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid"
 REF_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+
+
+# Tables with FORCE ROW LEVEL SECURITY whose rows this migration reads or rewrites. FORCE applies
+# RLS to the owner (the migrate role) too, so without a pinned tenant a backfill SELECT sees no
+# rows (production 2026-11-10: the existing service record kept a NULL ref and SET NOT NULL
+# failed). The data steps run with FORCE lifted and restored in the same transaction.
+_DATA_TABLES = ("service_entitlements", "service_renewals", "service_reminders", "articles")
+
+
+@contextmanager
+def _owner_sees_all_rows() -> Iterator[None]:
+    for t in _DATA_TABLES:
+        op.execute(f"ALTER TABLE {t} NO FORCE ROW LEVEL SECURITY")
+    yield
+    for t in _DATA_TABLES:
+        op.execute(f"ALTER TABLE {t} FORCE ROW LEVEL SECURITY")
 
 
 def _ref() -> str:
@@ -70,16 +88,18 @@ def upgrade() -> None:
     )
     op.execute("ALTER TABLE service_entitlements ADD COLUMN ref varchar(12)")
     conn = op.get_bind()
-    rows = conn.execute(text("SELECT id, tenant_id FROM service_entitlements")).all()
-    used: set[tuple[object, str]] = set()
-    for ident, tenant in rows:
-        ref = _ref()
-        while (tenant, ref) in used:
+    with _owner_sees_all_rows():
+        rows = conn.execute(text("SELECT id, tenant_id FROM service_entitlements")).all()
+        used: set[tuple[object, str]] = set()
+        for ident, tenant in rows:
             ref = _ref()
-        used.add((tenant, ref))
-        conn.execute(
-            text("UPDATE service_entitlements SET ref = :r WHERE id = :i"), {"r": ref, "i": ident}
-        )
+            while (tenant, ref) in used:
+                ref = _ref()
+            used.add((tenant, ref))
+            conn.execute(
+                text("UPDATE service_entitlements SET ref = :r WHERE id = :i"),
+                {"r": ref, "i": ident},
+            )
     op.execute("ALTER TABLE service_entitlements ALTER COLUMN ref SET NOT NULL")
     op.execute(
         "ALTER TABLE service_entitlements ADD CONSTRAINT uq_service_ref UNIQUE (tenant_id, ref)"
@@ -101,20 +121,21 @@ def downgrade() -> None:
     op.execute("ALTER TABLE products DROP COLUMN IF EXISTS pinned_at")
     op.execute("ALTER TABLE service_renewals DROP COLUMN IF EXISTS note")
     # standalone records/renewals cannot satisfy the old NOT NULLs
-    op.execute(
-        "DELETE FROM service_reminders WHERE entitlement_id IN "
-        "(SELECT id FROM service_entitlements WHERE order_id IS NULL)"
-    )
-    op.execute("DELETE FROM service_renewals WHERE order_id IS NULL")
-    op.execute(
-        "DELETE FROM service_renewals WHERE entitlement_id IN "
-        "(SELECT id FROM service_entitlements WHERE order_id IS NULL OR buyer_id IS NULL)"
-    )
-    op.execute(
-        "DELETE FROM service_reminders WHERE entitlement_id IN "
-        "(SELECT id FROM service_entitlements WHERE buyer_id IS NULL)"
-    )
-    op.execute("DELETE FROM service_entitlements WHERE order_id IS NULL OR buyer_id IS NULL")
+    with _owner_sees_all_rows():
+        op.execute(
+            "DELETE FROM service_reminders WHERE entitlement_id IN "
+            "(SELECT id FROM service_entitlements WHERE order_id IS NULL)"
+        )
+        op.execute("DELETE FROM service_renewals WHERE order_id IS NULL")
+        op.execute(
+            "DELETE FROM service_renewals WHERE entitlement_id IN "
+            "(SELECT id FROM service_entitlements WHERE order_id IS NULL OR buyer_id IS NULL)"
+        )
+        op.execute(
+            "DELETE FROM service_reminders WHERE entitlement_id IN "
+            "(SELECT id FROM service_entitlements WHERE buyer_id IS NULL)"
+        )
+        op.execute("DELETE FROM service_entitlements WHERE order_id IS NULL OR buyer_id IS NULL")
     op.execute("ALTER TABLE service_renewals ALTER COLUMN order_id SET NOT NULL")
     op.execute("ALTER TABLE service_entitlements DROP CONSTRAINT IF EXISTS uq_service_ref")
     for col in ("ref", "reminder_lead_days", "notes", "contact", "customer_label"):
@@ -122,7 +143,8 @@ def downgrade() -> None:
     op.execute("ALTER TABLE service_entitlements ALTER COLUMN order_id SET NOT NULL")
     op.execute("ALTER TABLE service_entitlements ALTER COLUMN buyer_id SET NOT NULL")
     op.execute("DROP TABLE IF EXISTS announcement_reads")
-    op.execute("DELETE FROM articles WHERE kind = 'notice'")
+    with _owner_sees_all_rows():
+        op.execute("DELETE FROM articles WHERE kind = 'notice'")
     op.execute("ALTER TABLE articles DROP CONSTRAINT IF EXISTS articles_kind_check")
     op.execute(
         "ALTER TABLE articles ADD CONSTRAINT articles_kind_check "

@@ -93,6 +93,12 @@ cmd_deploy() {
   # remember what ran before, for rollback (docs/production.md)
   rsh "$DC images --format '{{.ContainerName}} {{.Repository}}:{{.Tag}} {{.ID}}' >> $REMOTE/image-history.log 2>/dev/null || true; date -u +%FT%TZ >> $REMOTE/image-history.log"
   rsh "$DC pull --quiet api web"
+  # Migrate FIRST, as a one-off with the new image, while the old release keeps serving: a failed
+  # migration aborts here instead of after compose has already removed the running containers
+  # (2026-11-10: 0022 failed mid-deploy and the site was down until the rollback).
+  if ! rsh "$DC run --rm migrate"; then
+    die "migration failed; the running release was NOT touched. Fix forward or see docs/production.md Rollback."
+  fi
   rsh "$DC up -d --wait --wait-timeout 300 --remove-orphans"
   ghcr_logout
   trap - EXIT
